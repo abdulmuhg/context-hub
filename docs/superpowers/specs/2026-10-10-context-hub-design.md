@@ -114,7 +114,7 @@ These shaped the design. Only structure was inspected, not content.
 ## 4. Architecture
 
 ```
-This PC                              VPS (hub.hanadul.site)                Any assistant
+This PC                              VPS (hub.abdulmughnialfikri.com)      Any assistant
 +---------------------------+        +----------------------------+        +----------------+
 | hub (collector CLI)       |  HTTPS | context-hub server         |  MCP   | Claude Code    |
 |  adapters: claude-code,   | -----> |  ingest API                | <----- | Codex          |
@@ -499,9 +499,12 @@ runbook is the authority; this section lists what context-hub contributes.
   `context-hub` is unique on the machine.
 - `context-hub/.env.example`: `IMAGE_TAG`, `ANTHROPIC_API_KEY`,
   `DIGEST_MODEL`, `DATABASE_PATH`.
-- A site block for `hub.hanadul.site` in `edge/Caddyfile`. The hostname is a
-  proposal; the user confirms it before the DNS record is created. The DNS A
-  record must resolve before Caddy is started.
+- Two hostnames in `edge/Caddyfile`. `hub.abdulmughnialfikri.com` is the
+  primary and serves the app. `hub.hanadul.site` redirects to it, the same
+  way `jobsapp.hanadul.site` redirects to `plainfit.hanadul.site`. One
+  primary keeps a single address in every tool's settings, and the browser
+  login in the second build needs one fixed address. Both DNS A records must
+  resolve before Caddy is started.
 - `scripts/backup-context-hub.sh`: a consistent SQLite backup, gzipped into
   `/opt/stack/backups/`, run nightly by cron, tested once by hand first.
 - `CLAUDE.md` and `README.md` updated: context-hub becomes the second
@@ -512,8 +515,9 @@ runbook is the authority; this section lists what context-hub contributes.
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Status}}'
 grep '^IMAGE_TAG=' /opt/stack/context-hub/.env
-curl -s https://hub.hanadul.site/healthz
-curl -i https://hub.hanadul.site/api/status      # must be 401 without a token
+curl -s https://hub.abdulmughnialfikri.com/healthz
+curl -i https://hub.abdulmughnialfikri.com/api/status   # must be 401 without a token
+curl -sI https://hub.hanadul.site/healthz                # must redirect to the primary
 ```
 
 **Things only the user can do**
