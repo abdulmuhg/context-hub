@@ -8,17 +8,19 @@ interface Rule {
 const ENV_NAME = '[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH)[A-Z0-9_]*';
 
 // Order matters: specific formats first, the broad env-line rule last.
+// Rules with a distinctive prefix have no leading word boundary, so a token glued to
+// preceding word characters (e.g. at a truncation seam) is still caught.
 const RULES: Rule[] = [
   { type: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
-  { type: 'github', re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
-  { type: 'anthropic', re: /\bsk-ant-[A-Za-z0-9_-]{20,}/g },
+  { type: 'github', re: /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
+  { type: 'anthropic', re: /sk-ant-[A-Za-z0-9_-]{20,}/g },
   { type: 'openai', re: /\bsk-(?!ant-)[A-Za-z0-9_-]{32,}/g },
   { type: 'aws', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
-  { type: 'google', re: /\bAIza[0-9A-Za-z_-]{35}/g },
-  { type: 'slack', re: /\bxox[a-z]-[A-Za-z0-9-]{10,}/g },
-  { type: 'stripe', re: /\b[sr]k_live_[A-Za-z0-9]{16,}/g },
+  { type: 'google', re: /AIza[0-9A-Za-z_-]{35}/g },
+  { type: 'slack', re: /xox[a-z]-[A-Za-z0-9-]{10,}/g },
+  { type: 'stripe', re: /[sr]k_live_[A-Za-z0-9]{16,}/g },
   { type: 'npm', re: /\bnpm_[A-Za-z0-9]{36}/g },
-  { type: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
+  { type: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
   {
     type: 'auth_header',
     re: /(Authorization\s*:\s*(?:Bearer|Basic)\s+)([^\s"'[]+)/gi,
