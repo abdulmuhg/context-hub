@@ -67,3 +67,25 @@ describe('stripSecrets', () => {
     expect(stripSecrets(text)).toEqual({ text, counts: {} });
   });
 });
+
+describe('stripSecrets with a token glued to preceding word characters', () => {
+  it.each([
+    ['github', fakes.github],
+    ['anthropic', fakes.anthropic],
+    ['google', fakes.google],
+    ['slack', fakes.slack],
+    ['stripe', fakes.stripe],
+    ['jwt', fakes.jwt],
+  ])('still redacts %s', (type, fake) => {
+    const out = stripSecrets('x'.repeat(10) + fake);
+    expect(out.text).toBe('x'.repeat(10) + `[REDACTED:${type}]`);
+    expect(out.counts[type]).toBe(1);
+  });
+
+  it.each([
+    ['an openai-shaped suffix of a longer word', 'risk-management-plan-' + 'a1-'.repeat(14)],
+    ['an npm-shaped suffix of pnpm_', 'pn' + 'pm_' + a(36)],
+  ])('does not redact %s', (_name, text) => {
+    expect(stripSecrets(text)).toEqual({ text, counts: {} });
+  });
+});

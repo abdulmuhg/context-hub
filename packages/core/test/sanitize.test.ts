@@ -11,7 +11,7 @@ const input = (over: Partial<SessionInput> = {}): SessionInput => ({
   project_key: 'local:demo',
   parent: null,
   title: null,
-  cwd: 'C:\work\demo',
+  cwd: 'C:\\work\\demo',
   git_branch: 'main',
   messages: [
     { seq: 9, role: 'user', kind: 'text', ts: '2026-10-01T10:00:00Z', text: `use ${secret} please` },
