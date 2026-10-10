@@ -254,3 +254,42 @@ describe('listProjects', () => {
     expect(loadState(hub).files).not.toEqual({});
   });
 });
+
+describe('runSync: scoped syncs do not advance sync state', () => {
+  const withCards = (id: string, cwd: string) => [cc(id, cwd, 'my card 4242424242424242')];
+
+  it('keeps the fingerprint and re-masks every project on the next full sync', async () => {
+    track(KEY_A, 'local:beta');
+    writeJsonl(join(proj(), `${S1}.jsonl`), withCards(S1, '/work/alpha'));
+    writeJsonl(join(proj(), `${S2}.jsonl`), withCards(S2, '/tmp/beta'));
+    await runSync(opts());
+    expect(sent).toHaveLength(2);
+    const before = loadState(hub).fingerprint;
+
+    saveConfig(hub, { ...loadConfig(hub), personal: { card: 'full', list: 'warn' } });
+    const scoped = await runSync(opts({ project: 'alpha' }));
+    expect(scoped.errors).toEqual([]);
+    expect(scoped.uploaded.map((u) => u.project)).toEqual([KEY_A]);
+    expect(loadState(hub).fingerprint).toBe(before);
+
+    const full = await runSync(opts());
+    expect(full.uploaded).toEqual([{ project: 'local:beta', session: `claude-code:${S2}` }]);
+    expect(sent[sent.length - 1].body.messages[0].text).toBe('my card [REDACTED:card]');
+    expect(loadState(hub).fingerprint).not.toBe(before);
+  });
+
+  it('a scoped sync leaves another project\'s changed file pending', async () => {
+    track(KEY_A, 'local:beta');
+    await runSync(opts());
+    expect(sent).toHaveLength(2);
+
+    writeJsonl(join(proj(), `${S1}.jsonl`), [cc(S1, '/work/alpha', 'alpha question'), cc(S1, '/work/alpha', 'appended')]);
+    const scoped = await runSync(opts({ project: 'beta' }));
+    expect(scoped.uploaded).toEqual([]);
+    expect(sent).toHaveLength(2);
+
+    const full = await runSync(opts());
+    expect(full.uploaded).toEqual([{ project: KEY_A, session: `claude-code:${S1}` }]);
+    expect(sent[2].body.messages).toHaveLength(2);
+  });
+});

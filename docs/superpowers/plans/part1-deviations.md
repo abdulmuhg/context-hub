@@ -27,3 +27,9 @@ Rewrote `filterPersonal` in `packages/core/src/personal.ts` after review (plan t
 
 - `send()` in `apps/collector/src/upload.ts`: the `body` parameter type changed from `Uint8Array` to `Uint8Array<ArrayBuffer>`.
 - Why: under TypeScript 7 `Uint8Array<ArrayBufferLike>` is not assignable to `BodyInit`, so `pnpm typecheck` failed (TS2769). `gzipSync` returns a `Buffer<ArrayBuffer>`, which fits. No runtime change.
+
+## Task 10 (fix round): scoped syncs must not advance sync state
+
+- `apps/collector/src/sync.ts`: the settings fingerprint is now saved only when the run is unscoped (`!opts.project && !opts.session`), error-free and not a dry run. Why: a scoped run re-processes only a subset, so saving the fingerprint let a later full sync treat never-re-masked sessions as unchanged.
+- `apps/collector/src/sync.ts`: for an unselected item, an existing state entry is left untouched; an entry is written (hash null, synced_at null) only when none exists. Why: the old code paired the file's fresh size/mtime with a stale hash, so an edited file in another project was never uploaded afterwards.
+- Added regression tests in a new describe block in `apps/collector/test/sync.test.ts`.

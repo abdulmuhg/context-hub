@@ -179,7 +179,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     };
 
     if (!isSelected(item, s.cfg, opts)) {
-      remember(prev?.hash ?? null, prev?.synced_at ?? null);
+      if (!prev) remember(null, null); // never rewrite an existing entry: its size and mtime must stay paired with its hash
       continue;
     }
     if (prev && item.same && prev.hash !== null) {
@@ -240,7 +240,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
 
   if (!dryRun) {
     // Keep forcing a full pass until one finishes cleanly.
-    if (report.errors.length === 0) s.state.fingerprint = s.fingerprint;
+    if (!opts.project && !opts.session && report.errors.length === 0) s.state.fingerprint = s.fingerprint;
     saveState(opts.hubDir, s.state);
   }
   return report;
