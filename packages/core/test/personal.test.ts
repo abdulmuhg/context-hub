@@ -94,3 +94,78 @@ describe('filterPersonal: personal list', () => {
     expect(filterPersonal('x a.b(c)+d y', cfg({ list: 'full', entries: [entry] })).text).toBe('x [REDACTED:handle] y');
   });
 });
+
+describe('filterPersonal: cards next to other numbers', () => {
+  const full = cfg({ card: 'full' });
+
+  it('masks a card followed by an expiry or CVV', () => {
+    expect(filterPersonal('4242 4242 4242 4242 12/28', full).text).toBe('[REDACTED:card] 12/28');
+    expect(filterPersonal('4242 4242 4242 4242 123', full).text).toBe('[REDACTED:card] 123');
+  });
+
+  it('masks a card preceded by a short number', () => {
+    expect(filterPersonal('id 10 4242424242424242', full).text).toBe('id 10 [REDACTED:card]');
+  });
+
+  it('masks every level, not only full', () => {
+    const t = '4242-4242-4242-4242 123';
+    expect(filterPersonal(t, cfg({ card: 'partial' })).text).toBe('[CARD ····4242] 123');
+    expect(filterPersonal(t, cfg({ card: 'warn' })).findings).toEqual({ card: 1 });
+  });
+});
+
+describe('filterPersonal: plus-prefixed values', () => {
+  const intl = { label: 'phone-intl', value: '+62 812 3456 7890' };
+  const local = { label: 'phone', value: '0812-3456-7890' };
+
+  it('matches an entry that starts with a plus', () => {
+    const out = filterPersonal('call +62-812-3456-7890 now', cfg({ list: 'full', entries: [intl] }));
+    expect(out).toEqual({ text: 'call [REDACTED:phone-intl] now', findings: { 'phone-intl': 1 } });
+  });
+
+  it('does not match the same digits without the plus', () => {
+    const out = filterPersonal('call 62 812 3456 7890', cfg({ list: 'full', entries: [intl] }));
+    expect(out.findings).toEqual({});
+  });
+
+  it('keeps the local and international forms distinct', () => {
+    const out = filterPersonal('081234567890', cfg({ list: 'full', entries: [intl, local] }));
+    expect(out).toEqual({ text: '[REDACTED:phone]', findings: { phone: 1 } });
+  });
+});
+
+describe('filterPersonal: overlapping matches', () => {
+  const phone = { label: 'phone', value: '0812-3456-7890' };
+
+  it('does not match inside a marker written by an earlier entry', () => {
+    const tail = { label: 'tail', value: '7890' };
+    const out = filterPersonal('call 081234567890', cfg({ list: 'partial', entries: [phone, tail] }));
+    expect(out.text).toBe('call [PERSONAL:phone ····7890]');
+    expect(out.findings).toEqual({ phone: 1 });
+  });
+
+  it('does not match a text entry inside marker text', () => {
+    const word = { label: 'word', value: 'phone' };
+    const out = filterPersonal('call 081234567890', cfg({ list: 'full', entries: [phone, word] }));
+    expect(out.text).toBe('call [REDACTED:phone]');
+  });
+
+  it('lets the longer value win whatever the entry order', () => {
+    const short = { label: 'short', value: '3456-7890' };
+    const out = filterPersonal('081234567890', cfg({ list: 'full', entries: [short, phone] }));
+    expect(out).toEqual({ text: '[REDACTED:phone]', findings: { phone: 1 } });
+  });
+
+  it('prefers the stronger level on a tie', () => {
+    const a = { label: 'a', value: 'secret', level: 'warn' as const };
+    const b = { label: 'b', value: 'SECRET', level: 'full' as const };
+    const out = filterPersonal('a secret b', cfg({ entries: [a, b] }));
+    expect(out).toEqual({ text: 'a [REDACTED:b] b', findings: { b: 1 } });
+  });
+
+  it('lets a card inside a longer personal value be masked once', () => {
+    const wrapped = { label: 'acct', value: 'acct 4242 4242 4242 4242', level: 'full' as const };
+    const out = filterPersonal('x acct 4242 4242 4242 4242 y', cfg({ card: 'full', entries: [wrapped] }));
+    expect(out).toEqual({ text: 'x [REDACTED:acct] y', findings: { acct: 1 } });
+  });
+});
