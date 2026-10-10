@@ -22,3 +22,8 @@ Rewrote `filterPersonal` in `packages/core/src/personal.ts` after review (plan t
 - `packages/core/src/secrets.ts`: removed the leading `\b` from the github, anthropic, google, slack, stripe and jwt rules (distinctive prefixes only; openai, aws and npm keep `\b` because `sk-`, `AKIA` and `npm_` can appear inside ordinary words such as `disk-` or `pnpm_`). The plan test "strips a secret before capping, so one that straddles the cap is still caught" glues a `ghp_` token directly onto 1,990 `x` characters, so `\b` never matched and the token survived. Stripping the prefix boundary is the minimal change that lets the plan test pass unchanged.
 - `sanitize.ts` and `remote.ts` are exactly as in the plan.
 - Fix round: restored the doubled backslashes in the Windows-path literals of `remote.test.ts` and `sanitize.test.ts` (lost when the tests were written), and added glued-prefix and negative-guard tests for the unanchored secret rules in `secrets.test.ts`.
+
+## Task 10: upload.ts body type
+
+- `send()` in `apps/collector/src/upload.ts`: the `body` parameter type changed from `Uint8Array` to `Uint8Array<ArrayBuffer>`.
+- Why: under TypeScript 7 `Uint8Array<ArrayBufferLike>` is not assignable to `BodyInit`, so `pnpm typecheck` failed (TS2769). `gzipSync` returns a `Buffer<ArrayBuffer>`, which fits. No runtime change.
