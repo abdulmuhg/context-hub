@@ -15,8 +15,13 @@ const RULES: Rule[] = [
     type: 'private_key',
     re: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g,
   },
-  // Fallback: a truncated block with no END line is redacted to the end of the text.
-  { type: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*/g },
+  // Fallback: a block cut off before its END line. Only lines that look like key
+  // material are taken (base64 runs, armor headers, a blank line before more base64),
+  // with real or JSON-escaped newlines, so prose that merely quotes the header survives.
+  {
+    type: 'private_key',
+    re: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?:\r?\n|\\r\\n|\\n)(?:[A-Za-z0-9+/=]{16,}|(?:Proc-Type|DEK-Info|Version|Comment|Hash): [^\n\\]*|[ \t]*(?=(?:\r?\n|\\r\\n|\\n)[A-Za-z0-9+/=]{16,})))*/g,
+  },
   { type: 'github', re: /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
   { type: 'anthropic', re: /sk-ant-[A-Za-z0-9_-]{20,}/g },
   { type: 'openai', re: /\bsk-(?!ant-)[A-Za-z0-9_-]{32,}/g },
@@ -34,7 +39,10 @@ const RULES: Rule[] = [
   {
     type: 'password',
     // The password runs to the last "@" of the authority, so "/" and "@" inside it are covered.
-    re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s[]+?)(@[^\s/@]+)(?=[\s/]|$)/gi,
+    // The user name may be empty (redis://:pw@host). "host:port/" is not "user:password":
+    // the lookahead rejects a short digit run followed by a path, so dev URLs such as
+    // http://localhost:5173/@vite/client are left alone. The length bound keeps it linear.
+    re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)(?!\d{1,5}(?:[/?#\s]|$))([^\s[]{1,256}?)(@[^\s/@]+)(?=[\s/]|$)/gi,
     replace: (g, marker) => g[0] + marker + g[2],
   },
   {

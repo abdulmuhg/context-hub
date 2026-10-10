@@ -218,6 +218,10 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         options: { project: { type: 'string' }, session: { type: 'string' }, 'dry-run': { type: 'boolean' } },
       });
       const dryRun = values['dry-run'] === true;
+      const wanted = values.project;
+      if (wanted && !values.session && !loadConfig(io.hubDir).tracked.some((k) => projectMatches(wanted, k))) {
+        throw new Fail(`"${wanted}" is not tracked, so nothing would be uploaded. Run \`hub track ${wanted}\` first.`);
+      }
       const report = await runSync({ ...scanOpts(io), fetchImpl: io.fetchImpl, dryRun, project: values.project, session: values.session });
       printReport(io, report, dryRun);
       return report.errors.length > 0 ? 1 : 0;

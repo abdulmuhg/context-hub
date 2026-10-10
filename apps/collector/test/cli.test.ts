@@ -124,6 +124,15 @@ describe('hub sync', () => {
     expect(requests).toEqual([{ method: 'PUT', url: `https://hub.example.com/api/sessions/claude-code/${S1}` }]);
   });
 
+  it('says so when --project names a project that is not tracked', async () => {
+    await run(['untrack', 'alpha'], io);
+    out = [];
+    expect(await run(['sync', '--project', 'alpha', '--dry-run'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/not tracked/);
+    expect(err.join('\n')).toMatch(/hub track/);
+    expect(requests).toEqual([]);
+  });
+
   it('exits 1 and prints the error when the server refuses', async () => {
     io.fetchImpl = async () => new Response('no', { status: 401 });
     expect(await run(['sync'], io)).toBe(1);

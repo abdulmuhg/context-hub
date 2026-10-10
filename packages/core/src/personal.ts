@@ -70,9 +70,8 @@ interface Hit {
 
 /**
  * Find card numbers inside one separator-joined digit run, on group boundaries.
- * Only windows of 13-19 digits are examined (at most 19 groups per start), and
- * windows are taken longest (most groups) first, then leftmost, skipping any
- * that overlap one already taken.
+ * Only windows of 13-19 digits are examined (at most 19 groups per start).
+ * Windows that overlap are merged into one span.
  */
 function cardWindows(
   groups: { start: number; end: number; digits: string }[],
@@ -88,21 +87,29 @@ function cardWindows(
       if (total >= 13 && luhn(digits)) cands.push({ s, len: e - s + 1, digits });
     }
   }
-  cands.sort((a, b) => b.len - a.len || a.s - b.s);
-  const taken = new Array<boolean>(groups.length).fill(false);
+  // Overlapping valid windows are merged and masked as one. Picking a single
+  // "best" window can pick a chance match that starts a group late and leave
+  // the first digits of the real card visible.
+  cands.sort((a, b) => a.s - b.s || b.len - a.len);
   const out: { start: number; end: number; digits: string }[] = [];
+  let first = -1;
+  let last = -1;
+  let digits = '';
+  const flush = (): void => {
+    if (first >= 0) out.push({ start: groups[first]!.start, end: groups[last]!.end, digits });
+  };
   for (const c of cands) {
-    let free = true;
-    for (let i = c.s; i < c.s + c.len; i++) {
-      if (taken[i]) {
-        free = false;
-        break;
-      }
+    const cLast = c.s + c.len - 1;
+    if (first >= 0 && c.s <= last) {
+      last = Math.max(last, cLast);
+      continue;
     }
-    if (!free) continue;
-    for (let i = c.s; i < c.s + c.len; i++) taken[i] = true;
-    out.push({ start: groups[c.s]!.start, end: groups[c.s + c.len - 1]!.end, digits: c.digits });
+    flush();
+    first = c.s;
+    last = cLast;
+    digits = c.digits; // the leftmost, longest window names the card in a partial mask
   }
+  flush();
   return out;
 }
 

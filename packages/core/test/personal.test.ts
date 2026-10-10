@@ -187,3 +187,19 @@ describe('filterPersonal: long digit lists and level precedence', () => {
     expect(out.findings).toEqual({ pin: 4 });
   });
 });
+
+describe('filterPersonal: overlapping card windows', () => {
+  const full: PersonalConfig = { card: 'full', list: 'warn', entries: [] };
+
+  it('never leaves digits of a valid card visible when a later window also passes Luhn', () => {
+    // "4242 4242 4242 123 12" passes Luhn by chance and starts one group late.
+    const out = filterPersonal('pay 4242 4242 4242 4242 123 12/27 now', full);
+    expect(out.text).not.toMatch(/4242/);
+    expect(out.text.startsWith('pay [REDACTED:card]')).toBe(true);
+    expect(out.findings).toEqual({ card: 1 });
+  });
+
+  it('still leaves a separate number after the card alone when it is not part of a valid window', () => {
+    expect(filterPersonal('4242 4242 4242 4242 123', full).text).toBe('[REDACTED:card] 123');
+  });
+});

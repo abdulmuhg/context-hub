@@ -35,7 +35,7 @@ describe('stripSecrets', () => {
   });
 
   it('replaces a whole private key block', () => {
-    const block = `-----BEGIN RSA PRIVATE KEY-----\n${a(64)}\n${a(64)}\n-----END RSA PRIVATE KEY-----`;
+    const block = `${'-----BEGIN ' + 'RSA PRIVATE KEY-----'}\n${a(64)}\n${a(64)}\n${'-----END ' + 'RSA PRIVATE KEY-----'}`;
     const out = stripSecrets(`key:\n${block}\ndone`);
     expect(out.text).toBe('key:\n[REDACTED:private_key]\ndone');
   });
@@ -94,9 +94,13 @@ describe('stripSecrets: final review fixes', () => {
   const hdr = '-----BEGIN ' + 'RSA PRIVATE KEY-----';
   const ftr = '-----END ' + 'RSA PRIVATE KEY-----';
 
-  it('redacts an unterminated private key block to the end of the text', () => {
+  // Changed in review: the fallback used to redact to the end of the text, which
+  // deleted the rest of any message that merely quoted a key header. It now takes
+  // the key material only and keeps what follows.
+  it('redacts the key material of an unterminated private key block and keeps what follows', () => {
     const out = stripSecrets(`key:\n${hdr}\n${a(64)}\n${a(64)}\n(truncated)`);
-    expect(out.text).toBe('key:\n[REDACTED:private_key]');
+    expect(out.text).toBe('key:\n[REDACTED:private_key]\n(truncated)');
+    expect(out.text).not.toContain(a(64));
     expect(out.counts).toEqual({ private_key: 1 });
   });
 
@@ -107,7 +111,7 @@ describe('stripSecrets: final review fixes', () => {
   });
 
   it('redacts a PGP private key block', () => {
-    const out = stripSecrets(`x ${'-----BEGIN PGP PRIVATE KEY BLOCK-----'}\n${a(40)}\n${'-----END PGP PRIVATE KEY BLOCK-----'} y`);
+    const out = stripSecrets(`x ${'-----BEGIN ' + 'PGP PRIVATE KEY BLOCK-----'}\n${a(40)}\n${'-----END ' + 'PGP PRIVATE KEY BLOCK-----'} y`);
     expect(out.text).toBe('x [REDACTED:private_key] y');
   });
 
@@ -164,5 +168,45 @@ describe('stripSecrets: final review fixes', () => {
     const twice = stripSecrets(once.text);
     expect(twice.text).toBe(once.text);
     expect(twice.counts).toEqual({});
+  });
+});
+
+describe('stripSecrets: review fixes', () => {
+  const header = '-----BEGIN ' + 'RSA PRIVATE KEY-----';
+
+  it.each([
+    ['a Vite dev URL', 'GET http://localhost:5173/@vite/client 200'],
+    ['a port followed by a path with an at sign', 'open http://127.0.0.1:3000/users/me@example.com/edit'],
+    ['a bare host and port', 'listening on http://localhost:8080'],
+  ])('leaves %s alone', (_name, text) => {
+    expect(stripSecrets(text)).toEqual({ text, counts: {} });
+  });
+
+  it('redacts a password when the user name is empty', () => {
+    const out = stripSecrets('redis://:hunter2@cache:6379');
+    expect(out.text).toBe('redis://:[REDACTED:password]@cache:6379');
+  });
+
+  it('stays fast on input built to make the URL rule backtrack', () => {
+    const start = performance.now();
+    stripSecrets('a://x:'.repeat(40000));
+    expect(performance.now() - start).toBeLessThan(1500);
+  });
+
+  it('keeps the text after a sentence that only mentions a key header', () => {
+    const text = `Look for a line "${header}" in the file.\n\nNext step: run the deploy.\nThen tell the user.`;
+    expect(stripSecrets(text).text).toBe(
+      'Look for a line "[REDACTED:private_key]" in the file.\n\nNext step: run the deploy.\nThen tell the user.',
+    );
+  });
+
+  it('still redacts the body of a key block that was cut off before its END line', () => {
+    const out = stripSecrets(`key:\n${header}\nProc-Type: 4,ENCRYPTED\n\n${a(64)}\n${a(64)}\n${a(20)}`);
+    expect(out.text).toBe('key:\n[REDACTED:private_key]');
+  });
+
+  it('redacts a cut-off key block written with escaped newlines, as inside JSON', () => {
+    const out = stripSecrets(`{"key":"${header}\\n${a(64)}\\n${a(64)}`);
+    expect(out.text).toBe('{"key":"[REDACTED:private_key]');
   });
 });

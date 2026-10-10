@@ -45,3 +45,19 @@ Rewrote `filterPersonal` in `packages/core/src/personal.ts` after review (plan t
 - `packages/core/src/secrets.ts`: private_key gained a fallback rule that redacts an unterminated block to the end of the text, and both private_key rules accept `PRIVATE KEY BLOCK` (PGP). The password-in-URL rule now runs to the last `@` of the authority (covers `/` and `@` inside the password). The env rule value accepts a double- or single-quoted string (no double redaction when it starts with a quote then `[REDACTED:`). The auth_header rule accepts a quoted header name and scheme and stops the value at a quote, comma or brace.
 - `.gitignore`: added `.superpowers/`.
 - New tests in `secrets.test.ts` and `sync.test.ts`; no existing test changed.
+
+## Review fixes (after the build)
+
+- `secrets.ts`, URL password rule: allows an empty user name (`redis://:pw@host`),
+  rejects `host:port/…` so dev URLs such as `http://localhost:5173/@vite/client`
+  are left alone, and bounds the password to 256 characters so the rule is linear.
+- `secrets.ts`, unterminated private key fallback: takes key material only (base64
+  lines, armor headers, real or JSON-escaped newlines). It no longer redacts to the
+  end of the text. One earlier test asserted the old behaviour and was changed, with
+  a comment saying why.
+- `personal.ts`, card windows: overlapping Luhn-valid windows are merged and masked
+  as one span, so a chance match that starts a group late cannot leave the first
+  digits of a real card visible.
+- `cli.ts`: `hub sync --project <p>` fails with a message when `<p>` is not tracked,
+  instead of silently uploading nothing.
+- `secrets.test.ts`: key header literals are built by concatenation.
