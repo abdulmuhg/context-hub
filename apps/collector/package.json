@@ -1,0 +1,14 @@
+{
+  "name": "@context-hub/collector",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "hub": "./dist/bin.js" },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/bin.ts"
+  },
+  "dependencies": {
+    "@context-hub/core": "workspace:*"
+  }
+}
