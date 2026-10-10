@@ -69,6 +69,12 @@ These shaped the design. Only structure was inspected, not content.
 - Codex records carry `session_meta` (with `id`, `cwd`, `timestamp`),
   `turn_context` (with `cwd`, `model`), and `response_item` / `event_msg`
   payloads for messages and function calls.
+- Antigravity has 14 distinct conversations. The 6 opaque ones are mirrored
+  in three folders (`antigravity`, `antigravity-backup`, `antigravity-ide`);
+  the 8 readable ones exist only under `antigravity-ide`. The folder name
+  `<id>` is the conversation ID, so the adapter uses it as
+  `source_session_id` and a conversation found in more than one folder is
+  stored once.
 - Antigravity transcript records carry `step_index`, `source`, `type`
   (`USER_INPUT`, `PLANNER_RESPONSE`, tool step types), `status`, `created_at`,
   `content`, `thinking`, `tool_calls`. **They carry no working-folder field.**
@@ -161,6 +167,9 @@ One format for every tool. Adapters produce it; everything else consumes it.
 
 Rules:
 
+- `account_id` is recorded and shown, and never used to filter or separate
+  data. Sessions from different accounts in the same project are stored
+  together under that project, which is the point of the hub.
 - User and assistant text is kept in full.
 - `tool_input` is capped at 2,000 characters.
 - `tool_result` is capped at 2,000 characters: the first 1,500 and the last
