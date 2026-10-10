@@ -23,6 +23,8 @@ relevant context from it and continue the earlier work without being briefed.
 - Hosted on his existing VPS, easy to connect, compatible with his tools.
 - Session digests and project state pages in the first build.
 - Sync is triggered by hand, and only for projects he marks as tracked.
+- A configurable filter for personal data such as card numbers and his own
+  phone number. Default: warn only.
 
 ### What context-hub is not
 
@@ -88,7 +90,8 @@ These shaped the design. Only structure was inspected, not content.
 - Server on the VPS: store, keyword search, digests, project state pages.
 - Lookup tools over MCP for assistants that authenticate with a token
   (Claude Code, Codex, Antigravity, on any machine).
-- Secret stripping, token access control, deployment and backup.
+- Secret stripping, the personal data filter, token access control,
+  deployment and backup.
 
 ### Second build (separate spec)
 
@@ -125,7 +128,7 @@ Three units, each with one job:
 
 | Unit | Does | Depends on |
 |---|---|---|
-| `packages/core` | The common session format, secret stripping, project-key rules | Nothing |
+| `packages/core` | The common session format, secret stripping, the personal data filter, project-key rules | Nothing |
 | `apps/collector` (the `hub` command) | Reads tool history on a PC, turns it into the common format, uploads tracked sessions | `core`, the server's ingest API |
 | `apps/server` | Stores sessions, searches them, writes digests and state pages, serves the lookup tools | `core`, SQLite, the Anthropic API |
 
@@ -214,11 +217,16 @@ Runs on a PC, by hand. It has no background process and no scheduled task.
 **Files** (under `~/.context-hub/`)
 
 - `config.json`: server URL, tracked projects, skipped sessions, aliases,
-  assignments.
+  assignments, personal data levels.
 - `credentials`: the upload token, readable only by the user.
+- `personal.json`: the user's own sensitive values (section 8), readable only
+  by the user. It is never uploaded.
 - `state.json`: for each source file, its size, modified time and the hash
-  last uploaded. A file whose size and modified time are unchanged is skipped
-  without being parsed.
+  last uploaded, plus a fingerprint of the settings that change what is
+  uploaded (aliases, assignments, personal data levels, the personal list).
+  A file whose size and modified time are unchanged is skipped without being
+  parsed, unless that fingerprint has changed; then every tracked session is
+  processed again, so a changed setting reaches sessions already uploaded.
 
 **Commands**
 
@@ -231,7 +239,10 @@ Runs on a PC, by hand. It has no background process and no scheduled task.
 | `hub alias <from> <to>`, `hub assign <session> <project>` | Project overrides (section 6) |
 | `hub sync` | Uploads every new or changed session in tracked projects |
 | `hub sync --project <p>` / `--session <id>` | Limits the sync to one project or one session. `--session` works even if the project is not tracked |
-| `hub sync --dry-run` | Shows what would be uploaded and how many secrets would be stripped, by type. Uploads nothing |
+| `hub sync --dry-run` | Shows what would be uploaded, how many secrets would be stripped by type, and what personal data was found. Uploads nothing |
+| `hub personal add <label>` | Adds one of the user's own values to the personal list. The value is typed at a prompt, so it does not land in shell history |
+| `hub personal list` / `hub personal remove <label>` | Shows labels and levels, never values; removes an entry |
+| `hub personal level <type or label> <level>` | Sets the level for card numbers, for the whole list, or for one entry |
 | `hub forget <project>` / `hub forget --session <id>` | Deletes that data from the server after a confirmation prompt |
 | `hub status` | Last sync time, digests still pending on the server, parse warnings |
 
@@ -244,12 +255,13 @@ project>` so a sync can be started from inside a session.
 2. The project resolver assigns keys; overrides are applied.
 3. Sessions outside tracked projects, and skipped sessions, are dropped.
 4. Each remaining session is turned into the common format, secrets are
-   stripped, and the hash is computed.
+   stripped, the personal data filter is applied, and the hash is computed.
 5. Sessions whose hash differs from the last upload are sent, one request per
    session.
 6. `state.json` is updated per session, only after the server confirms it.
 7. A summary is printed: sessions uploaded per project, secrets stripped by
-   type, warnings.
+   type, personal data found (type or label, count and session, never the
+   value), warnings.
 
 Nothing is tracked by default. Until the user runs `hub track`, a sync
 uploads nothing.
@@ -264,7 +276,9 @@ uploads nothing.
 - If the server cannot be reached, the command exits with an error and marks
   nothing as synced. The next sync sends it.
 
-## 8. Secret stripping
+## 8. Secret stripping and personal data
+
+### Secrets
 
 Lives in `packages/core`. The collector applies it before anything leaves the
 PC. The server applies the same code again on upload as a second check; if it
@@ -287,6 +301,52 @@ Stripping is pattern-based and cannot catch everything, for example a
 password typed in a plain sentence. The store is therefore still treated as
 sensitive: every endpoint except the health check needs a token, and nothing
 is ever served publicly.
+
+### Personal data
+
+A second filter, for personal data that is not a credential. It lives in
+`packages/core`, runs in the collector after secret stripping, and covers the
+same fields. Unlike secrets, it is not repeated on the server: the levels and
+the personal list exist only on the PC.
+
+**What is detected**
+
+| Type | How |
+|---|---|
+| `card` | 13 to 19 digits, allowing spaces or dashes between them, that pass the Luhn checksum. A number that fails the checksum is left alone |
+| The personal list | The user's own values in `personal.json`, each with a label, for example `phone` or `home-address`. Matching ignores letter case. For a value made of digits and separators, only the digits are compared, so `0812-3456-7890` and `0812 3456 7890` match the same entry. A different prefix (`+62` instead of `0`) is a different value and needs its own entry |
+
+Phone numbers are matched from the list and not by pattern on purpose: in
+coding transcripts, timestamps and IDs look like phone numbers, so a pattern
+would damage technical content or miss the real number.
+
+**Levels**
+
+| Level | Effect on upload | Sync summary |
+|---|---|---|
+| `off` | None | Not reported |
+| `warn` (default) | Uploaded unchanged | Reported |
+| `partial` | Masked except the last 4 characters: `[CARD ····4242]`, `[PERSONAL:phone ····7890]`. A value shorter than 8 characters is masked completely | Reported |
+| `full` | Replaced: `[REDACTED:card]`, `[REDACTED:phone]` | Reported |
+
+- The level is set for `card`, for the personal list as a whole, and
+  optionally per list entry. The most specific setting wins.
+- Labels appear in the markers and are uploaded, so they should be generic
+  words, not the value itself.
+- Changing a level or the list changes the settings fingerprint (section 7),
+  so the next sync re-processes tracked sessions. Raising a level therefore
+  also masks the value in sessions that were uploaded earlier.
+
+**What the default means**
+
+With `warn`, nothing is hidden. A found value is stored on the VPS, is
+searchable there, is returned to assistants that read the session, and is
+part of the text sent to the Anthropic API when the digest is written. The
+warning only tells the user it is there, so he can raise the level, skip the
+session, or accept it.
+
+The filter cannot catch everything, for example a card number with words
+between the digits, or a personal value that is not in the list.
 
 ## 9. Server
 
@@ -472,7 +532,8 @@ in every format listed in section 8.
 |---|---|
 | Adapters | Each tool's fixture becomes the expected common-format session; bad lines and unknown record types are counted, not fatal; subagent transcripts get the right parent |
 | Project keys | Git remote, worktree, subfolder, no-git folder, missing folder, Antigravity path inference, alias, assign |
-| Secret stripping | Every type in section 8 is replaced; ordinary text is left alone |
+| Secret stripping | Every secret type in section 8 is replaced; ordinary text is left alone |
+| Personal data | Card numbers with and without separators; a 16-digit number that fails Luhn is untouched; list matching across separators; the output of each level; a short value masked completely; per-entry level beats the general one; the summary and dry run never contain the value; `personal.json` content is never in an upload; a changed level re-processes sessions already uploaded |
 | Selection | Untracked projects and skipped sessions produce no upload |
 | Ingest | Same upload twice changes nothing; a changed session replaces the old one and marks the digest pending; delete removes everything |
 | Access | 401 without a token, 403 with the wrong scope, revoked tokens rejected |
@@ -488,7 +549,8 @@ the automated tests.
 
 ```
 context-hub/
-  packages/core/       common format, secret stripping, project-key rules
+  packages/core/       common format, secret stripping, personal data filter,
+                       project-key rules
   apps/collector/      the hub command and its adapters
   apps/server/         HTTP, storage, search, digests, MCP, hub-admin
   fixtures/            made-up transcripts
