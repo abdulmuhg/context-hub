@@ -1,0 +1,52 @@
+interface Rule {
+  type: string;
+  re: RegExp;
+  /** Builds the replacement from the match groups. Default: the bare marker. */
+  replace?: (groups: string[], marker: string) => string;
+}
+
+const ENV_NAME = '[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH)[A-Z0-9_]*';
+
+// Order matters: specific formats first, the broad env-line rule last.
+const RULES: Rule[] = [
+  { type: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
+  { type: 'github', re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
+  { type: 'anthropic', re: /\bsk-ant-[A-Za-z0-9_-]{20,}/g },
+  { type: 'openai', re: /\bsk-(?!ant-)[A-Za-z0-9_-]{32,}/g },
+  { type: 'aws', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
+  { type: 'google', re: /\bAIza[0-9A-Za-z_-]{35}/g },
+  { type: 'slack', re: /\bxox[a-z]-[A-Za-z0-9-]{10,}/g },
+  { type: 'stripe', re: /\b[sr]k_live_[A-Za-z0-9]{16,}/g },
+  { type: 'npm', re: /\bnpm_[A-Za-z0-9]{36}/g },
+  { type: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
+  {
+    type: 'auth_header',
+    re: /(Authorization\s*:\s*(?:Bearer|Basic)\s+)([^\s"'[]+)/gi,
+    replace: (g, marker) => g[0] + marker,
+  },
+  {
+    type: 'password',
+    re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s@/[]+)(@)/gi,
+    replace: (g, marker) => g[0] + marker + g[2],
+  },
+  {
+    type: 'env',
+    re: new RegExp(`^(\\s*(?:export\\s+)?${ENV_NAME}\\s*[=:]\\s*)(?!\\[REDACTED:)(\\S+)`, 'gm'),
+    replace: (g, marker) => g[0] + marker,
+  },
+];
+
+export function stripSecrets(text: string): { text: string; counts: Record<string, number> } {
+  const counts: Record<string, number> = {};
+  let out = text;
+  for (const rule of RULES) {
+    const marker = `[REDACTED:${rule.type}]`;
+    out = out.replace(rule.re, (...args: unknown[]) => {
+      counts[rule.type] = (counts[rule.type] ?? 0) + 1;
+      // args: match, ...groups, offset, whole string
+      const groups = args.slice(1, -2).map((x) => (typeof x === 'string' ? x : ''));
+      return rule.replace ? rule.replace(groups, marker) : marker;
+    });
+  }
+  return { text: out, counts };
+}
