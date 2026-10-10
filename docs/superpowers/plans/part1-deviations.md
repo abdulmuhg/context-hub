@@ -33,3 +33,8 @@ Rewrote `filterPersonal` in `packages/core/src/personal.ts` after review (plan t
 - `apps/collector/src/sync.ts`: the settings fingerprint is now saved only when the run is unscoped (`!opts.project && !opts.session`), error-free and not a dry run. Why: a scoped run re-processes only a subset, so saving the fingerprint let a later full sync treat never-re-masked sessions as unchanged.
 - `apps/collector/src/sync.ts`: for an unselected item, an existing state entry is left untouched; an entry is written (hash null, synced_at null) only when none exists. Why: the old code paired the file's fresh size/mtime with a stale hash, so an edited file in another project was never uploaded afterwards.
 - Added regression tests in a new describe block in `apps/collector/test/sync.test.ts`.
+
+## Task 10 (fix round 2): refresh project key on untouched state entries
+
+- `apps/collector/src/sync.ts`: for an unselected item with an existing state entry, only `project_key` is updated (not on a dry run); size, mtime, hash and synced_at stay as they were. Why: the previous fix left the entry wholly untouched, so a cached key went stale (the fingerprint does not cover `tracked`) and a session whose project was later aliased and tracked was never uploaded under the new key.
+- Added a regression test in `apps/collector/test/sync.test.ts`.

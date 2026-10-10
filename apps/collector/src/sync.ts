@@ -179,7 +179,9 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     };
 
     if (!isSelected(item, s.cfg, opts)) {
-      if (!prev) remember(null, null); // never rewrite an existing entry: its size and mtime must stay paired with its hash
+      if (prev) {
+        if (!dryRun) prev.project_key = projectKey; // keep size, mtime and hash paired; only the cached key may move
+      } else remember(null, null);
       continue;
     }
     if (prev && item.same && prev.hash !== null) {

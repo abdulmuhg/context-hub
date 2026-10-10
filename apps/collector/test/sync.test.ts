@@ -293,3 +293,21 @@ describe('runSync: scoped syncs do not advance sync state', () => {
     expect(sent[2].body.messages).toHaveLength(2);
   });
 });
+
+describe('runSync: untouched state entries keep a fresh project key', () => {
+  it('classifies a previously unselected session under its new alias once tracked', async () => {
+    track(KEY_A);
+    await runSync(opts());
+    expect(sent).toHaveLength(1);
+
+    saveConfig(hub, { ...loadConfig(hub), aliases: { 'local:beta': 'local:renamed' } });
+    const unscoped = await runSync(opts());
+    expect(unscoped.uploaded).toEqual([]);
+
+    track(KEY_A, 'local:renamed');
+    expect(listProjects(opts()).map((r) => r.key).sort()).toEqual([KEY_A, 'local:renamed']);
+    const report = await runSync(opts());
+    expect(report.uploaded).toEqual([{ project: 'local:renamed', session: `claude-code:${S2}` }]);
+    expect(sent[sent.length - 1].body.project_key).toBe('local:renamed');
+  });
+});
