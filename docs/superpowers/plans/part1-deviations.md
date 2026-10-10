@@ -11,3 +11,8 @@ Rewrote `filterPersonal` in `packages/core/src/personal.ts` after review (plan t
 - Card detection: the plan's single greedy regex per run let a trailing or leading short group (CVV, expiry, order number) turn the whole run into one non-Luhn candidate, so the real card leaked. Now each separator-joined digit run is split into groups and contiguous windows of 13-19 digits aligned to group boundaries are tried, longest and leftmost first, with a Luhn check.
 - Values starting with `+`: the plan's `(?<![\d+])` lookbehind made them unmatchable. The regex now includes a literal `\+` for such values, and still requires no digit or `+` before it.
 - Overlaps: the plan applied entries sequentially to already-rewritten text, so short entries matched inside markers and results depended on entry order. Matches for all entries and cards are now collected on the original text, overlaps resolved (longest wins, then stronger level full > partial > warn, then leftmost), and the text spliced once. Findings stay per label / `card`.
+
+## Task 3 (fix round 2): card window search and warn precedence
+
+- `cardWindows` tried every window length over the whole run (and recursed on remainders), which was super-polynomial on long space-separated digit lists (800 single digits took 14.7s). It now enumerates only windows of 13-19 digits (at most 19 groups per start), sorts them by group count then position and takes non-overlapping ones greedily. Same results as before: longest first, leftmost, group-aligned, Luhn-checked.
+- A warn hit (no replacement) now loses to any partial/full hit it overlaps, so a stronger nested entry is no longer swallowed by a longer warn-level card hit. A displaced warn hit is not reported.

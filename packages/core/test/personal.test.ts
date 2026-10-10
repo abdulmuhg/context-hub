@@ -169,3 +169,21 @@ describe('filterPersonal: overlapping matches', () => {
     expect(out).toEqual({ text: 'x [REDACTED:acct] y', findings: { acct: 1 } });
   });
 });
+
+describe('filterPersonal: long digit lists and level precedence', () => {
+  it('handles thousands of space-separated digits quickly', () => {
+    // Some windows may pass Luhn and be masked; the point is that it finishes fast and never throws.
+    const text = Array.from({ length: 5000 }, (_, i) => String(i % 10)).join(' ');
+    const t0 = Date.now();
+    const out = filterPersonal(text, cfg({ card: 'full' }));
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(typeof out.text).toBe('string');
+  });
+
+  it('lets a warn card hit yield to a stronger entry nested inside it', () => {
+    const entry = { label: 'pin', value: '4242', level: 'full' as const };
+    const out = filterPersonal('pay 4242 4242 4242 4242 now', cfg({ card: 'warn', entries: [entry] }));
+    expect(out.text).toBe('pay [REDACTED:pin] [REDACTED:pin] [REDACTED:pin] [REDACTED:pin] now');
+    expect(out.findings).toEqual({ pin: 4 });
+  });
+});

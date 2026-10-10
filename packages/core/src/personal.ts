@@ -68,25 +68,42 @@ interface Hit {
   replacement: string | null; // null: leave unchanged
 }
 
-/** Find card numbers inside one separator-joined digit run, on group boundaries. */
+/**
+ * Find card numbers inside one separator-joined digit run, on group boundaries.
+ * Only windows of 13-19 digits are examined (at most 19 groups per start), and
+ * windows are taken longest (most groups) first, then leftmost, skipping any
+ * that overlap one already taken.
+ */
 function cardWindows(
   groups: { start: number; end: number; digits: string }[],
-  lo: number,
-  hi: number,
-  out: { start: number; end: number; digits: string }[],
-): void {
-  if (lo >= hi) return;
-  // Longest window first, leftmost first.
-  for (let len = hi - lo; len >= 1; len--) {
-    for (let s = lo; s + len <= hi; s++) {
-      const digits = groups.slice(s, s + len).map((g) => g.digits).join('');
-      if (digits.length < 13 || digits.length > 19 || !luhn(digits)) continue;
-      out.push({ start: groups[s]!.start, end: groups[s + len - 1]!.end, digits });
-      cardWindows(groups, lo, s, out);
-      cardWindows(groups, s + len, hi, out);
-      return;
+): { start: number; end: number; digits: string }[] {
+  const cands: { s: number; len: number; digits: string }[] = [];
+  for (let s = 0; s < groups.length; s++) {
+    let total = 0;
+    let digits = '';
+    for (let e = s; e < groups.length; e++) {
+      total += groups[e]!.digits.length;
+      if (total > 19) break;
+      digits += groups[e]!.digits;
+      if (total >= 13 && luhn(digits)) cands.push({ s, len: e - s + 1, digits });
     }
   }
+  cands.sort((a, b) => b.len - a.len || a.s - b.s);
+  const taken = new Array<boolean>(groups.length).fill(false);
+  const out: { start: number; end: number; digits: string }[] = [];
+  for (const c of cands) {
+    let free = true;
+    for (let i = c.s; i < c.s + c.len; i++) {
+      if (taken[i]) {
+        free = false;
+        break;
+      }
+    }
+    if (!free) continue;
+    for (let i = c.s; i < c.s + c.len; i++) taken[i] = true;
+    out.push({ start: groups[c.s]!.start, end: groups[c.s + c.len - 1]!.end, digits: c.digits });
+  }
+  return out;
 }
 
 export function filterPersonal(
@@ -120,8 +137,7 @@ export function filterPersonal(
         const start = run.index + g.index;
         groups.push({ start, end: start + g[0].length, digits: g[0] });
       }
-      const found: { start: number; end: number; digits: string }[] = [];
-      cardWindows(groups, 0, groups.length, found);
+      const found = cardWindows(groups);
       for (const c of found) {
         hits.push({
           start: c.start,
@@ -134,9 +150,11 @@ export function filterPersonal(
     }
   }
 
-  // Longest match wins; on a tie the stronger level wins; then the leftmost.
+  // A hit that rewrites text beats a warn hit it overlaps. Then the longest
+  // match wins; on a tie the stronger level wins; then the leftmost.
   hits.sort(
     (a, b) =>
+      Number(b.replacement !== null) - Number(a.replacement !== null) ||
       b.end - b.start - (a.end - a.start) ||
       STRENGTH[b.level] - STRENGTH[a.level] ||
       a.start - b.start,
