@@ -311,3 +311,11 @@ describe('runSync: untouched state entries keep a fresh project key', () => {
     expect(sent[sent.length - 1].body.project_key).toBe('local:renamed');
   });
 });
+
+describe('runSync: --project never bypasses tracking', () => {
+  it('uploads nothing for an untracked project named by --project', async () => {
+    const report = await runSync(opts({ project: 'beta' }));
+    expect(report.uploaded).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+});

@@ -140,7 +140,7 @@ function isSelected(item: Scanned, cfg: Config, opts: SyncOptions): boolean {
   }
   if (cfg.skipped.includes(item.sessionKey)) return false;
   if (item.parentKey && cfg.skipped.includes(item.parentKey)) return false;
-  if (opts.project) return projectMatches(opts.project, item.projectKey);
+  if (opts.project) return cfg.tracked.includes(item.projectKey) && projectMatches(opts.project, item.projectKey);
   return cfg.tracked.includes(item.projectKey);
 }
 

@@ -89,3 +89,80 @@ describe('stripSecrets with a token glued to preceding word characters', () => {
     expect(stripSecrets(text)).toEqual({ text, counts: {} });
   });
 });
+
+describe('stripSecrets: final review fixes', () => {
+  const hdr = '-----BEGIN ' + 'RSA PRIVATE KEY-----';
+  const ftr = '-----END ' + 'RSA PRIVATE KEY-----';
+
+  it('redacts an unterminated private key block to the end of the text', () => {
+    const out = stripSecrets(`key:\n${hdr}\n${a(64)}\n${a(64)}\n(truncated)`);
+    expect(out.text).toBe('key:\n[REDACTED:private_key]');
+    expect(out.counts).toEqual({ private_key: 1 });
+  });
+
+  it('counts a complete block once and keeps the text after it', () => {
+    const out = stripSecrets(`${hdr}\n${a(64)}\n${ftr}\nafter`);
+    expect(out.text).toBe('[REDACTED:private_key]\nafter');
+    expect(out.counts).toEqual({ private_key: 1 });
+  });
+
+  it('redacts a PGP private key block', () => {
+    const out = stripSecrets(`x ${'-----BEGIN PGP PRIVATE KEY BLOCK-----'}\n${a(40)}\n${'-----END PGP PRIVATE KEY BLOCK-----'} y`);
+    expect(out.text).toBe('x [REDACTED:private_key] y');
+  });
+
+  it('redacts a connection-string password containing a slash', () => {
+    const out = stripSecrets('postgres://app:pa/ss@db.example.com:5432/app');
+    expect(out.text).toBe('postgres://app:[REDACTED:password]@db.example.com:5432/app');
+  });
+
+  it('redacts a connection-string password containing an at sign', () => {
+    const out = stripSecrets('postgres://u:p@ss@db.example.com/app');
+    expect(out.text).toBe('postgres://u:[REDACTED:password]@db.example.com/app');
+  });
+
+  it('leaves URLs without a password and redacted markers alone', () => {
+    for (const text of [
+      'see https://example.com:8080/path and git@github.com:me/x.git',
+      'postgres://app:[REDACTED:password]@db.example.com/app',
+    ]) {
+      expect(stripSecrets(text)).toEqual({ text, counts: {} });
+    }
+  });
+
+  it('consumes a quoted env value with spaces', () => {
+    expect(stripSecrets('API_KEY="hunter2 and more words"').text).toBe('API_KEY=[REDACTED:env]');
+    expect(stripSecrets("API_KEY='hunter2 and more words'").text).toBe('API_KEY=[REDACTED:env]');
+    expect(stripSecrets('API_KEY=hunter2 and').text).toBe('API_KEY=[REDACTED:env] and');
+  });
+
+  it('does not double-redact a quoted env value already redacted by a specific rule', () => {
+    const out = stripSecrets(`API_KEY="${fakes.github}"`);
+    expect(out.text).toBe('API_KEY="[REDACTED:github]"');
+    expect(out.counts).toEqual({ github: 1 });
+  });
+
+  it('redacts a JSON or dict style Authorization header', () => {
+    expect(stripSecrets('{"Authorization": "Bearer abc.def-123"}').text).toBe(
+      '{"Authorization": "Bearer [REDACTED:auth_header]"}',
+    );
+    expect(stripSecrets("'Authorization': 'Basic dXNlcjpwYXNz'").text).toBe(
+      "'Authorization': 'Basic [REDACTED:auth_header]'",
+    );
+  });
+
+  it('is idempotent over every new shape', () => {
+    const text = [
+      `${hdr}\n${a(20)}\n(truncated)`,
+      'postgres://u:p@ss@db.example.com/app',
+      'postgres://app:pa/ss@db.example.com/app',
+      'API_KEY="hunter2 and more words"',
+      `API_KEY="${fakes.github}"`,
+      '{"Authorization": "Bearer abc.def-123"}',
+    ].join('\n');
+    const once = stripSecrets(text);
+    const twice = stripSecrets(once.text);
+    expect(twice.text).toBe(once.text);
+    expect(twice.counts).toEqual({});
+  });
+});

@@ -11,7 +11,12 @@ const ENV_NAME = '[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIAL|A
 // Rules with a distinctive prefix have no leading word boundary, so a token glued to
 // preceding word characters (e.g. at a truncation seam) is still caught.
 const RULES: Rule[] = [
-  { type: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
+  {
+    type: 'private_key',
+    re: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g,
+  },
+  // Fallback: a truncated block with no END line is redacted to the end of the text.
+  { type: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*/g },
   { type: 'github', re: /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
   { type: 'anthropic', re: /sk-ant-[A-Za-z0-9_-]{20,}/g },
   { type: 'openai', re: /\bsk-(?!ant-)[A-Za-z0-9_-]{32,}/g },
@@ -23,17 +28,18 @@ const RULES: Rule[] = [
   { type: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
   {
     type: 'auth_header',
-    re: /(Authorization\s*:\s*(?:Bearer|Basic)\s+)([^\s"'[]+)/gi,
+    re: /(Authorization["']?\s*:\s*["']?(?:Bearer|Basic)\s+)([^\s"',}[]+)/gi,
     replace: (g, marker) => g[0] + marker,
   },
   {
     type: 'password',
-    re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s@/[]+)(@)/gi,
+    // The password runs to the last "@" of the authority, so "/" and "@" inside it are covered.
+    re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s[]+?)(@[^\s/@]+)(?=[\s/]|$)/gi,
     replace: (g, marker) => g[0] + marker + g[2],
   },
   {
     type: 'env',
-    re: new RegExp(`^(\\s*(?:export\\s+)?${ENV_NAME}\\s*[=:]\\s*)(?!\\[REDACTED:)(\\S+)`, 'gm'),
+    re: new RegExp(`^(\\s*(?:export\\s+)?${ENV_NAME}\\s*[=:]\\s*)(?!["']?\\[REDACTED:)("[^"\\n]*"|'[^'\\n]*'|\\S+)`, 'gm'),
     replace: (g, marker) => g[0] + marker,
   },
 ];

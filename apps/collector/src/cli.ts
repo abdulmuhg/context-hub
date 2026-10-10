@@ -32,7 +32,7 @@ const USAGE = `Usage: hub <command>
   skip <session> | unskip <session>    exclude one session (<source>:<id>)
   alias <from> <to>                    merge or rename a project key
   assign <session> <project>           set the project of one session
-  sync [--project P] [--session S] [--dry-run]
+  sync [--project P] [--session S] [--dry-run]   (--project narrows tracked projects)
   forget <project> | forget --session <source>:<id>
   status                               ask the server for its status
   personal add <label> | list | remove <label> | level <card|list|label> <level>`;

@@ -38,3 +38,10 @@ Rewrote `filterPersonal` in `packages/core/src/personal.ts` after review (plan t
 
 - `apps/collector/src/sync.ts`: for an unselected item with an existing state entry, only `project_key` is updated (not on a dry run); size, mtime, hash and synced_at stay as they were. Why: the previous fix left the entry wholly untouched, so a cached key went stale (the fingerprint does not cover `tracked`) and a session whose project was later aliased and tracked was never uploaded under the new key.
 - Added a regression test in `apps/collector/test/sync.test.ts`.
+
+## Final review fixes
+
+- `apps/collector/src/sync.ts` `isSelected`: `--project` now narrows the tracked set instead of replacing it (`cfg.tracked.includes(key) && projectMatches(...)`). Why: `hub sync --project X` uploaded an untracked project, so the shipped `/hub-sync` command could upload any repo without `hub track`. `apps/collector/src/cli.ts` USAGE notes that `--project` narrows tracked projects.
+- `packages/core/src/secrets.ts`: private_key gained a fallback rule that redacts an unterminated block to the end of the text, and both private_key rules accept `PRIVATE KEY BLOCK` (PGP). The password-in-URL rule now runs to the last `@` of the authority (covers `/` and `@` inside the password). The env rule value accepts a double- or single-quoted string (no double redaction when it starts with a quote then `[REDACTED:`). The auth_header rule accepts a quoted header name and scheme and stops the value at a quote, comma or brace.
+- `.gitignore`: added `.superpowers/`.
+- New tests in `secrets.test.ts` and `sync.test.ts`; no existing test changed.
