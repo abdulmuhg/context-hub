@@ -1,0 +1,19 @@
+# Built inside the image. Host copies would bloat the context and could ship
+# Windows native binaries into a Linux image.
+node_modules
+**/node_modules
+dist
+**/dist
+.pnpm-store
+
+# Never in an image.
+.env
+.env.*
+!.env.example
+data
+*.sqlite
+*.sqlite-*
+
+.git
+.superpowers
+docs
