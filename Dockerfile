@@ -14,6 +14,13 @@ ENV PATH=$PNPM_HOME:$PATH
 # Matches the pnpm major that wrote pnpm-lock.yaml.
 RUN npm install -g pnpm@11
 
+# better-sqlite3 publishes no prebuilt binary that this install can fetch, so it
+# compiles from source and needs a toolchain. Build stage only: the runtime
+# stage below copies the compiled module and carries none of this.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 RUN pnpm install --frozen-lockfile
 
