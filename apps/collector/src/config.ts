@@ -105,10 +105,23 @@ export function saveToken(dir: string, token: string): void {
   writePrivate(dir, 'credentials', token.trim() + '\n');
 }
 
-/** Covers every setting that changes what a session looks like when uploaded. */
-export function settingsFingerprint(cfg: Config, entries: PersonalEntry[]): string {
+/**
+ * Bump this whenever a change alters what an unchanged session file turns into:
+ * an adapter reads something new, a secret or personal-data rule is added, a cap
+ * changes. The next sync then re-reads every tracked session once and uploads
+ * those whose output differs. Without a bump, files that did not change on disk
+ * are skipped and never get the improvement.
+ *
+ * 1: first release
+ * 2: account id read from bridge-session records; hub tokens stripped
+ */
+export const COLLECTOR_REVISION = 2;
+
+/** Covers everything that changes what a session looks like when uploaded. */
+export function settingsFingerprint(cfg: Config, entries: PersonalEntry[], revision: number = COLLECTOR_REVISION): string {
   const sorted = (o: Record<string, string>) => Object.entries(o).sort(([a], [b]) => a.localeCompare(b));
   const material = JSON.stringify({
+    revision,
     aliases: sorted(cfg.aliases),
     assignments: sorted(cfg.assignments),
     personal: [cfg.personal.card, cfg.personal.list],

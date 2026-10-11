@@ -331,3 +331,38 @@ describe('upload timeout', () => {
     await expect(putSession({ url: 'https://hub.example.com', token: 't', fetchImpl: never, timeoutMs: 50 }, session)).rejects.toThrow(/could not reach/);
   });
 });
+
+describe('runSync: after a collector upgrade', () => {
+  it('re-reads unchanged files once, and uploads only those whose output actually changed', async () => {
+    track(KEY_A, 'local:beta');
+    await runSync(opts());
+    expect(sent).toHaveLength(2);
+
+    // Pretend the last sync was made by an older collector.
+    const { loadState, saveState } = await import('../src/config.js');
+    saveState(hub, { ...loadState(hub), fingerprint: 'fingerprint-from-an-older-collector' });
+
+    // An adapter that now reads something the old one missed, for one session only.
+    const { ALL_ADAPTERS } = await import('../src/adapters/index.js');
+    const real = ALL_ADAPTERS[0]!;
+    let reads = 0;
+    const improved = {
+      ...real,
+      read: (file: Parameters<typeof real.read>[0]) => {
+        reads++;
+        const raw = real.read(file);
+        return file.id === S1 ? { ...raw, account_id: 'acct-now-found' } : raw;
+      },
+    };
+
+    const second = await runSync(opts({ adapters: [improved] }));
+    expect(reads).toBe(2); // both files re-read although neither changed on disk
+    expect(second.uploaded).toEqual([{ project: KEY_A, session: `claude-code:${S1}` }]);
+    expect(second.unchanged).toBe(1);
+    expect(sent[2].body.account_id).toBe('acct-now-found');
+
+    const third = await runSync(opts({ adapters: [improved] }));
+    expect(third.uploaded).toEqual([]);
+    expect(reads).toBe(2); // and not re-read again afterwards
+  });
+});

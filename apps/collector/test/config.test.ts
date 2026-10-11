@@ -111,3 +111,13 @@ describe('settingsFingerprint', () => {
     expect(fp({ ...base, server_url: 'https://x', tracked: ['a'], skipped: ['b'] })).toBe(fp());
   });
 });
+
+describe('settingsFingerprint: collector revision', () => {
+  it('changes when the collector revision changes, so improved parsing reaches sessions already uploaded', async () => {
+    const { COLLECTOR_REVISION } = await import('../src/config.js');
+    const cfg = loadConfig(tempDir());
+    expect(Number.isInteger(COLLECTOR_REVISION)).toBe(true);
+    expect(settingsFingerprint(cfg, [])).toBe(settingsFingerprint(cfg, [], COLLECTOR_REVISION));
+    expect(settingsFingerprint(cfg, [], COLLECTOR_REVISION + 1)).not.toBe(settingsFingerprint(cfg, []));
+  });
+});
