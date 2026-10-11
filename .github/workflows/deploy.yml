@@ -1,9 +1,11 @@
 name: Deploy
 
-# Manual only for now. The push trigger is added in the last task, after one
-# manual run has gone green against a provisioned server. A push trigger
-# against a half-provisioned server fails every commit with an opaque SSH error.
+# Every commit to main deploys. Enabled after a manual dispatch went green
+# against a provisioned server; workflow_dispatch is kept for redeploying an
+# unchanged tree and for rollback testing.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 # Two deploys racing would leave IMAGE_TAG and the running container

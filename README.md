@@ -6,8 +6,10 @@ stopped. Design: `docs/superpowers/specs/2026-10-10-context-hub-design.md`.
 
 ## Status
 
-Parts 1 to 3 of 4: the `hub` collector, the server, and digests with project
-state pages. Deployment (part 4) is not built yet.
+All four parts are built and deployed at https://hub.abdulmughnialfikri.com.
+Every push to `main` deploys. Not built yet: browser login for chat apps
+(claude.ai, ChatGPT, Gemini), a `save` tool, importers for chat-app exports,
+and a dashboard.
 
 ## Run the server locally
 
