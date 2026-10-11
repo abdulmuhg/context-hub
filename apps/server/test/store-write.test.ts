@@ -125,6 +125,7 @@ describe('status', () => {
       projects: 2,
       sessions: 3,
       messages: 6,
+      digests: { pending: 3, ok: 0, failed: 0, refused: 0 },
       last_sync: [
         { project: 'github.com/me/alpha', last_synced_at: LATER },
         { project: 'local:beta', last_synced_at: NOW },

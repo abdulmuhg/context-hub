@@ -1,5 +1,6 @@
 import type { HashedSession, Message } from '@context-hub/core';
 import type { Db } from './db.js';
+import { digestCounts, getDigest, getProjectState, markDigestPending, markStateDirty, type DigestStatus } from './digest-store.js';
 
 export function publicId(source: string, id: string): string {
   return `${source}:${id}`;
@@ -28,8 +29,8 @@ function pruneEmptyProjects(db: Db): void {
 export function upsertSession(db: Db, s: HashedSession, now: string): { changed: boolean } {
   return db.transaction((): { changed: boolean } => {
     const existing = db
-      .prepare('SELECT id, content_hash FROM sessions WHERE source = ? AND source_session_id = ?')
-      .get(s.source, s.source_session_id) as { id: number; content_hash: string } | undefined;
+      .prepare('SELECT id, content_hash, project_id FROM sessions WHERE source = ? AND source_session_id = ?')
+      .get(s.source, s.source_session_id) as { id: number; content_hash: string; project_id: number } | undefined;
     if (existing && existing.content_hash === s.content_hash) return { changed: false };
 
     db.prepare('INSERT INTO projects(key, name, created_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING').run(
@@ -38,6 +39,8 @@ export function upsertSession(db: Db, s: HashedSession, now: string): { changed:
       now,
     );
     const projectId = (db.prepare('SELECT id FROM projects WHERE key = ?').get(s.project_key) as { id: number }).id;
+    // The old project's state page describes work that is leaving it.
+    if (existing && existing.project_id !== projectId) markStateDirty(db, existing.project_id);
 
     let rowId: number;
     if (existing) {
@@ -76,6 +79,9 @@ export function upsertSession(db: Db, s: HashedSession, now: string): { changed:
       }
     }
 
+    // Subagent transcripts are covered by their parent's digest.
+    if (s.parent === null) markDigestPending(db, rowId, now);
+
     pruneEmptyProjects(db);
     return { changed: true };
   })();
@@ -83,10 +89,13 @@ export function upsertSession(db: Db, s: HashedSession, now: string): { changed:
 
 function removeSessions(db: Db, rowIds: number[]): number {
   for (const id of rowIds) {
+    const row = db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(id) as { project_id: number } | undefined;
+    // Whatever the state page says about this session is about to be untrue.
+    if (row) markStateDirty(db, row.project_id);
     removeContent(db, id);
-    db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(id); // its digest row goes with it
   }
-  pruneEmptyProjects(db);
+  pruneEmptyProjects(db); // a removed project takes its state page with it
   return rowIds.length;
 }
 
@@ -112,6 +121,7 @@ export interface Status {
   projects: number;
   sessions: number;
   messages: number;
+  digests: Record<DigestStatus, number>;
   last_sync: { project: string; last_synced_at: string }[];
 }
 
@@ -121,6 +131,7 @@ export function status(db: Db): Status {
     projects: n('projects'),
     sessions: n('sessions'),
     messages: n('messages'),
+    digests: digestCounts(db),
     last_sync: db
       .prepare(
         `SELECT p.key AS project, MAX(s.synced_at) AS last_synced_at
@@ -139,23 +150,23 @@ export interface ProjectSummary {
   session_count: number;
   last_activity_at: string | null;
   last_synced_at: string;
-  /** One-line state. Filled by Part 3. */
+  /** The state page's one-sentence summary, or null before one is written. */
   summary: string | null;
 }
 
 export function listProjects(db: Db): ProjectSummary[] {
-  const rows = db
+  return db
     .prepare(
       `SELECT p.key, p.name,
               SUM(CASE WHEN s.parent IS NULL THEN 1 ELSE 0 END) AS session_count,
               MAX(s.last_activity_at) AS last_activity_at,
-              MAX(s.synced_at) AS last_synced_at
+              MAX(s.synced_at) AS last_synced_at,
+              (SELECT summary FROM project_states ps WHERE ps.project_id = p.id) AS summary
        FROM projects p JOIN sessions s ON s.project_id = p.id
        GROUP BY p.id
        ORDER BY last_activity_at DESC, p.key`,
     )
-    .all() as Omit<ProjectSummary, 'summary'>[];
-  return rows.map((r) => ({ ...r, summary: null }));
+    .all() as ProjectSummary[];
 }
 
 export type Resolved = { ok: true; id: number; key: string } | { ok: false; candidates: string[] };
@@ -170,6 +181,14 @@ export function resolveProject(db: Db, input: string): Resolved {
   return { ok: false, candidates: (matches.length > 1 ? matches : all).map((p) => p.key) };
 }
 
+export interface SessionDigest {
+  text: string;
+  model: string;
+  written_at: string;
+  /** True when this text was written from an older version of the session. */
+  stale: boolean;
+}
+
 export interface SessionSummary {
   session_id: string;
   source: string;
@@ -179,8 +198,10 @@ export interface SessionSummary {
   git_branch: string | null;
   account_id: string | null;
   is_subagent: boolean;
-  /** Filled by Part 3. */
-  digest: null;
+  /** Null until a digest has been written. */
+  digest: SessionDigest | null;
+  /** 'none' for subagent transcripts, which are covered by their parent's digest. */
+  digest_status: DigestStatus | 'none';
 }
 
 interface SessionRow {
@@ -201,7 +222,8 @@ interface SessionRow {
 const SESSION_COLUMNS = `s.id, s.source, s.source_session_id, s.title, s.started_at, s.last_activity_at,
                          s.git_branch, s.account_id, s.parent, s.cwd, s.synced_at, p.key AS project`;
 
-function summarise(r: SessionRow): SessionSummary {
+function summarise(db: Db, r: SessionRow): SessionSummary {
+  const d = getDigest(db, r.id);
   return {
     session_id: publicId(r.source, r.source_session_id),
     source: r.source,
@@ -211,15 +233,24 @@ function summarise(r: SessionRow): SessionSummary {
     git_branch: r.git_branch,
     account_id: r.account_id,
     is_subagent: r.parent !== null,
-    digest: null,
+    digest: d && d.text !== null ? { text: d.text, model: d.model ?? '', written_at: d.updated_at, stale: d.status !== 'ok' } : null,
+    digest_status: d?.status ?? 'none',
   };
+}
+
+export interface ProjectStateView {
+  summary: string;
+  body: string;
+  updated_at: string;
+  /** True when a session was removed or moved since the page was written. */
+  stale: boolean;
 }
 
 export interface ProjectView {
   key: string;
   name: string;
-  /** The project state page. Filled by Part 3. */
-  state: null;
+  /** Null before the first digest of the project has been written. */
+  state: ProjectStateView | null;
   last_synced_at: string;
   recent: SessionSummary[];
 }
@@ -234,7 +265,9 @@ export function getProject(db: Db, projectId: number, sessions: number): Project
        ORDER BY s.last_activity_at DESC, s.id DESC LIMIT ?`,
     )
     .all(projectId, sessions) as SessionRow[];
-  return { key: project.key, name: project.name, state: null, last_synced_at: synced.t, recent: rows.map(summarise) };
+  const page = getProjectState(db, projectId);
+  const state: ProjectStateView | null = page ? { summary: page.summary, body: page.body, updated_at: page.updated_at, stale: page.dirty } : null;
+  return { key: project.key, name: project.name, state, last_synced_at: synced.t, recent: rows.map((r) => summarise(db, r)) };
 }
 
 export interface SessionPage {
@@ -297,7 +330,7 @@ export function getSessionPage(db: Db, source: string, id: string, fromSeq: numb
   }
 
   return {
-    session: { ...summarise(row), project: row.project, cwd: row.cwd, message_count: total, last_synced_at: row.synced_at },
+    session: { ...summarise(db, row), project: row.project, cwd: row.cwd, message_count: total, last_synced_at: row.synced_at },
     messages,
     next_seq: next,
   };
