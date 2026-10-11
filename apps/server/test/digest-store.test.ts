@@ -45,7 +45,7 @@ beforeEach(() => {
 
 describe('migration 2', () => {
   it('adds the digest and state tables and bumps the schema version', () => {
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBe(3);
     const names = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name);
     expect(names).toEqual(expect.arrayContaining(['digests', 'project_states']));
   });
@@ -226,5 +226,51 @@ describe('subagent sessions', () => {
     saveDigest(db, { sessionRowId: sub, hash: 'h1', model: 'm', body: BODY, text: 'sub', now: T0 });
     // beta has only an ok digest on a subagent session and no page: nothing to build.
     expect(nextProjectNeedingState(db)).toBeNull();
+  });
+});
+
+describe('review fixes: restart and upgrade', () => {
+  it('queued work survives closing and reopening the database file', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-restart-')), 'hub.sqlite');
+    db = openDb(path);
+    const pending = addSession('p');
+    const failed = addSession('f');
+    markDigestPending(db, pending, T0);
+    markDigestPending(db, failed, T0);
+    failDigest(db, failed, 'boom', T0);
+    db.close();
+
+    db = openDb(path);
+    expect(nextDueDigest(db, T0)).toMatchObject({ session_id: pending });
+    expect(getDigest(db, failed)).toMatchObject({ status: 'failed', attempts: 1 });
+    expect(nextDueDigest(db, at(DAILY_RETRY_MS))).not.toBeNull();
+    db.close();
+  });
+
+  it('upgrading a database that already holds sessions queues a digest for each main session', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-upgrade-')), 'hub.sqlite');
+    db = openDb(path);
+    const main = addSession('main');
+    const sub = addSession('main/agent-1', { parent: 'main' });
+    // Put the file back to how Part 2 left it: no digest tables, version 1.
+    db.exec('DROP TABLE IF EXISTS state_retries; DROP TABLE project_states; DROP TABLE digests;');
+    db.pragma('user_version = 1');
+    db.close();
+
+    const raw = new Database(path);
+    expect(raw.pragma('user_version', { simple: true })).toBe(1);
+    raw.close();
+
+    db = openDb(path);
+    expect(getDigest(db, main)).toMatchObject({ status: 'pending' });
+    expect(getDigest(db, sub)).toBeNull();
+    db.close();
   });
 });

@@ -90,6 +90,20 @@ const MIGRATIONS: string[] = [
     dirty       INTEGER NOT NULL DEFAULT 0
   );
   `,
+  `
+  -- A project whose state page could not be written waits here before the next try.
+  CREATE TABLE state_retries (
+    project_id       INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    attempts         INTEGER NOT NULL,
+    next_attempt_at  TEXT NOT NULL,
+    error            TEXT
+  );
+
+  -- Sessions stored before digests existed get one queued.
+  INSERT INTO digests(session_id, status, updated_at)
+  SELECT id, 'pending', synced_at FROM sessions
+  WHERE parent IS NULL AND id NOT IN (SELECT session_id FROM digests);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

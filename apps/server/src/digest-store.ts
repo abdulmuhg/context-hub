@@ -159,8 +159,30 @@ export function markStateDirty(db: Db, projectId: number): void {
   db.prepare('UPDATE project_states SET dirty = 1 WHERE project_id = ?').run(projectId);
 }
 
-export function nextProjectNeedingState(db: Db): number | null {
-  const row = db
+/** Records a failed attempt to write a project's state page and schedules the next one. */
+export function failState(db: Db, projectId: number, error: string, now: string): { attempts: number; next_attempt_at: string } {
+  const prev = (db.prepare('SELECT attempts FROM state_retries WHERE project_id = ?').get(projectId) as { attempts: number } | undefined)?.attempts ?? 0;
+  const attempts = prev + 1;
+  const next = new Date(Date.parse(now) + (RETRY_DELAYS_MS[attempts - 1] ?? DAILY_RETRY_MS)).toISOString();
+  db.prepare(
+    `INSERT INTO state_retries(project_id, attempts, next_attempt_at, error) VALUES (?, ?, ?, ?)
+     ON CONFLICT(project_id) DO UPDATE SET attempts = excluded.attempts, next_attempt_at = excluded.next_attempt_at, error = excluded.error`,
+  ).run(projectId, attempts, next, error.slice(0, 500));
+  return { attempts, next_attempt_at: next };
+}
+
+export function clearStateRetry(db: Db, projectId: number): void {
+  db.prepare('DELETE FROM state_retries WHERE project_id = ?').run(projectId);
+}
+
+/** True while a project is waiting out a failed state-page attempt. */
+export function stateIsWaiting(db: Db, projectId: number, now: string): boolean {
+  return db.prepare('SELECT 1 FROM state_retries WHERE project_id = ? AND next_attempt_at > ?').get(projectId, now) !== undefined;
+}
+
+/** With `now`, projects still waiting out a failed attempt are left out. */
+export function nextProjectNeedingState(db: Db, now?: string): number | null {
+  const rows = db
     .prepare(
       `SELECT p.id FROM projects p
        LEFT JOIN project_states ps ON ps.project_id = p.id
@@ -168,10 +190,11 @@ export function nextProjectNeedingState(db: Db): number | null {
           OR (ps.project_id IS NULL AND EXISTS (
                 SELECT 1 FROM digests d JOIN sessions s ON s.id = d.session_id
                 WHERE s.project_id = p.id AND s.parent IS NULL AND d.status = 'ok'))
-       ORDER BY p.id LIMIT 1`,
+       ORDER BY p.id`,
     )
-    .get() as { id: number } | undefined;
-  return row?.id ?? null;
+    .all() as { id: number }[];
+  const ready = now === undefined ? rows : rows.filter((r) => !stateIsWaiting(db, r.id, now));
+  return ready[0]?.id ?? null;
 }
 
 export function okDigestsForProject(db: Db, projectId: number): { session_id: string; title: string; last_activity_at: string | null; text: string }[] {

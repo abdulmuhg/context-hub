@@ -19,3 +19,18 @@ project before the model call (`pageSources`) and, after saving, marks the page 
 again when the list changed (`savePage`). The `saveProjectState` signature is unchanged.
 Test: `keeps the page stale when a session is deleted while the page is being rebuilt`
 in `worker.test.ts`.
+
+## Review fixes (after the build)
+
+- `db.ts`, migration 3: a `state_retries` table, and a backfill that queues a digest
+  for every main session stored before digests existed.
+- `digest-store.ts`, `worker.ts`: a state page that fails to build now waits before
+  the next try, on the same schedule as a failed digest (1 minute, 5 minutes,
+  30 minutes, 2 hours, then daily). Before, it was retried on every pass, every
+  5 seconds, without limit, and it blocked the pages of other projects. While a
+  project is waiting, new digests do not trigger a page call; the page is flagged
+  and rebuilt from all digests when the wait is over.
+- One existing worker test expected an immediate retry of a failed page. It now
+  advances the clock by one minute first, with a comment saying why.
+- New tests: queued work survives closing and reopening the database file, and
+  upgrading a Part 2 database queues its sessions.

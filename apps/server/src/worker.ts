@@ -1,8 +1,10 @@
 import type { Message } from '@context-hub/core';
 import type { Db } from './db.js';
 import {
+  clearStateRetry,
   deleteProjectState,
   failDigest,
+  failState,
   getProjectState,
   markStateDirty,
   nextDueDigest,
@@ -11,6 +13,7 @@ import {
   refuseDigest,
   saveDigest,
   saveProjectState,
+  stateIsWaiting,
   type DigestBody,
   type DueDigest,
 } from './digest-store.js';
@@ -102,6 +105,7 @@ const pageSources = (db: Db, projectId: number): string =>
 /** Saves a page, and keeps it flagged when its sources changed while the model was working. */
 function savePage(c: Ctx, projectId: number, page: { summary: string; body: string }, fullRebuild: boolean, sourcesBefore: string): void {
   saveProjectState(c.db, projectId, { ...page, model: c.llm.model }, c.now(), fullRebuild);
+  clearStateRetry(c.db, projectId);
   if (pageSources(c.db, projectId) !== sourcesBefore) markStateDirty(c.db, projectId);
 }
 
@@ -112,6 +116,7 @@ async function rebuildState(c: Ctx, projectId: number): Promise<void> {
   const all = okDigestsForProject(c.db, projectId);
   if (all.length === 0) {
     deleteProjectState(c.db, projectId);
+    clearStateRetry(c.db, projectId);
     return;
   }
   // Newest first until the limit is reached, then back into oldest-first order.
@@ -136,6 +141,12 @@ async function rebuildState(c: Ctx, projectId: number): Promise<void> {
 }
 
 async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Promise<void> {
+  // The page failed recently and is waiting. Do not spend a call per digest on it;
+  // flag it so the state pass rebuilds it with every digest once the wait is over.
+  if (stateIsWaiting(c.db, due.project_id, c.now())) {
+    markStateDirty(c.db, due.project_id);
+    return;
+  }
   const state = getProjectState(c.db, due.project_id);
   const old = state ? Date.parse(c.now()) - Date.parse(state.rebuilt_at) > REBUILD_AFTER_MS : false;
   if (!state || state.dirty || old) return rebuildState(c, due.project_id);
@@ -179,7 +190,8 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
   } catch (e) {
     // The digest is safe. Leave the page to the state pass.
     markStateDirty(c.db, due.project_id);
-    c.log(`state ${due.project_key}: update failed (${message(e)}); it will be rebuilt`);
+    const r = failState(c.db, due.project_id, message(e), c.now());
+    c.log(`state ${due.project_key}: update failed (${message(e)}); attempt ${r.attempts}, next try ${r.next_attempt_at}`);
     return 'error';
   }
   return 'digest';
@@ -191,13 +203,14 @@ export async function runOnce(deps: WorkerDeps): Promise<'digest' | 'state' | 'i
   const due = nextDueDigest(c.db, c.now());
   if (due) return digestOne(c, due);
 
-  const projectId = nextProjectNeedingState(c.db);
+  const projectId = nextProjectNeedingState(c.db, c.now());
   if (projectId !== null) {
     try {
       await rebuildState(c, projectId);
       return 'state';
     } catch (e) {
-      c.log(`state project ${projectId}: rebuild failed (${message(e)}); it will be tried again`);
+      const r = failState(c.db, projectId, message(e), c.now());
+      c.log(`state project ${projectId}: rebuild failed (${message(e)}); attempt ${r.attempts}, next try ${r.next_attempt_at}`);
       return 'error';
     }
   }

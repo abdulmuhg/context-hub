@@ -206,6 +206,8 @@ describe('runOnce: project state', () => {
     expect(n).toBe(1);
     expect(getDigest(db, rowId('b'))!.status).toBe('ok');
     expect(getProjectState(db, pid('alpha'))!.dirty).toBe(true);
+    expect(await runOnce(deps())).toBe('idle'); // changed in review: a failed page waits before it is retried
+    clock += 60_000;
     expect(await runOnce(deps())).toBe('state'); // the healthy model repairs it
     expect(getProjectState(db, pid('alpha'))!.dirty).toBe(false);
   });
@@ -264,5 +266,71 @@ describe('startWorker', () => {
     await new Promise((r) => setTimeout(r, 30));
     await worker.stop();
     expect(logs.join('\n')).toMatch(/clock exploded/);
+  });
+});
+
+describe('runOnce: a state page that keeps failing', () => {
+  /** A model whose digests work and whose state pages always fail. */
+  const brokenState = (): { llm: FakeLlm; stateCalls: () => number } => {
+    const broken = new FakeLlm();
+    let n = 0;
+    broken.projectState = async () => {
+      n++;
+      throw new Error('401 invalid key');
+    };
+    return { llm: broken, stateCalls: () => n };
+  };
+
+  it('waits before retrying instead of calling the model on every pass', async () => {
+    add('a');
+    const { llm: broken, stateCalls } = brokenState();
+    const d = deps({ llm: broken });
+    expect(await runOnce(d)).toBe('error'); // digest saved, first page attempt fails
+    expect(stateCalls()).toBe(1);
+    for (let i = 0; i < 10; i++) expect(await runOnce(d)).toBe('idle');
+    expect(stateCalls()).toBe(1);
+    clock += 60_000;
+    expect(await runOnce(d)).toBe('error');
+    expect(stateCalls()).toBe(2);
+    clock += 60_000; // second wait is 5 minutes, so one minute is not enough
+    expect(await runOnce(d)).toBe('idle');
+    expect(stateCalls()).toBe(2);
+    expect(logs.join('\n')).toMatch(/next try/);
+  });
+
+  it('does not block the page of another project', async () => {
+    add('a');
+    const { llm: broken } = brokenState();
+    await runOnce(deps({ llm: broken })); // alpha: digest ok, page failed and now waiting
+    add('b1', { project_key: 'local:beta' });
+    expect(await runOnce(deps())).toBe('digest'); // healthy model: beta digest and page
+    expect(getProjectState(db, pid('beta'))).not.toBeNull();
+    expect(getProjectState(db, pid('alpha'))).toBeNull();
+  });
+
+  it('does not spend a page call per new digest while the project is waiting', async () => {
+    add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    const { llm: broken, stateCalls } = brokenState();
+    const d = deps({ llm: broken });
+    await runOnce(d);
+    add('b', { last_activity_at: '2026-10-02T00:00:00.000Z' });
+    add('c', { last_activity_at: '2026-10-03T00:00:00.000Z' });
+    expect(await runOnce(d)).toBe('digest');
+    expect(await runOnce(d)).toBe('digest');
+    expect(stateCalls()).toBe(1);
+    expect(getDigest(db, rowId('c'))!.status).toBe('ok');
+  });
+
+  it('builds the page with every digest once the model recovers, and forgets the failures', async () => {
+    add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    const { llm: broken } = brokenState();
+    await runOnce(deps({ llm: broken }));
+    add('b', { last_activity_at: '2026-10-02T00:00:00.000Z' });
+    await runOnce(deps()); // digest b; alpha's page is still waiting
+    clock += 60_000;
+    expect(await runOnce(deps())).toBe('state');
+    const req = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { mode: string; digests: { session_id: string }[] };
+    expect(req.digests.map((x) => x.session_id)).toEqual(['claude-code:a', 'claude-code:b']);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM state_retries').get()).toEqual({ n: 0 });
   });
 });
