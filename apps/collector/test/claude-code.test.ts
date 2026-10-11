@@ -159,3 +159,34 @@ describe('claudeCode.read', () => {
     expect(raw).toMatchObject({ source_session_id: `${SID}/agent-a1`, parent: SID });
   });
 });
+
+describe('claudeCode.read: account id', () => {
+  const readRecords = (records: unknown[]) => {
+    const h = home(records);
+    return claudeCode.read(claudeCode.discover(h)[0]);
+  };
+  const plain = (text: string) => {
+    const r = rec('user', text) as Record<string, unknown>;
+    delete r.ownerAccountUuid;
+    return r;
+  };
+
+  // Found on real history: the account id is written on bridge-session records,
+  // not on the user and assistant records.
+  it('takes the account id from a bridge-session record', () => {
+    const raw = readRecords([plain('hi'), { type: 'bridge-session', bridgeSessionId: 'b1', ownerAccountUuid: 'acct-from-bridge' }]);
+    expect(raw.account_id).toBe('acct-from-bridge');
+    expect(raw.messages).toHaveLength(1);
+    expect(raw.warnings.unknown_records).toBe(0);
+  });
+
+  it('keeps the first account id seen and is null when none is recorded', () => {
+    const two = readRecords([
+      { type: 'bridge-session', ownerAccountUuid: 'first' },
+      plain('hi'),
+      { type: 'bridge-session', ownerAccountUuid: 'second' },
+    ]);
+    expect(two.account_id).toBe('first');
+    expect(readRecords([plain('hi')]).account_id).toBeNull();
+  });
+});

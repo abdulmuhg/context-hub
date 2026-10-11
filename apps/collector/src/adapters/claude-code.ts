@@ -64,6 +64,9 @@ function read(file: SessionFile): RawSession {
       raw.warnings.bad_lines++;
       continue;
     }
+    // The account id is written on bridge-session records, not on the messages,
+    // so read it from whichever record carries it before any record is skipped.
+    if (typeof r?.ownerAccountUuid === 'string' && r.ownerAccountUuid !== '') raw.account_id ??= r.ownerAccountUuid;
     if (r?.type === 'custom-title' && typeof r.customTitle === 'string') {
       raw.title = r.customTitle;
       continue;
