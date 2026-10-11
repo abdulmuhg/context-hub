@@ -38,11 +38,31 @@ const STATE_SYSTEM = [
   'Write the body in Markdown with exactly these sections: "## What this is", "## Current state", "## Recent decisions", "## Open items", "## Latest sessions".',
   'Under "Latest sessions" list the most recent sessions, newest first, each with its session id in backticks so it can be opened.',
   'The summary is one sentence of at most 25 words stating where the project stands now. Put detail in the body, not the summary.',
-  'Newer sessions override older ones. Keep the page under 600 words.',
+  'Newer sessions override older ones.',
+  'The page is a current briefing, not a history. Keep the whole body under 600 words, whatever the number of sessions. Limits per section: "Current state" at most 8 bullets; "Recent decisions" at most 8, keeping the ones a newcomer most needs and dropping older or superseded ones; "Open items" at most 10; "Latest sessions" at most 5, one line each. When a section is over its limit, drop the oldest or least important entries. Detail that no longer fits stays available in the session digests, so nothing is lost by leaving it out.',
   '"Open items" holds only what is still unresolved. When a later session shows an item was done, decided or made unnecessary, delete it from the page. Never keep it with a note that it is closed, resolved or done.',
   "Each session comes with its date. A fact about the developer's machine or tooling (a tool that is or is not installed, a version, a failing command) may have changed since it was recorded, so state it with that date: \"gh CLI was not installed as of 2026-09-15\". Do not present it as true today. If a later session contradicts it, keep only the later fact.",
   COMMON,
 ].join('\n');
+
+/** The prompt asks for under 600 words; above this the page is sent back to be shortened. */
+const STATE_HARD_WORDS = 750;
+
+const wordCount = (s: string): number => s.trim().split(/\s+/).filter(Boolean).length;
+
+/** Keeps whole "## " sections, in order, until the next one would pass the limit. */
+function cutToSections(body: string, maxWords: number): string {
+  const sections = body.split(/\n(?=## )/);
+  const kept: string[] = [];
+  let used = 0;
+  for (const section of sections) {
+    const n = wordCount(section);
+    if (kept.length > 0 && used + n > maxWords) break;
+    kept.push(section);
+    used += n;
+  }
+  return kept.join('\n').trimEnd() + '\n\n_(Page shortened to fit. Older detail is in the session digests.)_';
+}
 
 export class AnthropicLlm implements Llm {
   readonly model: string;
@@ -82,15 +102,26 @@ export class AnthropicLlm implements Llm {
     return this.ask<DigestBody>(MERGE_SYSTEM, `Project: ${req.project}\nSession title: ${req.title}\n\n${parts}`, DigestSchema);
   }
 
-  projectState(req: StateRequest): Promise<StatePage> {
+  async projectState(req: StateRequest): Promise<StatePage> {
     const digests = req.digests
       .map((d) => `<session id="${d.session_id}" date="${d.date ?? 'unknown'}" title="${d.title.replace(/"/g, "'")}">\n${d.text}\n</session>`)
       .join('\n');
     const task =
       req.mode === 'merge'
-        ? 'Update the previous page with the new session digest below. Change only what the new session changes.'
+        ? 'Fold the new session digest below into the previous page. The result must still fit the length limits: make room by dropping the oldest or least important entries, not by exceeding them.'
         : 'Write the page from scratch from the session digests below, which are in order from oldest to newest.';
     const previous = req.previous === null ? '' : `\n<previous_page>\n${req.previous}\n</previous_page>\n`;
-    return this.ask<StatePage>(STATE_SYSTEM, `Project: ${req.project}\n${task}\n${previous}\n${digests}`, StateSchema);
+    const page = await this.ask<StatePage>(STATE_SYSTEM, `Project: ${req.project}\n${task}\n${previous}\n${digests}`, StateSchema);
+    if (wordCount(page.body) <= STATE_HARD_WORDS) return page;
+
+    // Merging one digest at a time made pages grow without bound in practice.
+    // Ask once for a shorter version; if that is still too long, cut it here
+    // so the page can never keep growing.
+    const shorter = await this.ask<StatePage>(
+      STATE_SYSTEM,
+      `Project: ${req.project}\nThe page below is too long. Rewrite it to fit the limits: under 600 words in total, with the per-section limits. Keep what someone continuing the project needs most.\n\n<page>\n${page.body}\n</page>`,
+      StateSchema,
+    );
+    return wordCount(shorter.body) <= STATE_HARD_WORDS ? shorter : { summary: shorter.summary, body: cutToSections(shorter.body, STATE_HARD_WORDS) };
   }
 }

@@ -168,3 +168,67 @@ describe('prompt rules found by reading the first real digests', () => {
     expect(await digestSystem()).toMatch(/at the time/i);
   });
 });
+
+describe('the state page stays within its length', () => {
+  const digests = [{ session_id: 'claude-code:a', title: 'T', date: '2026-10-01T00:00:00.000Z', text: 'Goal: x' }];
+  const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ');
+
+  /** A stub that answers each call with the next response in the list. */
+  function sequence(responses: { summary: string; body: string }[]): { client: ParseClient; sent: any[] } {
+    const sent: any[] = [];
+    let i = 0;
+    return {
+      sent,
+      client: {
+        messages: {
+          parse: async (args: any) => {
+            sent.push(args);
+            return { stop_reason: 'end_turn', parsed_output: responses[Math.min(i++, responses.length - 1)] };
+          },
+        },
+      },
+    };
+  }
+
+  it('gives every section a stated limit, and merging no longer means only adding', async () => {
+    const { client, sent } = sequence([{ summary: 's', body: 'short' }]);
+    await new AnthropicLlm({ client }).projectState({ project: 'p', mode: 'merge', previous: 'OLD', digests });
+    expect(sent[0].system).toMatch(/at most 5/);
+    expect(sent[0].system).toMatch(/at most 8/);
+    expect(sent[0].system).toMatch(/600 words/);
+    const user = JSON.stringify(sent[0].messages[0].content);
+    expect(user).not.toMatch(/Change only what the new session changes/);
+    expect(user).toMatch(/drop/i);
+  });
+
+  it('accepts a page within the limit without a second call', async () => {
+    const { client, sent } = sequence([{ summary: 's', body: words(500) }]);
+    const page = await new AnthropicLlm({ client }).projectState({ project: 'p', mode: 'rebuild', previous: null, digests });
+    expect(sent).toHaveLength(1);
+    expect(page.body.split(/\s+/)).toHaveLength(500);
+  });
+
+  it('asks once for a shorter page when the first answer is too long', async () => {
+    const { client, sent } = sequence([
+      { summary: 'long one', body: words(1700) },
+      { summary: 'short one', body: words(550) },
+    ]);
+    const page = await new AnthropicLlm({ client }).projectState({ project: 'p', mode: 'merge', previous: 'OLD', digests });
+    expect(sent).toHaveLength(2);
+    expect(JSON.stringify(sent[1].messages[0].content)).toContain('w1699');
+    expect(JSON.stringify(sent[1].messages[0].content)).toMatch(/600 words/);
+    expect(page).toEqual({ summary: 'short one', body: words(550) });
+  });
+
+  it('does not loop: a second answer that is still too long is cut at a section boundary', async () => {
+    const section = (name: string, n: number) => `## ${name}\n${words(n)}`;
+    const body = [section('What this is', 100), section('Current state', 300), section('Recent decisions', 300), section('Open items', 300), section('Latest sessions', 300)].join('\n\n');
+    const { client, sent } = sequence([{ summary: 's', body }, { summary: 's', body }]);
+    const page = await new AnthropicLlm({ client }).projectState({ project: 'p', mode: 'rebuild', previous: null, digests });
+    expect(sent).toHaveLength(2);
+    expect(page.body.split(/\s+/).length).toBeLessThanOrEqual(800);
+    expect(page.body).toContain('## What this is');
+    expect(page.body).toContain('## Current state');
+    expect(page.body).toMatch(/shortened/i);
+  });
+});
