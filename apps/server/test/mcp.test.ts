@@ -132,3 +132,17 @@ describe('get_session', () => {
     expect(malformed.data.error).toMatch(/<source>:<id>/);
   });
 });
+
+describe('instructions: the hub is a briefing, not a live status', () => {
+  it('says the record misses changes made outside a conversation, and names the common ones', () => {
+    expect(INSTRUCTIONS).toMatch(/outside (a|any) (recorded )?conversation/i);
+    expect(INSTRUCTIONS).toMatch(/pull request/i);
+    expect(INSTRUCTIONS).toMatch(/branch/i);
+  });
+
+  it('tells the assistant to verify before acting when it can, and to say so when it cannot', () => {
+    expect(INSTRUCTIONS).toMatch(/verify/i);
+    expect(INSTRUCTIONS).toMatch(/before (acting|recommending)/i);
+    expect(INSTRUCTIONS).toMatch(/cannot check|can't check|no way to check/i);
+  });
+});
