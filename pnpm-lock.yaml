@@ -45,6 +45,9 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
+      '@context-hub/collector':
+        specifier: workspace:*
+        version: link:../collector
       '@types/better-sqlite3':
         specifier: ^9.6.0
         version: 9.6.0

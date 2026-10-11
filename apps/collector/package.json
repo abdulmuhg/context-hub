@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "bin": { "hub": "./dist/bin.js" },
+  "exports": {
+    "./sync": "./src/sync.ts",
+    "./config": "./src/config.ts"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsx src/bin.ts"

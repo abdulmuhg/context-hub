@@ -6,8 +6,21 @@ stopped. Design: `docs/superpowers/specs/2026-10-10-context-hub-design.md`.
 
 ## Status
 
-Part 1 of 4: the `hub` collector. The server is not built yet, so real
-uploads have nowhere to go; `hub sync --dry-run` works today.
+Parts 1 and 2 of 4: the `hub` collector and the server. Digests and project
+state pages (part 3) and deployment (part 4) are not built yet, so the lookup
+tools return `digest: null` and `state: null`.
+
+## Run the server locally
+
+    pnpm --filter @context-hub/server build
+    DATABASE_PATH=./data/hub.sqlite node apps/server/dist/main.js
+
+    # in another terminal, same DATABASE_PATH
+    node apps/server/dist/admin-bin.js token create --label collector --scope ingest
+    node apps/server/dist/admin-bin.js token create --label my-assistant --scope read
+
+Give the ingest token to `hub init`. Give the read token to an assistant as a
+bearer token for `http://localhost:3000/mcp`.
 
 ## Install the collector
 

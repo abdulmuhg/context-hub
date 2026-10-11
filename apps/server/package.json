@@ -18,6 +18,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@context-hub/collector": "workspace:*",
     "@types/better-sqlite3": "^9.6.0"
   }
 }
