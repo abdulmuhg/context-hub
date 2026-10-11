@@ -22,6 +22,8 @@ const DIGEST_SYSTEM = [
   "You write digests of AI coding-assistant sessions for a developer's private project archive. A later assistant will read the digest to continue the work without the developer explaining it again.",
   'Each transcript line starts with [n], the position of that message. For every item you list, set seq to the position of the message that best supports it, or null if none does.',
   'TOOL lines show what the assistant ran and a shortened result. Use them as evidence of what was done; do not list every tool call.',
+  'For each decision, write "what" as a short statement and "why" as a clause that reads naturally straight after the word "because": start it in lowercase unless it begins with a name, and do not end either with a full stop.',
+  "A fact about the developer's machine or tooling (a tool that is or is not installed, a version, a failing command) was true at the time of this session and may have changed since. Word it that way: \"gh was not installed at the time\", not \"gh is not installed\".",
   COMMON,
 ].join('\n');
 
@@ -35,8 +37,10 @@ const STATE_SYSTEM = [
   "You maintain the state page of one software project in a developer's private archive. An assistant reads this page first when the developer wants to continue the project.",
   'Write the body in Markdown with exactly these sections: "## What this is", "## Current state", "## Recent decisions", "## Open items", "## Latest sessions".',
   'Under "Latest sessions" list the most recent sessions, newest first, each with its session id in backticks so it can be opened.',
-  'The summary is one sentence stating where the project stands now.',
-  'Newer sessions override older ones. Remove an open item once a later session shows it done. Keep the page under 600 words.',
+  'The summary is one sentence of at most 25 words stating where the project stands now. Put detail in the body, not the summary.',
+  'Newer sessions override older ones. Keep the page under 600 words.',
+  '"Open items" holds only what is still unresolved. When a later session shows an item was done, decided or made unnecessary, delete it from the page. Never keep it with a note that it is closed, resolved or done.',
+  "Each session comes with its date. A fact about the developer's machine or tooling (a tool that is or is not installed, a version, a failing command) may have changed since it was recorded, so state it with that date: \"gh CLI was not installed as of 2026-09-15\". Do not present it as true today. If a later session contradicts it, keep only the later fact.",
   COMMON,
 ].join('\n');
 

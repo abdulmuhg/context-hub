@@ -122,3 +122,49 @@ describe('AnthropicLlm: merge and state', () => {
     expect(JSON.stringify(sent[1].messages[0].content)).toMatch(/from scratch/i);
   });
 });
+
+describe('prompt rules found by reading the first real digests', () => {
+  const page = { summary: 's', body: 'b' };
+  const digests = [{ session_id: 'claude-code:a', title: 'T', date: '2026-09-15T06:43:56.350Z', text: 'Goal: x' }];
+  const stateSystem = async (): Promise<string> => {
+    const { client, sent } = stub({ stop_reason: 'end_turn', parsed_output: page });
+    await new AnthropicLlm({ client }).projectState({ project: 'p', mode: 'rebuild', previous: null, digests });
+    return sent[0].system as string;
+  };
+  const digestSystem = async (): Promise<string> => {
+    const { client, sent } = stub({ stop_reason: 'end_turn', parsed_output: DIGEST });
+    await new AnthropicLlm({ client }).digest(digestReq);
+    return sent[0].system as string;
+  };
+
+  it('the state page lists only unresolved open items and never a "closed" note', async () => {
+    const s = await stateSystem();
+    expect(s).toMatch(/delete it/i);
+    expect(s).toMatch(/never .*(closed|resolved|done)/i);
+  });
+
+  it('facts about the machine carry the date of the session that recorded them', async () => {
+    const s = await stateSystem();
+    expect(s).toMatch(/as of/i);
+    expect(s).toMatch(/installed/i);
+  });
+
+  it('the summary has a stated length limit', async () => {
+    expect(await stateSystem()).toMatch(/25 words/);
+  });
+
+  it('gives the model each session date so it can date those facts', async () => {
+    const { client, sent } = stub({ stop_reason: 'end_turn', parsed_output: page });
+    await new AnthropicLlm({ client }).projectState({ project: 'p', mode: 'rebuild', previous: null, digests });
+    expect(JSON.stringify(sent[0].messages[0].content)).toContain('2026-09-15');
+  });
+
+  it('a decision reason is asked for as a clause that follows "because"', async () => {
+    expect(await digestSystem()).toMatch(/because/);
+    expect(await digestSystem()).toMatch(/lowercase/i);
+  });
+
+  it('the digest dates machine facts too', async () => {
+    expect(await digestSystem()).toMatch(/at the time/i);
+  });
+});

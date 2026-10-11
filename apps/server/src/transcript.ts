@@ -42,13 +42,16 @@ export function splitParts(lines: string[], maxChars: number): string[] {
   return parts;
 }
 
+/** Removes one trailing full stop, so "Kept it. — because X." reads as one sentence. */
+const unstop = (s: string): string => s.trim().replace(/\.$/, '');
+
 const at = (seq: number | null): string => (seq === null ? '' : ` (#${seq})`);
 
 /** The readable form of a digest: what is stored, searched and shown to assistants. */
 export function renderDigest(body: DigestBody): string {
   const out = [`Goal: ${body.goal}`];
   if (body.done.length > 0) out.push('Done:', ...body.done.map((d) => `- ${d.text}${at(d.seq)}`));
-  if (body.decisions.length > 0) out.push('Decisions:', ...body.decisions.map((d) => `- ${d.what} — because ${d.why}${at(d.seq)}`));
+  if (body.decisions.length > 0) out.push('Decisions:', ...body.decisions.map((d) => `- ${unstop(d.what)} — because ${unstop(d.why)}${at(d.seq)}`));
   if (body.open_items.length > 0) out.push('Open:', ...body.open_items.map((d) => `- ${d.text}${at(d.seq)}`));
   if (body.key_refs.length > 0) out.push(`Refs: ${body.key_refs.join(', ')}`);
   return out.join('\n');

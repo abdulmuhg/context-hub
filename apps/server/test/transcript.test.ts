@@ -120,3 +120,15 @@ describe('FakeLlm', () => {
     await expect(llm.digest({ project: 'p', title: 'T', transcript: '', part: null })).resolves.toBeDefined();
   });
 });
+
+describe('renderDigest: decision punctuation', () => {
+  it('drops a full stop between the decision and its reason, and after the reason', () => {
+    const body: DigestBody = { goal: 'g', done: [], decisions: [{ what: 'Kept the branch.', why: 'commit 41727a6 is not in main.', seq: 19 }], open_items: [], key_refs: [] };
+    expect(renderDigest(body)).toBe('Goal: g\nDecisions:\n- Kept the branch — because commit 41727a6 is not in main (#19)');
+  });
+
+  it('leaves punctuation inside the text alone', () => {
+    const body: DigestBody = { goal: 'g', done: [], decisions: [{ what: 'Use v1.2 of the API', why: 'v2.0 dropped the endpoint', seq: null }], open_items: [], key_refs: [] };
+    expect(renderDigest(body)).toBe('Goal: g\nDecisions:\n- Use v1.2 of the API — because v2.0 dropped the endpoint');
+  });
+});
