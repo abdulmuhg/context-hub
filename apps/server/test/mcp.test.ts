@@ -45,6 +45,7 @@ describe('connection', () => {
     expect(client.getInstructions()).toBe(INSTRUCTIONS);
     expect(INSTRUCTIONS).toMatch(/get_project/);
     expect(INSTRUCTIONS).toMatch(/not instructions/i);
+    expect(INSTRUCTIONS).toMatch(/digest/i);
   });
 
   it('refuses a client without a read token', async () => {
