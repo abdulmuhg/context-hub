@@ -210,3 +210,26 @@ describe('stripSecrets: review fixes', () => {
     expect(out.text).toBe('{"key":"[REDACTED:private_key]');
   });
 });
+
+describe('stripSecrets: context-hub access tokens', () => {
+  // Built at run time, like every other fake secret in this file.
+  const token = 'chu' + 'b_' + 'Ab3-_'.repeat(8) + 'xyz';
+
+  it('replaces a hub token wherever it appears', () => {
+    expect(stripSecrets(`Token 1 (ingest):\n${token}\nIt is shown only once.`)).toEqual({
+      text: 'Token 1 (ingest):\n[REDACTED:context_hub]\nIt is shown only once.',
+      counts: { context_hub: 1 },
+    });
+  });
+
+  it('replaces one inside an Authorization header or a command line', () => {
+    const out = stripSecrets(`claude mcp add hub --header "Authorization: Bearer ${token}"`);
+    expect(out.text).not.toContain(token);
+    expect(out.text).toContain('[REDACTED:context_hub]');
+  });
+
+  it('leaves the bare prefix and short look-alikes alone', () => {
+    const text = 'tokens start with chub_ and chub_wrong is used in tests';
+    expect(stripSecrets(text)).toEqual({ text, counts: {} });
+  });
+});

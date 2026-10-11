@@ -24,6 +24,9 @@ const RULES: Rule[] = [
   },
   { type: 'github', re: /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
   { type: 'anthropic', re: /sk-ant-[A-Za-z0-9_-]{20,}/g },
+  // The hub's own access tokens: "chub_" plus 43 base64url characters. Without this,
+  // a session in which a token was created or pasted would upload it.
+  { type: 'context_hub', re: /chub_[A-Za-z0-9_-]{32,}/g },
   { type: 'openai', re: /\bsk-(?!ant-)[A-Za-z0-9_-]{32,}/g },
   { type: 'aws', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
   { type: 'google', re: /AIza[0-9A-Za-z_-]{35}/g },
