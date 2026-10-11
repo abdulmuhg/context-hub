@@ -56,7 +56,7 @@ export function nextDueDigest(db: Db, now: string): DueDigest | null {
     .prepare(
       `SELECT d.session_id, s.source, s.source_session_id, s.title, s.content_hash, s.project_id, p.key AS project_key
        FROM digests d JOIN sessions s ON s.id = d.session_id JOIN projects p ON p.id = s.project_id
-       WHERE d.status = 'pending' OR (d.status = 'failed' AND d.next_attempt_at <= ?)
+       WHERE s.parent IS NULL AND (d.status = 'pending' OR (d.status = 'failed' AND d.next_attempt_at <= ?))
        ORDER BY s.last_activity_at ASC, s.id ASC
        LIMIT 1`,
     )
@@ -167,7 +167,7 @@ export function nextProjectNeedingState(db: Db): number | null {
        WHERE ps.dirty = 1
           OR (ps.project_id IS NULL AND EXISTS (
                 SELECT 1 FROM digests d JOIN sessions s ON s.id = d.session_id
-                WHERE s.project_id = p.id AND d.status = 'ok'))
+                WHERE s.project_id = p.id AND s.parent IS NULL AND d.status = 'ok'))
        ORDER BY p.id LIMIT 1`,
     )
     .get() as { id: number } | undefined;

@@ -210,6 +210,25 @@ describe('runOnce: project state', () => {
     expect(getProjectState(db, pid('alpha'))!.dirty).toBe(false);
   });
 
+  it('keeps the page stale when a session is deleted while the page is being rebuilt', async () => {
+    add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    add('b', { last_activity_at: '2026-10-02T00:00:00.000Z' });
+    await drain();
+    const p = pid('alpha');
+    db.prepare('UPDATE project_states SET dirty = 1').run();
+    const racing = Object.assign(Object.create(Object.getPrototypeOf(llm)), llm) as FakeLlm;
+    racing.projectState = async (req) => {
+      deleteSession(db, 'claude-code', 'a');
+      return FakeLlm.prototype.projectState.call(llm, req);
+    };
+    expect(await runOnce(deps({ llm: racing }))).toBe('state');
+    expect(getProject(db, p, 5).state!.stale).toBe(true);
+    expect(await runOnce(deps())).toBe('state');
+    const last = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { mode: string; digests: { session_id: string }[] };
+    expect(last.digests.map((d) => d.session_id)).toEqual(['claude-code:b']);
+    expect(getProject(db, p, 5).state!.stale).toBe(false);
+  });
+
   it('on a rebuild that does not fit, sends the newest digests that do and the previous page', async () => {
     for (let i = 1; i <= 5; i++) add(`s${i}`, { last_activity_at: `2026-10-0${i}T00:00:00.000Z` });
     await drain();

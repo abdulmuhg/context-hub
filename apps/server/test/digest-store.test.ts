@@ -214,3 +214,17 @@ describe('project state', () => {
     expect(getProjectState(db, p)).toBeNull();
   });
 });
+
+describe('subagent sessions', () => {
+  it('a subagent row is neither due nor a reason to build a project page', () => {
+    const parent = addSession('p');
+    const sub = addSession('p/agent-1', { parent: 'p', project: 'local:beta' });
+    markDigestPending(db, sub, T0);
+    expect(nextDueDigest(db, T0)).toBeNull();
+    markDigestPending(db, parent, T0);
+    expect(nextDueDigest(db, T0)).toMatchObject({ session_id: parent });
+    saveDigest(db, { sessionRowId: sub, hash: 'h1', model: 'm', body: BODY, text: 'sub', now: T0 });
+    // beta has only an ok digest on a subagent session and no page: nothing to build.
+    expect(nextProjectNeedingState(db)).toBeNull();
+  });
+});

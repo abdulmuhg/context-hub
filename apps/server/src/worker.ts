@@ -93,6 +93,18 @@ async function writeDigest(c: Ctx, due: DueDigest): Promise<DigestBody> {
   return c.llm.mergeDigests({ project: due.project_key, title: due.title, parts: bodies });
 }
 
+/** The sessions a page is built from. A change during a model call means the page is already out of date. */
+const pageSources = (db: Db, projectId: number): string =>
+  okDigestsForProject(db, projectId)
+    .map((d) => d.session_id)
+    .join('|');
+
+/** Saves a page, and keeps it flagged when its sources changed while the model was working. */
+function savePage(c: Ctx, projectId: number, page: { summary: string; body: string }, fullRebuild: boolean, sourcesBefore: string): void {
+  saveProjectState(c.db, projectId, { ...page, model: c.llm.model }, c.now(), fullRebuild);
+  if (pageSources(c.db, projectId) !== sourcesBefore) markStateDirty(c.db, projectId);
+}
+
 /** Rebuilds a project's page from its ok digests, or removes the page when none are left. */
 async function rebuildState(c: Ctx, projectId: number): Promise<void> {
   const project = c.db.prepare('SELECT key FROM projects WHERE id = ?').get(projectId) as { key: string } | undefined;
@@ -113,13 +125,14 @@ async function rebuildState(c: Ctx, projectId: number): Promise<void> {
   }
   const truncated = chosen.length < all.length;
   const previous = truncated ? (getProjectState(c.db, projectId)?.body ?? null) : null;
+  const sourcesBefore = pageSources(c.db, projectId);
   const page = await c.llm.projectState({
     project: project.key,
     mode: 'rebuild',
     previous,
     digests: chosen.map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text })),
   });
-  saveProjectState(c.db, projectId, { ...page, model: c.llm.model }, c.now(), true);
+  savePage(c, projectId, page, true, sourcesBefore);
 }
 
 async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Promise<void> {
@@ -128,13 +141,14 @@ async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Pro
   if (!state || state.dirty || old) return rebuildState(c, due.project_id);
 
   const session = c.db.prepare('SELECT last_activity_at FROM sessions WHERE id = ?').get(due.session_id) as { last_activity_at: string | null } | undefined;
+  const sourcesBefore = pageSources(c.db, due.project_id);
   const page = await c.llm.projectState({
     project: due.project_key,
     mode: 'merge',
     previous: state.body,
     digests: [{ session_id: `${due.source}:${due.source_session_id}`, title: due.title, date: session?.last_activity_at ?? null, text }],
   });
-  saveProjectState(c.db, due.project_id, { ...page, model: c.llm.model }, c.now(), false);
+  savePage(c, due.project_id, page, false, sourcesBefore);
 }
 
 async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
