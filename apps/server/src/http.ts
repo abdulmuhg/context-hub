@@ -123,6 +123,16 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
 
     if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) return send(res, 200, { status: 'ok' });
 
+    // Someone opening the address in a browser should see that the service is
+    // up, not an error. Says nothing about what is stored.
+    if (path === '/' && (method === 'GET' || method === 'HEAD')) {
+      return send(res, 200, {
+        name: 'context-hub',
+        status: 'ok',
+        message: 'This service is running. It has no web page: it is used through the hub command and by AI assistants over MCP.',
+      });
+    }
+
     if (path === '/api/status' && method === 'GET') {
       authorise(req, ['ingest', 'read']);
       return send(res, 200, status(db));

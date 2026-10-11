@@ -223,3 +223,26 @@ describe('review fixes', () => {
     expect(next).toBe(200);
   }, 20000);
 });
+
+describe('the bare address', () => {
+  it('answers 200 with a short description instead of an error, without a token', async () => {
+    const res = await call('GET', '/');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.name).toBe('context-hub');
+    expect(body.status).toBe('ok');
+    expect(body.message).toMatch(/no web page/i);
+  });
+
+  it('gives nothing away: no counts, versions, projects or paths to data', async () => {
+    await put();
+    const text = await (await call('GET', '/')).text();
+    expect(text).not.toMatch(/alpha|session|sqlite|token|version|\d{2,}/i);
+  });
+
+  it('answers HEAD too, and other paths are still 404', async () => {
+    expect((await call('HEAD', '/')).status).toBe(200);
+    expect((await call('GET', '/index.html')).status).toBe(404);
+    expect((await call('POST', '/')).status).toBe(404);
+  });
+});
