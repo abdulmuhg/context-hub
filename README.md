@@ -6,9 +6,8 @@ stopped. Design: `docs/superpowers/specs/2026-10-10-context-hub-design.md`.
 
 ## Status
 
-Parts 1 and 2 of 4: the `hub` collector and the server. Digests and project
-state pages (part 3) and deployment (part 4) are not built yet, so the lookup
-tools return `digest: null` and `state: null`.
+Parts 1 to 3 of 4: the `hub` collector, the server, and digests with project
+state pages. Deployment (part 4) is not built yet.
 
 ## Run the server locally
 
@@ -21,6 +20,23 @@ tools return `digest: null` and `state: null`.
 
 Give the ingest token to `hub init`. Give the read token to an assistant as a
 bearer token for `http://localhost:3000/mcp`.
+
+## Digests
+
+Set `ANTHROPIC_API_KEY` before starting the server and it writes a digest of
+each uploaded session and keeps a state page per project. Without the key the
+server still works; digests wait in a queue.
+
+    DIGEST_MODEL              default claude-haiku-5-5
+    DIGEST_EFFORT             default low
+    DIGEST_MAX_INPUT_TOKENS   default 80000
+
+    node apps/server/dist/admin-bin.js digests
+    node apps/server/dist/admin-bin.js redigest <project>
+    node apps/server/dist/admin-bin.js rebuild-state <project>
+
+A digest is a summary and can be wrong. The stored conversation is the
+authority, and every digest item points at the message it came from.
 
 ## Install the collector
 

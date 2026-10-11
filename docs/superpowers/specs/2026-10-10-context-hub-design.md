@@ -404,7 +404,7 @@ the Anthropic API.
 | When? | After an upload stores a main session that has no digest yet, or whose hash differs from the hash its digest was written from |
 | Input | The session's text messages and its tool calls in the shortened form |
 | Output | Structured: goal; what was done; decisions, each with its reason; open items; key files, commands and links. Items point to the message position they came from |
-| Long sessions | Input size is estimated at 3 characters per token. Above `DIGEST_MAX_INPUT_TOKENS` (default 120,000) the session is split at message boundaries, each part is digested, and the part digests are merged in one more call |
+| Long sessions | Input size is estimated at 3 characters per token. Above `DIGEST_MAX_INPUT_TOKENS` (default 80,000) the session is split at message boundaries, each part is digested, and the part digests are merged in one more call The default stays under 100,000 tokens because the default model is priced higher above that size. |
 | Order | One digest at a time, oldest pending first |
 | Failure | Status `failed`, retried after 1 minute, 5 minutes, 30 minutes, 2 hours, then once a day. The session stays stored and searchable throughout |
 | Restart | The queue is the `digests` table, so pending work resumes after a restart |
