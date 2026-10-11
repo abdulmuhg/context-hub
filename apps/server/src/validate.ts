@@ -72,6 +72,13 @@ export function parseSession(body: unknown, source: string, id: string): HashedS
   const hash = str(o, 'content_hash');
   if (!/^[0-9a-f]{64}$/.test(hash)) bad('content_hash', 'must be a SHA-256 hex string');
   if (!Array.isArray(o.messages)) bad('messages', 'must be a list');
+  const messages = (o.messages as unknown[]).map(parseMessage);
+  const seen = new Set<number>();
+  for (const m of messages) {
+    if (m.seq < 0) bad('messages', `has a negative seq (${m.seq})`);
+    if (seen.has(m.seq)) bad('messages', `has two messages with seq ${m.seq}`);
+    seen.add(m.seq);
+  }
 
   return {
     source: bodySource as HashedSession['source'],
@@ -84,7 +91,7 @@ export function parseSession(body: unknown, source: string, id: string): HashedS
     git_branch: nullableStr(o, 'git_branch'),
     started_at: nullableStr(o, 'started_at'),
     last_activity_at: nullableStr(o, 'last_activity_at'),
-    messages: (o.messages as unknown[]).map(parseMessage),
+    messages,
     content_hash: hash,
   };
 }

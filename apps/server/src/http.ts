@@ -8,6 +8,8 @@ import { verifyToken, type Scope } from './tokens.js';
 import { HttpError, parseSession } from './validate.js';
 
 export const MAX_BODY = 20 * 1024 * 1024;
+/** How long an unread request body is discarded before the connection is cut. */
+const DRAIN_MS = 10_000;
 
 export interface AppDeps {
   db: Db;
@@ -21,8 +23,30 @@ export interface AppDeps {
 function send(res: ServerResponse, statusCode: number, body: unknown): void {
   if (res.headersSent) return;
   const text = JSON.stringify(body);
-  res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(text) });
-  res.end(text);
+  const headers: Record<string, string | number> = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(text) };
+  // If we answer before reading the whole request body, the unread bytes would be
+  // parsed as the next request on a kept-alive connection and stall the client.
+  // So discard what is still arriving. Closing the socket instead would reset it
+  // before the client has read this answer. The timer bounds how long a client
+  // can keep sending into the void.
+  const req = res.req;
+  if (!req.complete) {
+    const cut = setTimeout(() => req.destroy(), DRAIN_MS);
+    cut.unref();
+    req.once('end', () => clearTimeout(cut));
+    req.once('close', () => clearTimeout(cut));
+    req.resume();
+  }
+  res.writeHead(statusCode, headers);
+  res.end(req.method === 'HEAD' ? undefined : text);
+}
+
+function decodePart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, 'The address contains an invalid percent-encoding');
+  }
 }
 
 function clientAddress(req: IncomingMessage): string {
@@ -97,7 +121,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     const method = req.method ?? 'GET';
     const path = new URL(req.url ?? '/', 'http://local').pathname;
 
-    if (path === '/healthz' && method === 'GET') return send(res, 200, { status: 'ok' });
+    if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) return send(res, 200, { status: 'ok' });
 
     if (path === '/api/status' && method === 'GET') {
       authorise(req, ['ingest', 'read']);
@@ -107,8 +131,8 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     const sessionPath = /^\/api\/sessions\/([^/]+)\/(.+)$/.exec(path);
     if (sessionPath && (method === 'PUT' || method === 'DELETE')) {
       authorise(req, ['ingest']);
-      const source = decodeURIComponent(sessionPath[1]!);
-      const id = decodeURIComponent(sessionPath[2]!);
+      const source = decodePart(sessionPath[1]!);
+      const id = decodePart(sessionPath[2]!);
       if (method === 'DELETE') return send(res, 200, { deleted: deleteSession(db, source, id) });
       const parsed = parseSession(await readJson(req), source, id);
       const { session, redactions } = stripAgain(parsed);
@@ -120,7 +144,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     const projectPath = /^\/api\/projects\/(.+)$/.exec(path);
     if (projectPath && method === 'DELETE') {
       authorise(req, ['ingest']);
-      return send(res, 200, { deleted: deleteProject(db, decodeURIComponent(projectPath[1]!)) });
+      return send(res, 200, { deleted: deleteProject(db, decodePart(projectPath[1]!)) });
     }
 
     if (path === '/mcp') {

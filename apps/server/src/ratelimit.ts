@@ -1,6 +1,8 @@
 const WINDOW_MS = 5 * 60_000;
 const MAX_FAILURES = 10;
 const BLOCK_MS = 15 * 60_000;
+/** Upper bound on tracked addresses, so a flood of made-up addresses cannot exhaust memory. */
+const MAX_TRACKED = 10_000;
 
 /** Counts failed logins per client address and blocks an address that fails too often. */
 export class AuthLimiter {
@@ -25,7 +27,22 @@ export class AuthLimiter {
       this.blockedUntil.set(address, t + BLOCK_MS);
       this.failures.delete(address);
     } else {
+      this.failures.delete(address); // re-insert so the map stays ordered by last failure
       this.failures.set(address, recent);
+      while (this.failures.size > MAX_TRACKED) {
+        const oldest = this.failures.keys().next().value;
+        if (oldest === undefined) break;
+        this.failures.delete(oldest);
+      }
     }
+    for (const [addr, until] of this.blockedUntil) {
+      if (this.blockedUntil.size <= MAX_TRACKED && t < until) break;
+      this.blockedUntil.delete(addr);
+    }
+  }
+
+  /** How many addresses are being tracked. Used by tests. */
+  size(): number {
+    return this.failures.size + this.blockedUntil.size;
   }
 }

@@ -90,3 +90,18 @@ describe('AuthLimiter', () => {
     expect(limiter.isBlocked('2.2.2.2')).toBe(false);
   });
 });
+
+describe('AuthLimiter: memory bound', () => {
+  it('does not grow without limit when every failure comes from a new address', () => {
+    const limiter = new AuthLimiter(() => 0);
+    for (let i = 0; i < 25000; i++) limiter.recordFailure(`10.${i >> 16}.${(i >> 8) & 255}.${i & 255}`);
+    expect(limiter.size()).toBeLessThanOrEqual(10000);
+  });
+
+  it('still blocks a repeat offender while under that bound', () => {
+    const limiter = new AuthLimiter(() => 0);
+    for (let i = 0; i < 9000; i++) limiter.recordFailure(`a${i}`);
+    for (let i = 0; i < 10; i++) limiter.recordFailure('9.9.9.9');
+    expect(limiter.isBlocked('9.9.9.9')).toBe(true);
+  });
+});

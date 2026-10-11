@@ -18,3 +18,19 @@
 - Step 6 (manual check): `kill %1` job control is unreliable in a non-interactive shell on Windows, so the built server was started in the background with its PID captured (`$!`), then stopped with `kill $PID`; afterwards `curl` to the port failed and `netstat` showed no LISTENING socket on 3917 (only TIME_WAIT). A temp `DATABASE_PATH` (mktemp) was used; no `./data` was created.
 - Step 3: the admin test was confirmed failing (cannot resolve `../src/admin.js`) by temporarily moving `admin.ts` away after it had been written; the e2e tests passed already, as the brief anticipates.
 - `apps/server/src/admin.ts`, `admin-bin.ts`, `main.ts` and both test files are verbatim from the plan; no changes were needed.
+
+## Review fixes (after the build)
+
+- `http.ts`: a request refused before its body was read (401, 403, 413) left the
+  unread bytes on the connection, and the client's next request hung. The body is
+  now discarded, with a 10 second cut-off.
+- `http.ts`: a malformed percent-encoding in the address is a 400, not a 500.
+- `http.ts`: `HEAD /healthz` answers 200, for container health checks.
+- `validate.ts`: two messages with the same `seq`, or a negative `seq`, is a 400
+  instead of a database error surfacing as a 500.
+- `search.ts`: control characters in a query are treated as word breaks. A NUL
+  character used to make SQLite throw.
+- `ratelimit.ts`: the limiter tracks at most 10,000 addresses, so a flood of
+  made-up addresses cannot grow memory without bound.
+- `apps/collector/src/upload.ts`: uploads time out after 60 seconds instead of
+  waiting forever.

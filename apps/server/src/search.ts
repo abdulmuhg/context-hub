@@ -9,8 +9,10 @@ import { publicId } from './store.js';
 export function toFtsQuery(input: string): string | null {
   const terms: string[] = [];
   const re = /"([^"]*)"|(\S+)/g;
+  // Control characters (NUL above all) can end the query string early inside SQLite.
+  const cleaned = input.replace(/[\x00-\x1f\x7f]/g, ' ');
   let m: RegExpExecArray | null;
-  while ((m = re.exec(input)) !== null) {
+  while ((m = re.exec(cleaned)) !== null) {
     const term = (m[1] ?? m[2] ?? '').replace(/"/g, ' ').trim();
     if (term !== '') terms.push(`"${term}"`);
   }

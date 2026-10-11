@@ -124,3 +124,14 @@ describe('search', () => {
     expect(search(db, { query: 'cache', since: 'yesterday' }).length).toBeGreaterThan(0);
   });
 });
+
+describe('search: control characters', () => {
+  it.each([['\u0000'], ['redis\u0000cache'], ['\u0001\u0002'], ['a\tb\nc']])('does not fail on %j', (query) => {
+    expect(() => search(db, { query })).not.toThrow();
+  });
+
+  it('treats a control character as a word break', () => {
+    expect(toFtsQuery('redis\u0000cache')).toBe('"redis" "cache"');
+    expect(toFtsQuery('\u0000')).toBeNull();
+  });
+});

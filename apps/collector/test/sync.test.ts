@@ -319,3 +319,15 @@ describe('runSync: --project never bypasses tracking', () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe('upload timeout', () => {
+  it('gives up on a server that never answers instead of hanging the sync', async () => {
+    const { putSession } = await import('../src/upload.js');
+    const never: typeof fetch = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    const session = { source: 'claude-code', source_session_id: 'x', messages: [] } as never;
+    await expect(putSession({ url: 'https://hub.example.com', token: 't', fetchImpl: never, timeoutMs: 50 }, session)).rejects.toThrow(/could not reach/);
+  });
+});

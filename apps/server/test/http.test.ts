@@ -189,3 +189,37 @@ describe('/mcp before Task 7 wires it', () => {
     expect((await call('POST', '/mcp', { token: read, body: '{}', headers: { 'Content-Type': 'application/json' } })).status).toBe(501);
   });
 });
+
+describe('review fixes', () => {
+  it('400, not 500, for a malformed percent-encoding in the address', async () => {
+    expect((await call('PUT', '/api/sessions/claude-code/%E0%A4%A', { token: ingest, body: '{}' })).status).toBe(400);
+    expect((await call('DELETE', '/api/projects/%ZZ', { token: ingest })).status).toBe(400);
+    expect(logs.join('\n')).not.toMatch(/URIError/);
+  });
+
+  it('400, not 500, when two messages share a seq', async () => {
+    const s = makeSession({ messages: [text(0, 'user', 'a'), text(0, 'user', 'b')] });
+    const res = await put(s);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/seq/);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 });
+  });
+
+  it('answers HEAD /healthz, which container health checks use', async () => {
+    const res = await call('HEAD', '/healthz');
+    expect(res.status).toBe(200);
+  });
+
+  it('discards a body it refused without reading, so the client gets its answer and the next request is not stuck', async () => {
+    const huge = Buffer.alloc(MAX_BODY + 1024 * 1024, 0x20);
+    const refused = await call('PUT', '/api/sessions/claude-code/s1', { body: huge });
+    expect(refused.status).toBe(401);
+    const tooBig = await call('PUT', '/api/sessions/claude-code/s1', { token: ingest, body: huge });
+    expect(tooBig.status).toBe(413);
+    const next = await Promise.race([
+      call('GET', '/healthz').then((r) => r.status),
+      new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 4000)),
+    ]);
+    expect(next).toBe(200);
+  }, 20000);
+});

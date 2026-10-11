@@ -5,6 +5,8 @@ export interface Remote {
   url: string;
   token: string;
   fetchImpl?: typeof fetch;
+  /** Give up on a request after this long. Default 60 seconds. */
+  timeoutMs?: number;
 }
 
 function base(remote: Remote): string {
@@ -20,7 +22,7 @@ async function send(remote: Remote, method: string, path: string, body?: Uint8Ar
   }
   let res: Response;
   try {
-    res = await doFetch(base(remote) + path, { method, headers, body });
+    res = await doFetch(base(remote) + path, { method, headers, body, signal: AbortSignal.timeout(remote.timeoutMs ?? 60_000) });
   } catch (e) {
     throw new Error(`could not reach ${base(remote)}: ${(e as Error).message}`);
   }
