@@ -64,6 +64,32 @@ const MIGRATIONS: string[] = [
     tokenize = 'unicode61'
   );
   `,
+  `
+  -- One row per main session. This table is also the work queue.
+  CREATE TABLE digests (
+    session_id       INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL CHECK (status IN ('pending', 'ok', 'failed', 'refused')),
+    source_hash      TEXT,
+    model            TEXT,
+    body             TEXT,
+    text             TEXT,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at  TEXT,
+    error            TEXT,
+    updated_at       TEXT NOT NULL
+  );
+  CREATE INDEX digests_status ON digests(status, next_attempt_at);
+
+  CREATE TABLE project_states (
+    project_id  INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    summary     TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    rebuilt_at  TEXT NOT NULL,
+    dirty       INTEGER NOT NULL DEFAULT 0
+  );
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
