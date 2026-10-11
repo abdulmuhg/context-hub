@@ -1,4 +1,8 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { gzipSync } from 'node:zlib';
 import { contentHash, type HashedSession, type Message, type Session } from '@context-hub/core';
+import { createHandler, type AppDeps } from '../src/http.js';
 
 export const text = (seq: number, role: 'user' | 'assistant', body: string): Message => ({
   seq,
@@ -36,4 +40,22 @@ export function makeSession(over: Partial<Session> = {}): HashedSession {
     ...over,
   };
   return { ...session, content_hash: contentHash(session) };
+}
+
+export function gz(value: unknown): Buffer {
+  return gzipSync(Buffer.from(JSON.stringify(value), 'utf8'));
+}
+
+export async function startServer(deps: AppDeps): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createServer(createHandler(deps));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
 }
