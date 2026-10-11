@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { contentHash, type HashedSession, type Message, type Session } from '@context-hub/core';
 import { createHandler, type AppDeps } from '../src/http.js';
+import type { DigestBody } from '../src/digest-store.js';
+import type { DigestRequest, Llm, StatePage, StateRequest } from '../src/llm.js';
 
 export const text = (seq: number, role: 'user' | 'assistant', body: string): Message => ({
   seq,
@@ -58,4 +60,43 @@ export async function startServer(deps: AppDeps): Promise<{ url: string; close: 
         server.close(() => resolve());
       }),
   };
+}
+
+/** A stand-in for the model: deterministic output, a record of every call, and one-shot failure. */
+export class FakeLlm implements Llm {
+  readonly model = 'fake-model';
+  calls: { kind: 'digest' | 'merge' | 'state'; req: unknown }[] = [];
+  /** Thrown by the next call, then cleared. */
+  failWith: Error | null = null;
+  /** Runs at the start of each digest call. Tests use it to change the database mid-call. */
+  onDigest: (() => void) | null = null;
+
+  private step(kind: 'digest' | 'merge' | 'state', req: unknown): void {
+    this.calls.push({ kind, req });
+    if (this.failWith) {
+      const e = this.failWith;
+      this.failWith = null;
+      throw e;
+    }
+  }
+
+  async digest(req: DigestRequest): Promise<DigestBody> {
+    this.onDigest?.();
+    this.step('digest', req);
+    const suffix = req.part ? ` part ${req.part.index}/${req.part.total}` : '';
+    return { goal: `digest of ${req.title}${suffix}`, done: [{ text: `read ${req.transcript.length} chars`, seq: 0 }], decisions: [], open_items: [], key_refs: [] };
+  }
+
+  async mergeDigests(req: { project: string; title: string; parts: DigestBody[] }): Promise<DigestBody> {
+    this.step('merge', req);
+    return { goal: `merged ${req.parts.length} parts of ${req.title}`, done: req.parts.flatMap((p) => p.done), decisions: [], open_items: [], key_refs: [] };
+  }
+
+  async projectState(req: StateRequest): Promise<StatePage> {
+    this.step('state', req);
+    return {
+      summary: `${req.project}: ${req.mode} of ${req.digests.length}`,
+      body: [`mode=${req.mode}`, `previous=${req.previous === null ? 'none' : 'yes'}`, ...req.digests.map((d) => `- ${d.session_id}`)].join('\n'),
+    };
+  }
 }
