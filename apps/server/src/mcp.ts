@@ -143,7 +143,7 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): 
     server.registerTool(
       'save_note',
       {
-        description: `Save a short note into one of the user's existing projects, so it is there in later sessions in any tool. Use only when the user asks to save, remember or record something for a project. Never include passwords, keys, card numbers or phone numbers. Projects: ${names}.`,
+        description: `Save a short note into one of the user's existing projects, so it is there in later sessions in any tool. Use only when the user asks to save, remember or record something. Save it to the project the user names; a project can share its name with this hub, so "save to context-hub" means the project called context-hub. If the user names no project, or the name could mean more than one, ask which project before saving. Never include passwords, keys, card numbers or phone numbers. Projects: ${names}.`,
         inputSchema: {
           project: z.string().describe('An existing project key or name. A note never creates a project.'),
           title: z.string().describe('A short line naming what this note is about'),

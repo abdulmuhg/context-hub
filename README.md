@@ -75,6 +75,8 @@ Enter the code shown on the hub's sign-in page. Codes are valid 10 minutes, for 
 
 Ask the chat to save something to a named project. The project must already exist; a note never creates one. Notes appear with source `note` in get_project and search. This requires the connector's sign-in grant: when signing in, tick "Also allow it to save notes to your projects." Remove a note with `hub forget --session note:<id>`.
 
+claude.ai keeps the tool list it fetched when the connector was connected. After a deploy that adds or changes tools, open Customize > Connectors > context-hub, click Disconnect, then Connect, and sign in with a new `hub connect` code.
+
 To list and revoke access:
 
     hub-admin oauth list
