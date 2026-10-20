@@ -6,7 +6,7 @@ stopped. Design: `docs/superpowers/specs/2026-10-10-context-hub-design.md`.
 
 ## Status
 
-All five parts (including Part 5: OAuth sign-in) are built and deployed at https://hub.abdulmughnialfikri.com.
+All four parts are built and deployed at https://hub.abdulmughnialfikri.com.
 Every push to `main` deploys. Not built yet: browser login for chat apps
 (claude.ai, ChatGPT, Gemini), a `save` tool, importers for chat-app exports,
 and a dashboard.
@@ -75,7 +75,7 @@ To list and revoke access:
     hub-admin oauth list
     hub-admin oauth revoke <id>
 
-The server needs `PUBLIC_URL` set to `https://hub.abdulmughnialfikri.com` (or sign-in routes answer 404).
+Sign-in needs PUBLIC_URL set on the server (production: https://hub.abdulmughnialfikri.com); without it the sign-in routes answer 404.
 
 ## Develop
 
