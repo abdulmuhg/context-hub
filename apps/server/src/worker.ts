@@ -17,7 +17,8 @@ import {
   type DigestBody,
   type DueDigest,
 } from './digest-store.js';
-import { LlmRefusal, type Llm } from './llm.js';
+import { LlmRefusal, type Llm, type StatePage } from './llm.js';
+import { applyReview } from './page-review.js';
 import { renderDigest, renderLines, splitParts } from './transcript.js';
 
 export const CHARS_PER_TOKEN = 3;
@@ -109,6 +110,34 @@ function savePage(c: Ctx, projectId: number, page: { summary: string; body: stri
   if (pageSources(c.db, projectId) !== sourcesBefore) markStateDirty(c.db, projectId);
 }
 
+/**
+ * A second look at a finished page against the newest digests, to drop open
+ * items and state lines a session already settled. A failed review keeps the
+ * page as written: it is an improvement, not a reason to lose the update.
+ */
+async function reviewPage(c: Ctx, projectId: number, projectKey: string, page: StatePage): Promise<StatePage> {
+  const all = okDigestsForProject(c.db, projectId);
+  const shown: typeof all = [];
+  let used = 0;
+  for (let i = all.length - 1; i >= 0; i--) {
+    const d = all[i]!;
+    if (shown.length > 0 && used + d.text.length > c.maxChars) break;
+    shown.push(d);
+    used += d.text.length;
+  }
+  try {
+    const review = await c.llm.reviewState({
+      project: projectKey,
+      page,
+      digests: shown.map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text })),
+    });
+    return applyReview(page, review, new Set(shown.map((d) => d.session_id)));
+  } catch (e) {
+    c.log(`state project ${projectId}: review skipped (${message(e)})`);
+    return page;
+  }
+}
+
 /** Rebuilds a project's page from its ok digests, or removes the page when none are left. */
 async function rebuildState(c: Ctx, projectId: number): Promise<void> {
   const project = c.db.prepare('SELECT key FROM projects WHERE id = ?').get(projectId) as { key: string } | undefined;
@@ -137,7 +166,7 @@ async function rebuildState(c: Ctx, projectId: number): Promise<void> {
     previous,
     digests: chosen.map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text })),
   });
-  savePage(c, projectId, page, true, sourcesBefore);
+  savePage(c, projectId, await reviewPage(c, projectId, project.key, page), true, sourcesBefore);
 }
 
 async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Promise<void> {
@@ -159,7 +188,7 @@ async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Pro
     previous: state.body,
     digests: [{ session_id: `${due.source}:${due.source_session_id}`, title: due.title, date: session?.last_activity_at ?? null, text }],
   });
-  savePage(c, due.project_id, page, false, sourcesBefore);
+  savePage(c, due.project_id, await reviewPage(c, due.project_id, due.project_key, page), false, sourcesBefore);
 }
 
 async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {

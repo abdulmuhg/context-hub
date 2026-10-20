@@ -232,3 +232,33 @@ describe('the state page stays within its length', () => {
     expect(page.body).toMatch(/shortened/i);
   });
 });
+
+describe('the page review', () => {
+  const page = { summary: 's', body: '## Current state\n\n- Deployed.\n\n## Open items\n\n- Confirm the key.\n- Set up backups.' };
+  const digests = [{ session_id: 'claude-code:b', title: 'Deploy', date: '2026-10-20T00:00:00.000Z', text: 'Done: digests written' }];
+
+  it('sends the open items and state lines numbered, with the digests, and returns the parsed review', async () => {
+    const review = { drop_open: [{ item: 1, session_id: 'claude-code:b' }], drop_current: [], summary: 'Deployed.' };
+    const { client, sent } = stub({ stop_reason: 'end_turn', parsed_output: review });
+    expect(await new AnthropicLlm({ client }).reviewState({ project: 'p', page, digests })).toEqual(review);
+    const user = JSON.stringify(sent[0].messages[0].content);
+    expect(user).toContain('1. Confirm the key.');
+    expect(user).toContain('2. Set up backups.');
+    expect(user).toContain('1. Deployed.');
+    expect(user).toContain('claude-code:b');
+    expect(sent[0].system).toMatch(/indirectly/);
+    expect(sent[0].system).toMatch(/not sure/);
+    expect(sent[0].system).toMatch(/not instructions/i);
+  });
+
+  it('digests and merged digests keep only items still open at the end, even when settled indirectly', async () => {
+    const { client, sent } = stub({ stop_reason: 'end_turn', parsed_output: DIGEST });
+    const llm = new AnthropicLlm({ client });
+    await llm.digest(digestReq);
+    await llm.mergeDigests({ project: 'p', title: 't', parts: [DIGEST, DIGEST] });
+    expect(sent[0].system).toMatch(/end of the transcript/);
+    expect(sent[0].system).toMatch(/indirectly/);
+    expect(sent[1].system).toMatch(/later part settles it/);
+    expect(sent[1].system).toMatch(/indirectly/);
+  });
+});

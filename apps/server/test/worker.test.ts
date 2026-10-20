@@ -334,3 +334,33 @@ describe('runOnce: a state page that keeps failing', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM state_retries').get()).toEqual({ n: 0 });
   });
 });
+
+describe('runOnce: page review', () => {
+  const sectioned = async () => ({ summary: 'Part 3 awaits merge.', body: '## Current state\n\n- Part 3 awaits merge.\n\n## Open items\n\n- Confirm the key.\n- Set up backups.' });
+
+  it('drops what the review names and uses its summary, with the newest digests as evidence', async () => {
+    llm.projectState = sectioned;
+    add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    add('b', { last_activity_at: '2026-10-02T00:00:00.000Z' });
+    await drain();
+    llm.nextReview = { drop_open: [{ item: 1, session_id: 'claude-code:b' }], drop_current: [{ item: 1, session_id: 'claude-code:b' }], summary: 'Merged and deployed.' };
+    clock += REBUILD_AFTER_MS + 60_000;
+    add('c', { last_activity_at: '2026-10-03T00:00:00.000Z' });
+    await drain();
+    const page = getProjectState(db, pid('alpha'))!;
+    expect(page.summary).toBe('Merged and deployed.');
+    expect(page.body).not.toContain('Confirm the key.');
+    expect(page.body).not.toContain('- Part 3 awaits merge.');
+    expect(page.body).toContain('- Set up backups.');
+    expect(llm.reviews.at(-1)!.digests.map((d) => d.session_id)).toEqual(['claude-code:c', 'claude-code:b', 'claude-code:a']);
+  });
+
+  it('saves the page as written when the review fails', async () => {
+    llm.projectState = sectioned;
+    llm.nextReview = new Error('overloaded');
+    add('a');
+    await drain();
+    expect(getProjectState(db, pid('alpha'))!.body).toContain('Confirm the key.');
+    expect(logs.some((l) => /review skipped \(overloaded\)/.test(l))).toBe(true);
+  });
+});

@@ -4,7 +4,8 @@ import { gzipSync } from 'node:zlib';
 import { contentHash, type HashedSession, type Message, type Session } from '@context-hub/core';
 import { createHandler, type AppDeps } from '../src/http.js';
 import type { DigestBody } from '../src/digest-store.js';
-import type { DigestRequest, Llm, StatePage, StateRequest } from '../src/llm.js';
+import type { DigestRequest, Llm, ReviewRequest, StatePage, StateRequest } from '../src/llm.js';
+import type { PageReview } from '../src/page-review.js';
 
 export const text = (seq: number, role: 'user' | 'assistant', body: string): Message => ({
   seq,
@@ -98,5 +99,18 @@ export class FakeLlm implements Llm {
       summary: `${req.project}: ${req.mode} of ${req.digests.length}`,
       body: [`mode=${req.mode}`, `previous=${req.previous === null ? 'none' : 'yes'}`, ...req.digests.map((d) => `- ${d.session_id}`)].join('\n'),
     };
+  }
+
+  /** Kept apart from `calls` so tests that count page calls are unaffected. */
+  reviews: ReviewRequest[] = [];
+  /** The next review's answer. Default: drop nothing, keep the summary. */
+  nextReview: PageReview | Error | null = null;
+
+  async reviewState(req: ReviewRequest): Promise<PageReview> {
+    this.reviews.push(req);
+    const answer = this.nextReview;
+    this.nextReview = null;
+    if (answer instanceof Error) throw answer;
+    return answer ?? { drop_open: [], drop_current: [], summary: '' };
   }
 }
