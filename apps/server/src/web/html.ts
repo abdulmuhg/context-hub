@@ -22,13 +22,19 @@ export function securityHeaders(): Record<string, string> {
   };
 }
 
-/** Wraps page content in the document shell and writes it with the security headers. */
-export function sendPage(res: ServerResponse, status: number, title: string, inner: string): void {
+/** The head every page shares. The script sits in the head, unblocked by layout, so a stored theme applies before first paint. */
+function head(title: string): string {
+  return (
+    `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>${escapeHtml(title)}</title>` +
+    `<link rel="stylesheet" href="/assets/app.css">` +
+    `<script src="/assets/app.js"></script>`
+  );
+}
+
+/** Writes a finished document with the security headers. */
+export function sendDocument(res: ServerResponse, status: number, html: string): void {
   if (res.headersSent) return;
-  const html =
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<title>${escapeHtml(title)}</title></head><body>${inner}</body></html>`;
   drainBody(res);
   res.writeHead(status, {
     ...securityHeaders(),
@@ -36,6 +42,40 @@ export function sendPage(res: ServerResponse, status: number, title: string, inn
     'Content-Length': Buffer.byteLength(html),
   });
   res.end(res.req.method === 'HEAD' ? undefined : html);
+}
+
+/** Wraps page content in the bare document shell (no sidebar) and writes it. */
+export function sendPage(res: ServerResponse, status: number, title: string, inner: string): void {
+  sendDocument(res, status, `<!doctype html><html lang="en"><head>${head(title)}</head><body>${inner}</body></html>`);
+}
+
+export type NavKey = 'overview' | 'activity' | 'projects' | 'sign-ins';
+
+const NAV: ReadonlyArray<{ key: NavKey; href: string; label: string }> = [
+  { key: 'overview', href: '/', label: 'Overview' },
+  { key: 'activity', href: '/activity', label: 'Activity' },
+  { key: 'projects', href: '/projects', label: 'Projects' },
+  { key: 'sign-ins', href: '/sign-ins', label: 'Sign-ins' },
+];
+
+/**
+ * The signed-in page: sidebar with the four pages and Sign out, a header with the theme switch and
+ * the phone menu button, then `body`. `body` is trusted HTML the caller has already escaped.
+ */
+export function pageShell(o: { title: string; active: NavKey; csrf: string; body: string }): string {
+  const links = NAV.map(
+    (n) => `<a href="${n.href}"${n.key === o.active ? ' aria-current="page"' : ''}>${n.label}</a>`,
+  ).join('');
+  return (
+    `<!doctype html><html lang="en"><head>${head(`${o.title} - context-hub`)}</head><body><div class="layout">` +
+    `<aside class="sidebar" id="sidebar"><div class="brand">context-hub</div><nav class="nav" aria-label="Pages">${links}</nav>
+` +
+    `<form method="post" action="/logout"><input type="hidden" name="csrf" value="${escapeHtml(o.csrf)}"><button type="submit">Sign out</button></form></aside>` +
+    `<div class="main"><header class="topbar"><button type="button" class="menu-button" data-menu-toggle aria-controls="sidebar" aria-expanded="false">Menu</button>` +
+    `<span class="topbar-title">${escapeHtml(o.title)}</span>` +
+    `<div class="topbar-actions"><button type="button" data-theme-toggle aria-label="Switch between light and dark theme">Theme</button></div></header>` +
+    `<main class="content">${o.body}</main></div></div></body></html>`
+  );
 }
 
 /** A 302 to another page. Carries the same headers, and never a body that could leak what was asked for. */
@@ -64,7 +104,7 @@ export function signInPage(res: ServerResponse, v: SignInView): void {
     res,
     v.blocked ? 429 : 200,
     'Sign in - context-hub',
-    `<main><h1>context-hub</h1>
+    `<main class="signin"><h1>context-hub</h1>
 ${note}
 <form method="post" action="/login" autocomplete="off">
 <label for="code">Sign-in code</label>

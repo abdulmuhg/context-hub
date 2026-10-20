@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Db } from '../db.js';
 import type { AuthLimiter } from '../ratelimit.js';
 import { consumeConnectCode } from '../oauth/store.js';
-import { escapeHtml, forbiddenPage, redirectTo, sendPage, signInPage } from './html.js';
+import { isAsset, serveAsset } from './assets.js';
+import { forbiddenPage, pageShell, redirectTo, sendDocument, signInPage } from './html.js';
 import { checkWebSession, clearedCookie, createWebSession, parseCookies, revokeWebSession, sameCsrf, sessionCookie } from './session.js';
 
 export interface WebConfig {
@@ -93,17 +94,6 @@ function logout(res: ServerResponse, session: WebSession, ctx: WebCtx): void {
   redirectTo(res, '/login');
 }
 
-/** Stands in for the Overview until Task 5 builds it. Shows no stored data. */
-function placeholder(res: ServerResponse, session: WebSession): void {
-  sendPage(
-    res,
-    200,
-    'context-hub',
-    `<main><h1>context-hub</h1><p>You are signed in.</p>
-<form method="post" action="/logout"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}"><button type="submit">Sign out</button></form></main>`,
-  );
-}
-
 /**
  * Handles the dashboard: pages, sign-in and the POST actions. Returns true if the request was
  * answered. A signed-out page answers 302 to /login and a signed-out action answers 403, both
@@ -138,8 +128,13 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
 
   if (method !== 'GET' && method !== 'HEAD') return false;
 
+  // The sign-in page and the two assets are the only GETs that need no session.
   if (path === '/login') {
     signInPage(res, { wrongCode: false, blocked: false });
+    return true;
+  }
+  if (isAsset(path)) {
+    serveAsset(req, res, path);
     return true;
   }
   if (!isPage(path)) return false;
@@ -150,7 +145,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     return true;
   }
   if (path === '/') {
-    placeholder(res, session);
+    sendDocument(res, 200, pageShell({ title: 'Overview', active: 'overview', csrf: session.csrf, body: '<h1>Overview</h1>' }));
     return true;
   }
   return false;
