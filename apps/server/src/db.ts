@@ -192,6 +192,10 @@ const MIGRATIONS: string[] = [
     revoked_at    TEXT
   );
   `,
+  `
+  -- A one-time code is for signing in (Claude apps, browsers) or for adding a computer; never both.
+  ALTER TABLE connect_codes ADD COLUMN purpose TEXT NOT NULL DEFAULT 'signin' CHECK (purpose IN ('signin','device'));
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

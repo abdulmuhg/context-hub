@@ -11,18 +11,26 @@ const normalizeCode = (input: string): string => input.toUpperCase().replace(/[\
 
 // ---- connect codes ----
 
-export function createConnectCode(db: Db, now: string): { code: string; expiresAt: string } {
+export type CodePurpose = 'signin' | 'device';
+
+export function createConnectCode(db: Db, now: string, purpose: CodePurpose = 'signin'): { code: string; expiresAt: string } {
   let raw = '';
   for (let i = 0; i < 8; i++) raw += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
   const expiresAt = plus(now, TTL.connectCode);
-  db.prepare('INSERT INTO connect_codes(hash, created_at, expires_at) VALUES (?, ?, ?)').run(sha256(raw), now, expiresAt);
+  db.prepare('INSERT INTO connect_codes(hash, created_at, expires_at, purpose) VALUES (?, ?, ?, ?)').run(
+    sha256(raw),
+    now,
+    expiresAt,
+    purpose,
+  );
   return { code: `${raw.slice(0, 4)}-${raw.slice(4)}`, expiresAt };
 }
 
-export function consumeConnectCode(db: Db, input: string, now: string): boolean {
+/** A code of the other purpose is refused and left unused. */
+export function consumeConnectCode(db: Db, input: string, now: string, purpose: CodePurpose = 'signin'): boolean {
   const info = db
-    .prepare('UPDATE connect_codes SET used_at = ? WHERE hash = ? AND used_at IS NULL AND expires_at > ?')
-    .run(now, sha256(normalizeCode(input)), now);
+    .prepare('UPDATE connect_codes SET used_at = ? WHERE hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?')
+    .run(now, sha256(normalizeCode(input)), purpose, now);
   return info.changes === 1;
 }
 

@@ -50,9 +50,18 @@ describe('migration 4', () => {
 });
 
 describe('migration 5', () => {
-  it('is schema version 5 and creates the dashboard tables', () => {
+  it('creates the dashboard tables', () => {
     const db = openDb(':memory:');
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(5);
     expect(tables(db)).toEqual(expect.arrayContaining(['activity', 'sync_runs', 'web_sessions']));
+  });
+});
+
+describe('migration 6', () => {
+  it('is schema version 6 and gives connect_codes a purpose', () => {
+    const db = openDb(':memory:');
+    expect(SCHEMA_VERSION).toBe(6);
+    const cols = (db.prepare('PRAGMA table_info(connect_codes)').all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toContain('purpose');
   });
 });

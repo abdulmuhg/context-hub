@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
 import {
@@ -42,6 +43,26 @@ describe('connect codes', () => {
 
   it('are rejected when unknown', () => {
     expect(consumeConnectCode(db, 'AAAA-AAAA', T0)).toBe(false);
+  });
+
+  it('work only for their own purpose and stay usable for it', () => {
+    const device = createConnectCode(db, T0, 'device').code;
+    expect(consumeConnectCode(db, device, T0)).toBe(false);
+    expect(consumeConnectCode(db, device, T0, 'signin')).toBe(false);
+    expect(consumeConnectCode(db, device, T0, 'device')).toBe(true);
+    const signin = createConnectCode(db, T0).code;
+    expect(consumeConnectCode(db, signin, T0, 'device')).toBe(false);
+    expect(consumeConnectCode(db, signin, T0, 'signin')).toBe(true);
+  });
+
+  it('created before the migration count as sign-in codes', () => {
+    db.prepare('INSERT INTO connect_codes(hash, created_at, expires_at) VALUES (?, ?, ?)').run(
+      createHash('sha256').update('AAAABBBB').digest('hex'),
+      T0,
+      plus(T0, 600_000),
+    );
+    expect(consumeConnectCode(db, 'AAAA-BBBB', T0, 'device')).toBe(false);
+    expect(consumeConnectCode(db, 'AAAA-BBBB', T0)).toBe(true);
   });
 });
 
