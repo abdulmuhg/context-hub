@@ -14,7 +14,7 @@ import {
   type Config,
 } from './config.js';
 import { projectMatches, type GitRunner } from './project.js';
-import { listProjects, runSync, type SyncReport } from './sync.js';
+import { listProjects, runSync, type ProjectRow, type SyncReport } from './sync.js';
 import { deleteRemote, exchangeDeviceCode, getStatus, requestConnectCode, type Remote } from './upload.js';
 
 export interface Io {
@@ -27,6 +27,8 @@ export interface Io {
   git?: GitRunner;
   exists?: (path: string) => boolean;
   hostname?: () => string;
+  /** True when stdin and stdout are a terminal, so it is safe to ask questions. */
+  interactive?: boolean;
 }
 
 const USAGE = `Usage: hub <command>
@@ -77,6 +79,28 @@ function remote(io: Io): Remote {
   const token = loadToken(io.hubDir);
   if (!cfg.server_url || !token) throw new Fail('No server address or upload token. Run `hub init` first.');
   return { url: cfg.server_url, token, fetchImpl: io.fetchImpl };
+}
+
+const NEVER_OFFERED = 'unfiled';
+
+function mainSessions(row: ProjectRow): number {
+  return Object.values(row.sessions).reduce((a, b) => a + b, 0);
+}
+
+/** Projects with sessions on this computer that are neither tracked nor declined. */
+export function newProjects(rows: ProjectRow[], cfg: Config): ProjectRow[] {
+  return rows.filter(
+    (r) => r.key !== NEVER_OFFERED && !cfg.tracked.includes(r.key) && !cfg.declined.includes(r.key) && mainSessions(r) > 0,
+  );
+}
+
+function shortName(key: string): string {
+  return key.split(/[/\\]/).filter(Boolean).pop() ?? key;
+}
+
+function displayName(key: string): string {
+  const name = shortName(key);
+  return name === key ? key : `${name} — ${key}`;
 }
 
 function plural(n: number, word: string): string {
@@ -147,6 +171,26 @@ async function personal(io: Io, args: string[]): Promise<void> {
   }
 }
 
+async function offerNewProjects(io: Io): Promise<void> {
+  const fresh = newProjects(listProjects(scanOpts(io)), loadConfig(io.hubDir));
+  if (fresh.length === 0) return;
+  if (!io.interactive) {
+    const names = fresh.slice(0, 5).map((r) => shortName(r.key));
+    const more = fresh.length > 5 ? `, and ${fresh.length - 5} more` : '';
+    io.out(`${fresh.length} new project(s) not uploaded: ${names.join(', ')}${more}. Run hub sync in a terminal to choose.`);
+    return;
+  }
+  for (const r of fresh) {
+    const n = mainSessions(r);
+    const answer = (await io.ask(`New project "${displayName(r.key)}" (${plural(n, 'session')}). Upload it to the hub? [y/N] `)).trim().toLowerCase();
+    update(io, (cfg) => {
+      if (answer === 'y') {
+        if (!cfg.tracked.includes(r.key)) cfg.tracked.push(r.key);
+      } else if (!cfg.declined.includes(r.key)) cfg.declined.push(r.key);
+    });
+  }
+}
+
 async function dispatch(argv: string[], io: Io): Promise<number> {
   const [command, ...rest] = argv;
   switch (command) {
@@ -177,6 +221,9 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const input = need(rest[0], 'project');
       if (command === 'untrack') {
         update(io, (cfg) => {
+          for (const k of cfg.tracked.filter((k) => projectMatches(input, k))) {
+            if (!cfg.declined.includes(k)) cfg.declined.push(k);
+          }
           cfg.tracked = cfg.tracked.filter((k) => !projectMatches(input, k));
         });
         io.out(`No longer tracking ${input}. Nothing was deleted from the server.`);
@@ -190,6 +237,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       }
       update(io, (cfg) => {
         if (!cfg.tracked.includes(matches[0])) cfg.tracked.push(matches[0]);
+        cfg.declined = cfg.declined.filter((k) => k !== matches[0]);
       });
       io.out(`Tracking ${matches[0]}. Run \`hub sync\` to upload it.`);
       return 0;
@@ -228,6 +276,8 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         options: { project: { type: 'string' }, session: { type: 'string' }, 'dry-run': { type: 'boolean' } },
       });
       const dryRun = values['dry-run'] === true;
+      const plain = !dryRun && !values.project && !values.session;
+      if (plain) await offerNewProjects(io);
       const wanted = values.project;
       if (wanted && !values.session && !loadConfig(io.hubDir).tracked.some((k) => projectMatches(wanted, k))) {
         throw new Fail(`"${wanted}" is not tracked, so nothing would be uploaded. Run \`hub track ${wanted}\` first.`);

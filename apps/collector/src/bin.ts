@@ -8,6 +8,7 @@ const io: Io = {
   hubDir: hubDir(),
   out: (line) => console.log(line),
   err: (line) => console.error(line),
+  interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
   ask: async (question) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {

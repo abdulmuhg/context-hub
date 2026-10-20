@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { run, type Io } from '../src/cli.js';
+import { newProjects, run, type Io } from '../src/cli.js';
 import { SLASH_COMMANDS } from '../src/commands.js';
 import { loadConfig, loadPersonal, loadToken } from '../src/config.js';
 import { tempDir, writeJsonl } from './helpers.js';
@@ -356,5 +356,84 @@ describe('hub sync: reporting the run', () => {
     expect(await run(['sync'], io)).toBe(0);
     expect(err.filter((l) => l.includes('could not report this run'))).toHaveLength(1);
     expect(err).toHaveLength(1);
+  });
+});
+
+describe('hub sync: new projects', () => {
+  let asked: string[];
+  const putCount = () => requests.filter((r) => r.method === 'PUT').length;
+
+  beforeEach(async () => {
+    asked = [];
+    io.ask = async (q) => {
+      asked.push(q);
+      return answers.shift() ?? '';
+    };
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    out = [];
+  });
+
+  it('asks in a terminal and tracks and uploads on y', async () => {
+    io.interactive = true;
+    answers = ['y'];
+    expect(await run(['sync'], io)).toBe(0);
+    expect(asked).toEqual([`New project "alpha — ${KEY}" (1 session). Upload it to the hub? [y/N] `]);
+    expect(loadConfig(io.hubDir).tracked).toEqual([KEY]);
+    expect(putCount()).toBe(1);
+  });
+
+  it('declines on Enter, uploads nothing, and does not ask again', async () => {
+    io.interactive = true;
+    answers = [''];
+    expect(await run(['sync'], io)).toBe(0);
+    expect(loadConfig(io.hubDir)).toMatchObject({ tracked: [], declined: [KEY] });
+    expect(putCount()).toBe(0);
+    expect(await run(['sync'], io)).toBe(0);
+    expect(asked).toHaveLength(1);
+  });
+
+  it('hub track brings a declined project back and untrack declines it', async () => {
+    io.interactive = true;
+    answers = ['n'];
+    await run(['sync'], io);
+    await run(['track', 'alpha'], io);
+    expect(loadConfig(io.hubDir)).toMatchObject({ tracked: [KEY], declined: [] });
+    await run(['untrack', 'alpha'], io);
+    expect(loadConfig(io.hubDir)).toMatchObject({ tracked: [], declined: [KEY] });
+    await run(['sync'], io);
+    expect(asked).toHaveLength(1);
+  });
+
+  it('never asks outside a terminal, says so, and uploads nothing from it', async () => {
+    expect(await run(['sync'], io)).toBe(0);
+    expect(asked).toEqual([]);
+    expect(out).toContain('1 new project(s) not uploaded: alpha. Run hub sync in a terminal to choose.');
+    expect(putCount()).toBe(0);
+    expect(loadConfig(io.hubDir).declined).toEqual([]);
+  });
+
+  it('never asks with --dry-run, --project or --session', async () => {
+    io.interactive = true;
+    await run(['sync', '--dry-run'], io);
+    await run(['sync', '--project', 'alpha'], io);
+    await run(['sync', '--session', `claude-code:${S1}`], io);
+    expect(asked).toEqual([]);
+    expect(loadConfig(io.hubDir)).toMatchObject({ tracked: [], declined: [] });
+  });
+
+  it('does not offer a tracked project', async () => {
+    io.interactive = true;
+    await run(['track', 'alpha'], io);
+    await run(['sync'], io);
+    expect(asked).toEqual([]);
+  });
+});
+
+describe('newProjects', () => {
+  const row = (key: string, n = 1) => ({ key, sessions: { 'claude-code': n }, last_activity: '', tracked: false, last_synced: null });
+  const cfg = { ...loadConfig(tempDir()), tracked: ['a'], declined: ['b'] };
+
+  it('leaves out tracked, declined, unfiled and empty projects', () => {
+    expect(newProjects([row('a'), row('b'), row('unfiled'), row('d', 0), row('e')], cfg).map((r) => r.key)).toEqual(['e']);
   });
 });

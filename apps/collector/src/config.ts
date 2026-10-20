@@ -10,6 +10,8 @@ export interface Config {
   tracked: string[];
   /** Session keys ("<source>:<id>") excluded from tracked projects. */
   skipped: string[];
+  /** Project keys the user said no to; `hub sync` does not ask about them again. */
+  declined: string[];
   /** Project key -> project key. */
   aliases: Record<string, string>;
   /** Session key -> project key. */
@@ -41,6 +43,7 @@ const defaultConfig = (): Config => ({
   server_url: '',
   tracked: [],
   skipped: [],
+  declined: [],
   aliases: {},
   assignments: {},
   personal: { card: 'warn', list: 'warn' },

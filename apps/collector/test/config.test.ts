@@ -31,10 +31,17 @@ describe('config', () => {
       server_url: '',
       tracked: [],
       skipped: [],
+      declined: [],
       aliases: {},
       assignments: {},
       personal: { card: 'warn', list: 'warn' },
     });
+  });
+
+  it('loads an older config file without declined as an empty list', () => {
+    const dir = tempDir();
+    writeRaw(join(dir, 'config.json'), JSON.stringify({ server_url: 'https://h', tracked: ['a'] }));
+    expect(loadConfig(dir).declined).toEqual([]);
   });
 
   it('round-trips and creates the folder', () => {
@@ -90,6 +97,10 @@ describe('settingsFingerprint', () => {
   const dir = tempDir();
   const base = loadConfig(dir);
   const fp = (cfg = base, entries: Parameters<typeof settingsFingerprint>[1] = []) => settingsFingerprint(cfg, entries);
+
+  it('does not change when a project is declined', () => {
+    expect(fp({ ...base, declined: ['local:x'] })).toBe(fp());
+  });
 
   it('is stable for the same settings', () => {
     expect(fp()).toBe(fp());
