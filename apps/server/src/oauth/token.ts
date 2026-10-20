@@ -25,7 +25,14 @@ export async function token(req: IncomingMessage, res: ServerResponse, ctx: OAut
   if (!/^application\/x-www-form-urlencoded\s*(;|$)/i.test(req.headers['content-type'] ?? '')) {
     return fail(res, 'invalid_request', 'The body must be application/x-www-form-urlencoded');
   }
-  const form = new URLSearchParams((await ctx.readBody()).toString('utf8'));
+  let body: Buffer;
+  try {
+    body = await ctx.readBody();
+  } catch {
+    // Too large, or marked gzip but not decompressible.
+    return fail(res, 'invalid_request', 'The request body could not be read');
+  }
+  const form = new URLSearchParams(body.toString('utf8'));
   const now = (ctx.cfg.now?.() ?? new Date()).toISOString();
   const grantType = form.get('grant_type');
   const resource = form.get('resource');

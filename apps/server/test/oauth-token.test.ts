@@ -168,6 +168,16 @@ describe('POST /oauth/token requests', () => {
     }
   });
 
+  it('answers a body that cannot be read with invalid_request and no-store', async () => {
+    const res = await fetch(url + '/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Encoding': 'gzip' },
+      body: 'this is not gzip',
+    });
+    await errorOf(res, 'invalid_request');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
   it('failures do not count toward the limiter', async () => {
     for (let i = 0; i < 15; i++) await errorOf(await exchange(issueCode(), { code_verifier: 'x'.repeat(50) }), 'invalid_grant');
     const t = await ok(await exchange(issueCode()));
@@ -225,6 +235,14 @@ describe('POST /oauth/token refresh_token', () => {
     expect(listGrants(db)[0]!.revokedAt).not.toBeNull();
   });
 
+  it('treats a second use at exactly 60 s as theft', async () => {
+    const { t: first } = await signIn();
+    await ok(await refresh(first.refresh_token!));
+    advance(60_000);
+    await errorOf(await refresh(first.refresh_token!), 'invalid_grant');
+    expect(listGrants(db)[0]!.revokedAt).not.toBeNull();
+  });
+
   it('an idle refresh token expires after 90 days', async () => {
     const { t } = await signIn();
     advance(90 * 86_400_000 + 1_000);
@@ -244,6 +262,9 @@ describe('POST /oauth/token refresh_token', () => {
     await errorOf(await refresh('chub_rt_nope'), 'invalid_grant');
     await errorOf(await refresh(t.access_token), 'invalid_grant');
     await errorOf(await refresh(t.refresh_token!, { client_id: 'someone-else' }), 'invalid_grant');
+    expect(listGrants(db)[0]!.revokedAt).toBeNull();
+    const again = await ok(await refresh(t.refresh_token!));
+    t.refresh_token = again.refresh_token;
     db.prepare('UPDATE oauth_grants SET revoked_at = ? WHERE id = ?').run(nowIso(), i.grantId);
     await errorOf(await refresh(t.refresh_token!), 'invalid_grant');
   });
