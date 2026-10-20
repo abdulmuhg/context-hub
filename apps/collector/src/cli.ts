@@ -48,9 +48,10 @@ function need(value: string | undefined, what: string): string {
   return value;
 }
 
-function sessionKey(value: string | undefined): string {
+// A saved note has no local file, so only `forget` may name one.
+function sessionKey(value: string | undefined, allowNote = false): string {
   const v = need(value, 'session');
-  if (!SESSION_KEY.test(v)) throw new Fail(`A session is written as <source>:<id>, for example claude-code:1234. Got "${v}".`);
+  if (!SESSION_KEY.test(v) && !(allowNote && /^note:.+$/.test(v))) throw new Fail(`A session is written as <source>:<id>, for example claude-code:1234. Got "${v}".`);
   return v;
 }
 
@@ -230,7 +231,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
     case 'forget': {
       const { values, positionals } = parseArgs({ args: rest, options: { session: { type: 'string' } }, allowPositionals: true });
       const r = remote(io);
-      const what = values.session ? sessionKey(values.session) : need(positionals[0], 'project');
+      const what = values.session ? sessionKey(values.session, true) : need(positionals[0], 'project');
       const answer = (await io.ask(`Delete ${what} from the server? This cannot be undone. Type yes to confirm: `)).trim();
       if (answer !== 'yes') {
         io.err('Not confirmed. Nothing was deleted.');

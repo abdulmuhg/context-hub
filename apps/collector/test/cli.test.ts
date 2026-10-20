@@ -162,6 +162,12 @@ describe('hub forget', () => {
     expect(await run(['forget', '--session', `claude-code:${S1}`], io)).toBe(0);
     expect(requests[0]).toEqual({ method: 'DELETE', url: `https://hub.example.com/api/sessions/claude-code/${S1}` });
   });
+
+  it('deletes a saved note with --session note:<id>', async () => {
+    answers = ['yes'];
+    expect(await run(['forget', '--session', 'note:n_abc'], io)).toBe(0);
+    expect(requests).toEqual([{ method: 'DELETE', url: 'https://hub.example.com/api/sessions/note/n_abc' }]);
+  });
 });
 
 describe('hub personal', () => {
