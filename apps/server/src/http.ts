@@ -3,6 +3,7 @@ import { gunzipSync } from 'node:zlib';
 import { stripSecrets, type HashedSession } from '@context-hub/core';
 import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun } from './activity.js';
 import type { Db } from './db.js';
+import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProject, deleteSession, status, upsertSession } from './store.js';
 import { resourceUrl, type OAuthConfig } from './oauth/config.js';
@@ -182,6 +183,22 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       const { code, expiresAt } = createConnectCode(db, now().toISOString());
       res.setHeader('Cache-Control', 'no-store');
       return send(res, 200, { code, expires_at: expiresAt });
+    }
+
+    if (path === '/api/devices' && method === 'POST') {
+      // The one unauthenticated route that makes a credential: checked against the limiter before the code is read.
+      const address = clientAddress(req);
+      if (limiter.isBlocked(address)) throw new HttpError(429, 'Too many failed attempts. Try again in 15 minutes.');
+      const body = await readJson(req);
+      const r = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+      if (typeof r.code !== 'string') throw new HttpError(400, 'code must be a string');
+      const made = exchangeDeviceCode(db, { code: r.code, name: cleanDeviceName(r.name) }, now().toISOString());
+      if (made === null) {
+        limiter.recordFailure(address);
+        return send(res, 401, { error: 'That code is wrong or has expired.' });
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return send(res, 200, made);
     }
 
     if (path === '/api/sync-runs' && method === 'POST') {
