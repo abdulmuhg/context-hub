@@ -9,8 +9,8 @@ stopped. Design: `docs/superpowers/specs/2026-10-10-context-hub-design.md`.
 All four parts are built and deployed at https://hub.abdulmughnialfikri.com.
 Every push to `main` deploys. Sign-in for the Claude apps is built on the
 `part5-oauth` branch and switches on when `PUBLIC_URL` is set on the server.
-Not built yet: ChatGPT and Gemini sign-in, a `save` tool, importers for
-chat-app exports, and a dashboard.
+The dashboard is built on the `dashboard` branch. Not built yet: ChatGPT and
+Gemini sign-in, a `save` tool, and importers for chat-app exports.
 
 ## Run the server locally
 
@@ -77,6 +77,36 @@ cp integrations/claude-code/hub-*.md ~/.claude/commands/
 
 Each works out the project from the folder's `origin` remote, or the folder
 name when there is none. Copy the files again after changing them.
+
+## The dashboard
+
+The hub's own web pages are at the hub's URL —
+https://hub.abdulmughnialfikri.com — and show what it holds and how it is
+doing. Nothing on them is public: signed out, every page is the sign-in
+screen.
+
+**Signing in.** Run `hub connect` on the PC and enter the code it prints on
+the sign-in page. It is the same one-time code the Claude apps use: valid 10
+minutes, for one use. Ten wrong codes in 5 minutes blocks that address for 15
+minutes. A sign-in lasts **30 days**, in one `HttpOnly` cookie per browser, so
+phone and desktop are separate sign-ins. **Sign out** is at the bottom of the
+sidebar, and the light/dark switch is in the header.
+
+| Page | What it shows |
+|---|---|
+| **Overview** | Healthy or Needs attention, the project and session counts, the last sync the PC reported, the last backup (with whether it reached off-site storage), anything wrong right now (failed or stuck summaries, sync quiet for more than 3 days, a backup older than 26 hours), the last 10 things that happened, and the running version. |
+| **Activity** | Everything saved in or read out over the last 30 days, newest first, 50 to a page, filterable by direction. Each row says who did it: the PC's collector, claude.ai, or a named read token. |
+| **Projects** | Every project with its session count, last activity and one-line summary. Opening one shows its full briefing — the state page, then recent sessions and notes with their digest status. |
+| **Sign-ins** | Every way into the hub: the Claude apps' sign-ins, the upload and read tokens, and the signed-in browsers (this one marked). Each has a **Disconnect** that asks once more and names what breaks — disconnecting the upload token stops `hub sync` until a new one is made on the server, and disconnecting this browser signs it out. |
+
+**Rebuild the `hub` command once** on the PC after pulling this branch —
+`pnpm --filter @context-hub/collector build` (see "Install the collector") —
+or Overview keeps saying sync has gone quiet: reporting a sync run is new in
+the collector, and the server only knows what it is told.
+
+**Monitoring probes go to `/healthz`**, which still answers plain JSON without
+a sign-in. `/` is the dashboard now, not the old JSON landing page, and
+answers `302` to `/login` when signed out.
 
 ## Connect claude.ai
 
