@@ -38,3 +38,13 @@ describe('openDb', () => {
     second.close();
   });
 });
+
+describe('migration 4', () => {
+  it('is schema version 4 and creates the OAuth tables', () => {
+    const db = openDb(':memory:');
+    expect(SCHEMA_VERSION).toBe(4);
+    expect(tables(db)).toEqual(
+      expect.arrayContaining(['oauth_clients', 'connect_codes', 'oauth_grants', 'oauth_codes', 'oauth_tokens']),
+    );
+  });
+});

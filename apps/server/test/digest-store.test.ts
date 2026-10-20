@@ -45,7 +45,7 @@ beforeEach(() => {
 
 describe('migration 2', () => {
   it('adds the digest and state tables and bumps the schema version', () => {
-    expect(SCHEMA_VERSION).toBe(3);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(3);
     const names = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name);
     expect(names).toEqual(expect.arrayContaining(['digests', 'project_states']));
   });
@@ -261,6 +261,7 @@ describe('review fixes: restart and upgrade', () => {
     const sub = addSession('main/agent-1', { parent: 'main' });
     // Put the file back to how Part 2 left it: no digest tables, version 1.
     db.exec('DROP TABLE IF EXISTS state_retries; DROP TABLE project_states; DROP TABLE digests;');
+    db.exec('DROP TABLE oauth_tokens; DROP TABLE oauth_codes; DROP TABLE oauth_grants; DROP TABLE connect_codes; DROP TABLE oauth_clients;');
     db.pragma('user_version = 1');
     db.close();
 

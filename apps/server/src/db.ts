@@ -104,6 +104,58 @@ const MIGRATIONS: string[] = [
   SELECT id, 'pending', synced_at FROM sessions
   WHERE parent IS NULL AND id NOT IN (SELECT session_id FROM digests);
   `,
+  `
+  -- Sign-in for the Claude apps. Every secret is stored as a sha256 hex hash only.
+  CREATE TABLE oauth_clients (
+    client_id      TEXT PRIMARY KEY,
+    kind           TEXT NOT NULL CHECK (kind IN ('dcr', 'cimd')),
+    name           TEXT NOT NULL,
+    redirect_uris  TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    fetched_at     TEXT NOT NULL
+  );
+
+  CREATE TABLE connect_codes (
+    hash        TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    used_at     TEXT
+  );
+
+  CREATE TABLE oauth_grants (
+    id            INTEGER PRIMARY KEY,
+    client_id     TEXT NOT NULL,
+    client_name   TEXT NOT NULL,
+    scopes        TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    last_used_at  TEXT,
+    revoked_at    TEXT
+  );
+
+  CREATE TABLE oauth_codes (
+    hash            TEXT PRIMARY KEY,
+    grant_id        INTEGER NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    client_id       TEXT NOT NULL,
+    redirect_uri    TEXT NOT NULL,
+    code_challenge  TEXT NOT NULL,
+    resource        TEXT NOT NULL,
+    expires_at      TEXT NOT NULL,
+    used_at         TEXT
+  );
+
+  -- pair_hash links an access token to the refresh token issued with it.
+  CREATE TABLE oauth_tokens (
+    hash         TEXT PRIMARY KEY,
+    grant_id     INTEGER NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+    expires_at   TEXT NOT NULL,
+    replaced_at  TEXT,
+    replaced_by  TEXT,
+    pair_hash    TEXT
+  );
+  CREATE INDEX oauth_tokens_pair ON oauth_tokens(pair_hash);
+  CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
