@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runAdmin, type AdminIo } from '../src/admin.js';
 import { openDb } from '../src/db.js';
-import { createGrant, issueTokens } from '../src/oauth/store.js';
+import { consumeConnectCode, createGrant, issueTokens } from '../src/oauth/store.js';
 import { upsertSession } from '../src/store.js';
 import { checkCredential, verifyToken } from '../src/tokens.js';
 import { makeSession } from './helpers.js';
@@ -79,6 +79,22 @@ describe('hub-admin connect-code', () => {
     expect(text).toContain('2026-10-11T00:10:00.000Z');
     expect(text).toMatch(/one use/);
     expect((io.db.prepare('SELECT COUNT(*) AS n FROM connect_codes').get() as { n: number }).n).toBe(1);
+  });
+});
+
+describe('hub-admin device-code', () => {
+  it('prints one device code that connects a computer and does not sign in a browser', async () => {
+    expect(await runAdmin(['device-code'], io)).toBe(0);
+    const text = out.join('\n');
+    const codes = text.match(/[A-Z2-9]{4}-[A-Z2-9]{4}/g) ?? [];
+    expect(codes).toHaveLength(1);
+    expect(text).toMatch(/hub login/);
+    expect(text).toMatch(/one use/);
+    const row = io.db.prepare('SELECT purpose FROM connect_codes').get() as { purpose: string };
+    expect(row.purpose).toBe('device');
+    // Refused where a sign-in code goes, and still good for its own purpose afterwards.
+    expect(consumeConnectCode(io.db, codes[0]!, NOW.toISOString(), 'signin')).toBe(false);
+    expect(consumeConnectCode(io.db, codes[0]!, NOW.toISOString(), 'device')).toBe(true);
   });
 });
 

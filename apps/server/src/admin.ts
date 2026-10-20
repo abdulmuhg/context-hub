@@ -17,7 +17,8 @@ const USAGE = `Usage: hub-admin <command>
   token create --label <name> --scope <ingest or read>   create a token (shown once)
   token list                                             list tokens
   token revoke <id>                                      revoke a token
-  connect-code                                           print a one-time sign-in code for claude.ai (10 minutes)
+  connect-code                                           print a one-time sign-in code for claude.ai or a browser (10 minutes)
+  device-code                                            print a one-time code that connects a computer with hub login (10 minutes)
   oauth list                                             list Claude app sign-ins
   oauth revoke <id>                                      revoke a Claude app sign-in
   backup <file>                                          write a consistent copy of the database
@@ -71,6 +72,14 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
     const { code, expiresAt } = createConnectCode(io.db, now);
     io.out(`Sign-in code: ${code}`);
     io.out(`Valid until ${expiresAt}, for one use. Enter it on the hub's sign-in page when claude.ai asks you to sign in.`);
+    return 0;
+  }
+
+  // The way in for a hub's very first computer, when no browser is signed in to the dashboard yet.
+  if (command === 'device-code') {
+    const { code, expiresAt } = createConnectCode(io.db, now, 'device');
+    io.out(`Computer code: ${code}`);
+    io.out(`Valid until ${expiresAt}, for one use. Enter it when hub login asks for a code on the new computer.`);
     return 0;
   }
 

@@ -56,22 +56,50 @@ you open **Customize > Connectors > context-hub**, click **Disconnect**, then
 ### 2. Upload this computer's sessions
 
 Reading needs nothing local. Uploading this computer's own sessions needs
-the `hub` command (Node 22 or newer) and a connection to the hub.
+the `hub` command (Node 22 or newer) and a **computer code**: a one-time code,
+valid 10 minutes, that `hub login` swaps for this computer's own upload
+token.
 
-**macOS and Linux.** In the dashboard open **Sign-ins > Add a computer**; it
-shows a one-time code and the two commands to run on the new computer:
+#### Which path are you on?
+
+```mermaid
+flowchart TD
+    start([New computer to connect]) --> q1{Is another computer<br/>or a browser already<br/>signed in to the dashboard?}
+    q1 -- Yes --> addc[Dashboard: Sign-ins<br/>› Add a computer]
+    q1 -- No --> q2{Who runs the hub?}
+    q2 -- Someone else --> owner[Ask the owner for a code<br/>from Add a computer]
+    q2 -- You --> server[On the server:<br/>hub-admin device-code]
+    addc --> code[/Computer code/]
+    owner --> code
+    server --> code
+    code --> install[On the new computer:<br/>install, then hub login]
+    install --> done([Connected: hub track, hub sync])
+```
+
+| You are | Get the computer code from |
+|---|---|
+| **Adding another computer** (one computer or browser is already signed in) | The dashboard: **Sign-ins > Add a computer**. It also shows the commands to run. |
+| **Using someone else's hub** | The hub's owner, from their **Sign-ins > Add a computer**. You never need server access. |
+| **Hosting the hub, first computer ever** (nothing is signed in yet) | The server: `docker exec context-hub node /app/dist/admin-bin.js device-code` (or `docker compose exec … device-code`). |
+
+A computer code only works in `hub login`, and a sign-in code (for browsers
+and the Claude apps, see [Sign-in codes](#sign-in-codes)) only works there.
+Using one in the other's place just says "wrong or expired" and costs nothing.
+
+#### Install and log in
+
+**macOS and Linux:**
 
 ```bash
 curl -fsSL https://hub.abdulmughnialfikri.com/install | sh
-hub login
 ```
 
-`hub login` asks for the hub address (the first time), a name for the computer and the code, then saves the
-address and an upload token in `~/.context-hub`. The installer puts `hub`
-in `~/.local/bin` (it tells you if that is not on your `PATH`) and installs
-the Claude Code slash commands. Run the first line again to update; it leaves
-`~/.context-hub` alone. If the computer is lost, **Disconnect** its token on
-the Sign-ins page.
+Then run the `login` line it prints, which asks for a name for this computer
+and the code. The installer puts `hub` in `~/.local/bin` and installs the
+Claude Code slash commands. If `~/.local/bin` is not on your `PATH` (a fresh
+Mac), it prints the line to add to `~/.zshrc` and gives the next step with the
+full path. Run the install line again to update; it leaves `~/.context-hub`
+alone.
 
 **Windows** has no installer yet:
 
@@ -82,12 +110,13 @@ pnpm install
 pnpm --filter @context-hub/collector build
 ```
 
-Put a `hub.cmd` that runs
-`node C:path	ocontext-hubappscollectordistin.js %*` in your npm
-global folder, then run `hub login --url https://hub.abdulmughnialfikri.com`
-and enter a code from **Sign-ins > Add a computer**. (An upload token made on
-the server with `hub-admin token create --label <this computer> --scope ingest`
-also works: `hub init --url <address>`.)
+Put a `hub.cmd` in your npm global folder that runs
+`node C:\path\to\context-hub\apps\collector\dist\bin.js %*`, then run
+`hub login --url https://hub.abdulmughnialfikri.com` and enter the code.
+
+When it works, `hub login` prints `Connected as "<name>"`, and the computer
+appears on **Sign-ins > Tokens** with its own **Disconnect**, so a lost
+computer can be cut off.
 
 ### 3. Choose projects and sync
 
@@ -150,17 +179,22 @@ the browser stays signed in for 30 days.
 
 ### Sign-in codes
 
-The Claude apps and the dashboard both sign in with a one-time code: valid 10
-minutes, one use. The easiest way is **Sign-ins > New sign-in code** in the
-dashboard (and **Add a computer** makes the other kind, for `hub login`; the
-two are not interchangeable). From a computer where `hub` is already set up:
+The dashboard (in a browser) and the Claude apps sign in with a **sign-in
+code**: one-time, valid 10 minutes.
 
-```bash
-hub connect
+```mermaid
+flowchart LR
+    a[Dashboard: Sign-ins<br/>› New sign-in code] --> code[/Sign-in code/]
+    b[A connected computer:<br/>hub connect] --> code
+    c[On the server:<br/>hub-admin connect-code] --> code
+    code --> use1[Browser: the hub's sign-in page]
+    code --> use2[claude.ai: when the connector asks]
 ```
 
-or, on the server, `hub-admin connect-code`. Ten wrong codes in 5 minutes
-block that address for 15 minutes.
+Use whichever source you can reach: the dashboard if any browser is already
+signed in, `hub connect` on a computer that is already connected, or the
+server if neither. Ten wrong codes in 5 minutes block that address for 15
+minutes.
 
 ### Keeping the hub's picture right
 
@@ -215,25 +249,40 @@ interface; only the proxy should reach it.
 
 ### First tokens and first sign-in
 
-There are no accounts. Access is by tokens and one-time codes, made with the
-admin command inside the container:
+There are no accounts. Access is by tokens and one-time codes. On a new hub,
+nothing is signed in yet, so the first codes come from the admin command
+inside the container:
 
 ```bash
-docker exec context-hub node /app/dist/admin-bin.js token create --label my-laptop --scope ingest
-docker exec context-hub node /app/dist/admin-bin.js token create --label claude-code --scope read
+docker exec context-hub node /app/dist/admin-bin.js device-code
 docker exec context-hub node /app/dist/admin-bin.js connect-code
 ```
 
-A token is shown once. `ingest` is for a computer's `hub` command; `read` is
-for an assistant that cannot use the Claude apps' sign-in (Claude Code can
-also use it as a bearer token for `https://hub.example.com/mcp`). The connect
-code signs in a browser or the Claude apps.
+- `device-code` connects your first computer: run the installer there and
+  enter it in `hub login` (see [Which path are you on?](#which-path-are-you-on)).
+- `connect-code` signs in your first browser (the dashboard) or claude.ai.
+
+From then on you rarely need the server: the dashboard's **Sign-ins** page
+makes both kinds of code (**Add a computer**, **New sign-in code**), and
+lists and disconnects everything.
+
+You can still create long-lived tokens by hand, for example a read token for
+an assistant that cannot use the Claude apps' sign-in (it goes in as a bearer
+token for `https://hub.example.com/mcp`):
+
+```bash
+docker exec context-hub node /app/dist/admin-bin.js token create --label claude-code --scope read
+```
+
+A token is shown once. `ingest` tokens are for a computer's `hub` command;
+`read` tokens are for assistants.
 
 Other admin commands:
 
 ```bash
 node /app/dist/admin-bin.js token list | token revoke <id>
 node /app/dist/admin-bin.js oauth list | oauth revoke <id>
+node /app/dist/admin-bin.js device-code | connect-code
 node /app/dist/admin-bin.js digests
 node /app/dist/admin-bin.js redigest <project>
 node /app/dist/admin-bin.js rebuild-state <project>
