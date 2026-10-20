@@ -51,3 +51,21 @@ export function authorizationServerMetadata(cfg: OAuthConfig): object {
     client_id_metadata_document_supported: true,
   };
 }
+
+const PUBLIC_URL_FORM = 'PUBLIC_URL must look like https://hub.example.com (no path, query or fragment)';
+
+/** Validates the server's public origin and returns it without a trailing slash. */
+export function parsePublicUrl(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error(`${PUBLIC_URL_FORM}`);
+  }
+  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]';
+  const okScheme = u.protocol === 'https:' || (u.protocol === 'http:' && local);
+  if (!okScheme || (u.pathname !== '' && u.pathname !== '/') || u.search !== '' || u.hash !== '' || u.username !== '' || u.password !== '') {
+    throw new Error(`${PUBLIC_URL_FORM}; https only, except http for localhost`);
+  }
+  return u.origin;
+}

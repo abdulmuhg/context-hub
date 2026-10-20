@@ -5,6 +5,7 @@ import { openDb } from './db.js';
 import { createHandler } from './http.js';
 import { AnthropicLlm, DEFAULT_MODEL, type Effort } from './llm-anthropic.js';
 import { handleMcp } from './mcp.js';
+import { parsePublicUrl } from './oauth/config.js';
 import { DEFAULT_MAX_INPUT_TOKENS, startWorker } from './worker.js';
 
 const path = process.env.DATABASE_PATH ?? './data/hub.sqlite';
@@ -12,7 +13,8 @@ const port = Number(process.env.PORT ?? 3000);
 
 mkdirSync(dirname(path), { recursive: true });
 const db = openDb(path);
-const publicUrl = process.env.PUBLIC_URL?.trim();
+const rawPublicUrl = process.env.PUBLIC_URL?.trim();
+const publicUrl = rawPublicUrl ? parsePublicUrl(rawPublicUrl) : undefined;
 const server = createServer(createHandler({ db, mcp: handleMcp(db), ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
 console.log(publicUrl ? `oauth: on, ${publicUrl}` : 'oauth: off, no PUBLIC_URL');
 
