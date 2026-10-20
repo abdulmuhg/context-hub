@@ -262,6 +262,7 @@ describe('review fixes: restart and upgrade', () => {
     // Put the file back to how Part 2 left it: no digest tables, version 1.
     db.exec('DROP TABLE IF EXISTS state_retries; DROP TABLE project_states; DROP TABLE digests;');
     db.exec('DROP TABLE oauth_tokens; DROP TABLE oauth_codes; DROP TABLE oauth_grants; DROP TABLE connect_codes; DROP TABLE oauth_clients;');
+    db.exec('DROP TABLE web_sessions; DROP TABLE sync_runs; DROP TABLE activity;');
     db.pragma('user_version = 1');
     db.close();
 

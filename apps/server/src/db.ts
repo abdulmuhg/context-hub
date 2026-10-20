@@ -156,6 +156,43 @@ const MIGRATIONS: string[] = [
   CREATE INDEX oauth_tokens_pair ON oauth_tokens(pair_hash);
   CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
   `,
+  `
+  -- What the hub did for the dashboard: calls in (uploads, notes, syncs) and out (answers to Claude).
+  CREATE TABLE activity (
+    id           INTEGER PRIMARY KEY,
+    at           TEXT NOT NULL,
+    direction    TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+    action       TEXT NOT NULL,
+    project_key  TEXT,
+    session_ref  TEXT,
+    actor        TEXT NOT NULL,
+    detail       TEXT
+  );
+  CREATE INDEX activity_at ON activity(at);
+
+  -- One row per run the collector reports after hub sync.
+  CREATE TABLE sync_runs (
+    id           INTEGER PRIMARY KEY,
+    token_id     INTEGER NOT NULL,
+    finished_at  TEXT NOT NULL,
+    uploaded     INTEGER NOT NULL,
+    unchanged    INTEGER NOT NULL,
+    errors       INTEGER NOT NULL,
+    received_at  TEXT NOT NULL
+  );
+  CREATE INDEX sync_runs_finished ON sync_runs(finished_at);
+
+  -- Browser sign-ins for the dashboard. The cookie value is stored as a sha256 hex hash only.
+  CREATE TABLE web_sessions (
+    id            INTEGER PRIMARY KEY,
+    hash          TEXT NOT NULL UNIQUE,
+    csrf          TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    last_used_at  TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    revoked_at    TEXT
+  );
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

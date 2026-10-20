@@ -40,11 +40,19 @@ describe('openDb', () => {
 });
 
 describe('migration 4', () => {
-  it('is schema version 4 and creates the OAuth tables', () => {
+  it('is at least schema version 4 and creates the OAuth tables', () => {
     const db = openDb(':memory:');
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(4);
     expect(tables(db)).toEqual(
       expect.arrayContaining(['oauth_clients', 'connect_codes', 'oauth_grants', 'oauth_codes', 'oauth_tokens']),
     );
+  });
+});
+
+describe('migration 5', () => {
+  it('is schema version 5 and creates the dashboard tables', () => {
+    const db = openDb(':memory:');
+    expect(SCHEMA_VERSION).toBe(5);
+    expect(tables(db)).toEqual(expect.arrayContaining(['activity', 'sync_runs', 'web_sessions']));
   });
 });
