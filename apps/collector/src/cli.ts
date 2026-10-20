@@ -1,4 +1,7 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { SLASH_COMMANDS } from './commands.js';
 import type { Level } from '@context-hub/core';
 import {
   loadConfig,
@@ -36,6 +39,7 @@ const USAGE = `Usage: hub <command>
   forget <project> | forget --session <source>:<id>
   status                               ask the server for its status
   connect                              get a one-time code to sign claude.ai in to the hub
+  install-commands [--dir PATH]        write the Claude Code slash commands (default ~/.claude/commands)
   personal add <label> | list | remove <label> | level <card|list|label> <level>`;
 
 const LEVELS: Level[] = ['off', 'warn', 'partial', 'full'];
@@ -255,6 +259,14 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const { code } = await requestConnectCode(remote(io));
       io.out(`Sign-in code: ${code}`);
       io.out("Valid for 10 minutes, for one use. Enter it on the hub's sign-in page when claude.ai asks you to sign in.");
+      return 0;
+    }
+    case 'install-commands': {
+      const { values } = parseArgs({ args: rest, options: { dir: { type: 'string' } } });
+      const dir = values.dir ?? join(io.home, '.claude', 'commands');
+      mkdirSync(dir, { recursive: true });
+      for (const [name, text] of Object.entries(SLASH_COMMANDS)) writeFileSync(join(dir, name), text);
+      io.out(`Installed ${Object.keys(SLASH_COMMANDS).length} slash commands in ${dir}.`);
       return 0;
     }
     case 'personal':

@@ -1,6 +1,8 @@
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { run, type Io } from '../src/cli.js';
+import { SLASH_COMMANDS } from '../src/commands.js';
 import { loadConfig, loadPersonal, loadToken } from '../src/config.js';
 import { tempDir, writeJsonl } from './helpers.js';
 
@@ -53,6 +55,24 @@ describe('hub init', () => {
   it('rejects a URL that is not http or https', async () => {
     expect(await run(['init', '--url', 'hub.example.com', '--token', 't'], io)).toBe(1);
     expect(err.join('\n')).toMatch(/must start with http/);
+  });
+});
+
+describe('hub install-commands', () => {
+  it('writes the five slash commands and overwrites them on a second run', async () => {
+    const dir = join(tempDir(), 'commands');
+    expect(await run(['install-commands', '--dir', dir], io)).toBe(0);
+    expect(out).toContain(`Installed 5 slash commands in ${dir}.`);
+    expect(readdirSync(dir).sort()).toEqual(Object.keys(SLASH_COMMANDS).sort());
+    for (const [name, text] of Object.entries(SLASH_COMMANDS)) expect(readFileSync(join(dir, name), 'utf8')).toBe(text);
+    writeFileSync(join(dir, 'hub-sync.md'), 'changed');
+    expect(await run(['install-commands', '--dir', dir], io)).toBe(0);
+    expect(readFileSync(join(dir, 'hub-sync.md'), 'utf8')).toBe(SLASH_COMMANDS['hub-sync.md']);
+  });
+
+  it('defaults to ~/.claude/commands', async () => {
+    expect(await run(['install-commands'], io)).toBe(0);
+    expect(readdirSync(join(io.home, '.claude', 'commands'))).toHaveLength(5);
   });
 });
 
