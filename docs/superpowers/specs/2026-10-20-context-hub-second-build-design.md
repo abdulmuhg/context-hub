@@ -243,8 +243,10 @@ strict Content-Security-Policy. It must work on a phone.
   invalidated in the same response. A refresh token unused for 90 days
   expires. Reuse of an already-rotated refresh token revokes the whole grant
   (the standard theft signal), with one exception: for 60 seconds after a
-  rotation, presenting the refresh token that was just replaced returns the
-  same new pair again instead of revoking. Claude waits up to 30 s for a
+  rotation, presenting the refresh token that was just replaced issues a
+  fresh pair and cancels the pair from the lost response, instead of
+  revoking the grant. (Tokens are stored only as hashes, so the hub cannot
+  hand back a token it already issued.) Claude waits up to 30 s for a
   refresh and may retry one whose answer was lost; without the grace window
   a single dropped response would sign the developer out on web, desktop and
   mobile at once. (The designer's call.)
