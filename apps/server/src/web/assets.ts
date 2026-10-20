@@ -156,6 +156,24 @@ th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .menu-button { display: none; }
 .content { padding: 24px; max-width: 1100px; }
 
+/* Overview: the number cards and the problems box */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 16px;
+  margin: 0 0 16px;
+}
+.cards .card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.stat-label { color: var(--muted); font-size: 0.85rem; }
+.stat-value { font-family: var(--font-mono); font-size: 1.05rem; font-weight: 700; }
+.stat-value.ok { color: var(--success); }
+.stat-value.bad { color: var(--danger); }
+.stat-value .muted { font-weight: 400; font-size: 0.85rem; }
+.problems { border-color: var(--danger); }
+.problems h2 { color: var(--danger); margin-top: 0; }
+.card > h2:first-child { margin-top: 0; }
+.card ul { margin: 0; }
+
 /* Sign-in */
 .signin { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
 .signin form { display: flex; flex-direction: column; gap: 10px; }

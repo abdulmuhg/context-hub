@@ -3,7 +3,8 @@ import type { Db } from '../db.js';
 import type { AuthLimiter } from '../ratelimit.js';
 import { consumeConnectCode } from '../oauth/store.js';
 import { isAsset, serveAsset } from './assets.js';
-import { forbiddenPage, pageShell, redirectTo, sendDocument, signInPage } from './html.js';
+import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
+import { overviewPage } from './pages.js';
 import { checkWebSession, clearedCookie, createWebSession, parseCookies, revokeWebSession, sameCsrf, sessionCookie } from './session.js';
 
 export interface WebConfig {
@@ -145,7 +146,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     return true;
   }
   if (path === '/') {
-    sendDocument(res, 200, pageShell({ title: 'Overview', active: 'overview', csrf: session.csrf, body: '<h1>Overview</h1>' }));
+    sendDocument(res, 200, overviewPage(ctx.db, ctx.cfg, ctx.now(), session.csrf));
     return true;
   }
   return false;
