@@ -11,3 +11,15 @@
 
 - `search`'s `source` parameter is described as "Limit to one tool", which now also covers `note` (a note comes from a chat, not a coding tool). Left as written; the plan does not change that parameter's text.
 - A project whose short name is shared by two keys (for example `local:dup` and `github.com/me/dup`) appears twice in a description, and the model has no way to tell them apart. `save_note` still answers with the candidate keys and saves nothing.
+
+## Manual test results (Task 4, 2026-10-20)
+
+Deployed as `f80c6ce`; healthy, no restarts; Claude Code still connected with its read token.
+
+- **A plain question picks the hub: pass.** In a new claude.ai chat after reconnecting, "Where did we leave off on jsonroom?" answered from the hub's jsonroom page with no mention of the hub in the prompt.
+- **New tools need a reconnect.** The first chat after the deploy did not see `save_note`: claude.ai kept the tool list from the 06:52 connection. Disconnect and Connect in claude.ai fetched the new list. Worth a line in the README.
+- **Token refresh: pass.** claude.ai rotated grant 1's refresh token at 08:56:33 after the first access token expired.
+- **Fresh sign-in on a second connection: pass.** Reconnecting used a second connect code and created grant 2 (`hub.read hub.save offline_access`). This closes Part 5's open item.
+- **`save_note`: pass.** The note `note:n_MDtPpdm8YjVL8nloF2JfDA` was stored, digested with `model = 'note'` and no model call, and found by `search` from Claude Code with `source: note`.
+- **Wrong project.** Asked to save "to context-hub", Claude filed the note under jsonroom "because that's what we were just talking about". "context-hub" names both the hub and a project, so the request read as "save to the hub". Fix: the `save_note` description should say to use the project the user names and to ask when they name none.
+- Grant 1 is still active but unused since the reconnect; revoke it.
