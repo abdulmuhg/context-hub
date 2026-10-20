@@ -23,6 +23,8 @@ Tasks 1 to 8 and Task 9 Step 1 (README) are done. Task 9 Steps 2 to 5 (`PUBLIC_U
 | D11 | 7 | `store.ts` `rotateRefresh` no longer expires the access token paired with the old refresh token. One line removed. | It contradicted the required test "the old access token keeps working until it expires". Theft handling is unaffected: `revokePair` still kills the paired access token on a grace retry, and late reuse revokes the whole grant. |
 | D12 | 9 | The README implementer first edited the Status line to say all five parts are deployed. Reverted in a later commit. | Part 5 is not merged or deployed. |
 
+Fixed in the final review wave: README status made accurate (and a no-trailing-slash note for the connector URL); `PUBLIC_URL` is now validated at startup (`parsePublicUrl`: https, or http on localhost only; no path, query, fragment or userinfo); legacy bearer tokens that happen to start with `chub_at_` or `chub_rt_` (about 1 in 262,000) are no longer rejected as unknown OAuth tokens.
+
 Fixed during review, inside the plan's scope: the IPv4-mapped IPv6 SSRF gap in the client fetch check (Task 5); the declined "save notes" choice being re-ticked after a wrong code, and the client fetch running before the limiter (Task 6); an unreadable token request body escaping without `no-store` (Task 7).
 
 ## Deferred, outside the plan
@@ -34,6 +36,14 @@ Fixed during review, inside the plan's scope: the IPv4-mapped IPv6 SSRF gap in t
 - The failed-login limiter keys on `X-Forwarded-For` (existing behaviour). Wrong-code limiting on the sign-in page is only as good as Caddy overwriting that header. (Task 6)
 - The resolver's reason text ("private or unresolvable address", "not JSON", …) is shown to anonymous callers on the error page. It is a small probing oracle. (Task 6)
 - Non-443 ports are allowed for CIMD URLs. `privateV4` omits TEST-NET and `198.18.0.0/15`. (Task 5)
+
+**Raised by the final review, deliberately not changed (each needs a decision or goes beyond the plan)**
+- A hub-issued expired or revoked token (`'dead'`) sent from an address that is already blocked gets 429 instead of 401 with `WWW-Authenticate`. This is the order the plan specifies (blocked before dead). On a shared egress address, one stranger sending made-up tokens could stall the owner's connector for 15 minutes until the block lapses. The fix would be to check `isBlocked` only inside the unknown-token branch. Worth deciding before relying on it.
+- `/mcp/` (trailing slash) answers 404 with no challenge, so a connector added with that URL never starts discovery. The README now says to use the URL exactly as written.
+- CIMD fetch uses `redirect: 'manual'` and needs a plain 200. If Anthropic's client metadata URL ever redirects, sign-in fails at the authorize page and DCR does not take over. The manual test must cover this.
+- `/.well-known/oauth-authorization-server` is served at the bare path only (correct for an issuer without a path). Mirroring the `/mcp`-suffixed form would be cheap insurance.
+- `POST /api/connect-code` works even when `PUBLIC_URL` is unset, so `hub connect` hands out codes that nothing can use.
+- A retried lost response to the first token exchange will fail with `invalid_grant` and revoke the grant (code reuse). Expect one possible "sign-in failed, try again" during the manual test.
 
 **Refresh-token design (from the spec's rules, implemented faithfully)**
 - Inside the 60 s grace window, a stolen old refresh token can replace the real client's pair. The real client's next use of the dead pair gets `invalid_grant` without revoking the grant, so the theft goes unnoticed and the attacker's pair gets a fresh 90-day idle life.
@@ -49,7 +59,7 @@ Fixed during review, inside the plan's scope: the IPv4-mapped IPv6 SSRF gap in t
 - `http.ts` and `oauth/routes.ts` import each other. Moving `send` to a leaf module would fix it. (Task 4)
 - `code_challenge` format and length (43 to 128 base64url characters) is not validated at `/oauth/authorize`. `base()` is duplicated in `authorize.ts`. A stale comment sits near `authorize.ts:60`. (Task 6)
 - Raw SQL for the grant lookup in `token.ts`. Scope is built differently on the code path and the refresh path. `reply()` duplicates the `json()` helper. (Task 7)
-- `PUBLIC_URL` is not validated at startup (a value without a scheme would log "oauth: on" and serve broken metadata). The e2e test does not assert that discovered endpoints share the server's origin, or that the refresh token is dead after `oauth revoke`. `oauth list` prints client names raw. (Task 8)
+- The e2e test does not assert that discovered endpoints share the server's origin, or that the refresh token is dead after `oauth revoke`. `oauth list` prints client names raw. (Task 8)
 - `task-1-report.md` (git-ignored scratch) still describes the old `rotateRefresh` behaviour.
 
 ## Manual test (Task 9 Step 4/5)
