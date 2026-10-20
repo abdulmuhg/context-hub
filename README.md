@@ -154,6 +154,24 @@ hub sync --dry-run           # see what would be sent
 - `hub forget <project>` or `hub forget --session <source>:<id>` deletes from
   the hub. Local files are never touched.
 
+#### Sync automatically (Claude Code)
+
+```bash
+hub auto on        # add a Claude Code SessionEnd hook
+hub auto status    # is it on, and what did the last run do
+hub auto off       # remove the hook
+```
+
+With `hub auto on`, ending a Claude Code session starts a background `hub sync`
+of your tracked projects. It returns at once, so closing Claude Code is never
+delayed. It never asks and never tracks a new project (new projects wait for
+you to run `hub sync` in a terminal), and it adds one line per run to
+`~/.context-hub/auto.log`. It is off until you turn it on. The hook is written
+to `~/.claude/settings.json`; other settings and hooks there are left alone,
+and a backup is saved as `settings.json.hub-backup`.
+
+Codex and Antigravity have no such hook; keep running `hub sync` for them.
+
 **Start each Claude Code session inside the project's folder.** The hub files
 a session by where its work happened, so a session started elsewhere can
 land in the wrong project.
