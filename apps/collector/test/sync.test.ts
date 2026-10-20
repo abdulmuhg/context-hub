@@ -28,10 +28,17 @@ interface Sent {
 let home: string;
 let hub: string;
 let sent: Sent[];
+let reports: Sent[];
 let failAfter: number;
 
 /** A stand-in for the server: records requests, can start failing. */
 const fakeFetch: typeof fetch = async (input, init) => {
+  if (String(input).endsWith('/api/sync-runs')) {
+    const headers = new Headers(init?.headers);
+    const raw = init?.body as Uint8Array;
+    reports.push({ method: init?.method ?? 'GET', url: String(input), auth: headers.get('authorization'), body: JSON.parse(gunzipSync(raw).toString('utf8')) });
+    return new Response(null, { status: 204 });
+  }
   if (sent.length >= failAfter) return new Response('boom', { status: 500 });
   const headers = new Headers(init?.headers);
   const raw = init?.body as Uint8Array | undefined;
@@ -64,6 +71,7 @@ beforeEach(() => {
   home = tempDir();
   hub = tempDir();
   sent = [];
+  reports = [];
   failAfter = Infinity;
   saveConfig(hub, { ...loadConfig(hub), server_url: 'https://hub.example.com/' });
   saveToken(hub, 'tok-1');
@@ -364,5 +372,49 @@ describe('runSync: after a collector upgrade', () => {
     const third = await runSync(opts({ adapters: [improved] }));
     expect(third.uploaded).toEqual([]);
     expect(reads).toBe(2); // and not re-read again afterwards
+  });
+});
+
+describe('runSync: reports the run to the server', () => {
+  it('sends one report with the run counts after a real sync', async () => {
+    track(KEY_A);
+    const report = await runSync(opts());
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ method: 'POST', url: 'https://hub.example.com/api/sync-runs', auth: 'Bearer tok-1' });
+    expect(reports[0]!.body).toEqual({
+      finished_at: '2026-10-10T00:00:00.000Z',
+      uploaded: report.uploaded.length,
+      unchanged: report.unchanged,
+      errors: report.errors.length,
+    });
+    expect(report.uploaded).toHaveLength(1);
+  });
+
+  it('counts errors when an upload fails', async () => {
+    track(KEY_A);
+    failAfter = 0;
+    const report = await runSync(opts());
+    expect(report.errors).toHaveLength(1);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]!.body).toMatchObject({ uploaded: 0, errors: 1 });
+  });
+
+  it('sends nothing on a dry run', async () => {
+    track(KEY_A);
+    await runSync(opts({ dryRun: true }));
+    expect(reports).toEqual([]);
+  });
+
+  it('a scoped sync still reports', async () => {
+    track(KEY_A);
+    await runSync(opts({ project: 'alpha' }));
+    expect(reports).toHaveLength(1);
+  });
+
+  it('a failed report is returned, not thrown', async () => {
+    track(KEY_A);
+    const report = await runSync(opts({ fetchImpl: async (input, init) => (String(input).endsWith('/api/sync-runs') ? new Response('no', { status: 500 }) : fakeFetch(input, init)) }));
+    expect(report.uploaded).toHaveLength(1);
+    expect(report.reportError).toMatch(/sync-runs/);
   });
 });

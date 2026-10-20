@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { stripSecrets, type HashedSession } from '@context-hub/core';
-import { forgetActivityForProject, forgetActivityForSession, logActivitySafe } from './activity.js';
+import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun } from './activity.js';
 import type { Db } from './db.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProject, deleteSession, status, upsertSession } from './store.js';
@@ -183,6 +183,24 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       const { code, expiresAt } = createConnectCode(db, now().toISOString());
       res.setHeader('Cache-Control', 'no-store');
       return send(res, 200, { code, expires_at: expiresAt });
+    }
+
+    if (path === '/api/sync-runs' && method === 'POST') {
+      const credential = authorise(req, res, ['ingest']);
+      const body = await readJson(req);
+      const r = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+      const count = (name: string): number => {
+        const v = r[name];
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) throw new HttpError(400, `${name} must be a non-negative whole number`);
+        return v;
+      };
+      const finishedAt = r.finished_at;
+      if (typeof finishedAt !== 'string' || Number.isNaN(Date.parse(finishedAt))) throw new HttpError(400, 'finished_at must be an ISO time');
+      const run = { finishedAt: new Date(finishedAt).toISOString(), uploaded: count('uploaded'), unchanged: count('unchanged'), errors: count('errors') };
+      // Only a bearer credential reaches here (ingest scope), so it always carries a token id.
+      recordSyncRun(db, { tokenId: (credential as Extract<Credential, { kind: 'bearer' }>).id, ...run }, now().toISOString());
+      res.writeHead(204);
+      return void res.end();
     }
 
     const sessionPath = /^\/api\/sessions\/([^/]+)\/(.+)$/.exec(path);

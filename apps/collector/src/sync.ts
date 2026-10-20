@@ -12,7 +12,7 @@ import {
   type State,
 } from './config.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
-import { putSession, type Remote } from './upload.js';
+import { putSession, reportSyncRun, type Remote } from './upload.js';
 
 export interface SyncOptions {
   /** The user's home folder, where the tools keep their history. */
@@ -43,6 +43,8 @@ export interface SyncReport {
   personal: { session: string; type: string; count: number }[];
   warnings: { session: string; bad_lines: number; unknown_records: number; dropped_blocks: number }[];
   errors: string[];
+  /** Set when the run finished but the server could not be told about it. */
+  reportError?: string;
 }
 
 interface Scanned {
@@ -244,6 +246,16 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     // Keep forcing a full pass until one finishes cleanly.
     if (!opts.project && !opts.session && report.errors.length === 0) s.state.fingerprint = s.fingerprint;
     saveState(opts.hubDir, s.state);
+    try {
+      await reportSyncRun(remote!, {
+        finished_at: now().toISOString(),
+        uploaded: report.uploaded.length,
+        unchanged: report.unchanged,
+        errors: report.errors.length,
+      });
+    } catch (e) {
+      report.reportError = (e as Error).message;
+    }
   }
   return report;
 }

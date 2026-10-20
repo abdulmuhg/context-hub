@@ -4,7 +4,7 @@ import { openDb, type Db } from '../src/db.js';
 import { MAX_BODY, send } from '../src/http.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import { createGrant, issueTokens, listGrants } from '../src/oauth/store.js';
-import { listActivity } from '../src/activity.js';
+import { latestSyncRun, listActivity } from '../src/activity.js';
 import { createToken, revokeToken } from '../src/tokens.js';
 import { contentHash } from '@context-hub/core';
 import { gz, makeSession, startServer, text } from './helpers.js';
@@ -470,5 +470,37 @@ describe('limiter rules', () => {
     const at = oauthToken(['hub.read'], '2026-10-11T00:00:00.000Z');
     await mcp(at);
     expect(listGrants(db)[0]!.lastUsedAt).toBe(nowIso);
+  });
+});
+
+describe('POST /api/sync-runs', () => {
+  const report = (token: string | undefined, body: unknown) =>
+    call('POST', '/api/sync-runs', { token, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
+  const good = { finished_at: '2026-10-10T12:00:00.000Z', uploaded: 2, unchanged: 5, errors: 0 };
+
+  it('refuses a read token (403) and a missing token (401)', async () => {
+    expect((await report(read, good)).status).toBe(403);
+    expect((await report(undefined, good)).status).toBe(401);
+    expect(latestSyncRun(db)).toBeNull();
+  });
+
+  it('rejects a bad body with 400', async () => {
+    for (const bad of [
+      { ...good, uploaded: -1 },
+      { ...good, unchanged: 1.5 },
+      { ...good, errors: '0' },
+      { uploaded: 1, unchanged: 1, errors: 0 },
+      { ...good, finished_at: 'yesterday' },
+      null,
+    ]) {
+      expect((await report(ingest, bad)).status).toBe(400);
+    }
+    expect(latestSyncRun(db)).toBeNull();
+  });
+
+  it('stores a valid report from the ingest token and answers 204', async () => {
+    const res = await report(ingest, good);
+    expect(res.status).toBe(204);
+    expect(latestSyncRun(db)).toMatchObject({ finishedAt: good.finished_at, uploaded: 2, unchanged: 5, errors: 0 });
   });
 });

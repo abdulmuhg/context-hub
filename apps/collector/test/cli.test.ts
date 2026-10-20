@@ -121,7 +121,10 @@ describe('hub sync', () => {
   it('uploads and prints a summary', async () => {
     expect(await run(['sync'], io)).toBe(0);
     expect(out.join('\n')).toMatch(/Uploaded 1 session/);
-    expect(requests).toEqual([{ method: 'PUT', url: `https://hub.example.com/api/sessions/claude-code/${S1}` }]);
+    expect(requests).toEqual([
+      { method: 'PUT', url: `https://hub.example.com/api/sessions/claude-code/${S1}` },
+      { method: 'POST', url: 'https://hub.example.com/api/sync-runs' },
+    ]);
   });
 
   it('says so when --project names a project that is not tracked', async () => {
@@ -233,5 +236,18 @@ describe('hub status and usage', () => {
   it('an unknown command prints usage and exits 1', async () => {
     expect(await run(['dance'], io)).toBe(1);
     expect(err.join('\n')).toMatch(/Usage: hub/);
+  });
+});
+
+describe('hub sync: reporting the run', () => {
+  it('still exits 0 and prints one line when the report cannot be sent', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    await run(['track', 'alpha'], io);
+    io.fetchImpl = async (input) =>
+      String(input).endsWith('/api/sync-runs') ? new Response('no', { status: 500 }) : new Response('{"stored":true}', { status: 200 });
+    err = [];
+    expect(await run(['sync'], io)).toBe(0);
+    expect(err.filter((l) => l.includes('could not report this run'))).toHaveLength(1);
+    expect(err).toHaveLength(1);
   });
 });

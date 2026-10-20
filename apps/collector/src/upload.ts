@@ -53,3 +53,11 @@ export async function requestConnectCode(remote: Remote): Promise<{ code: string
 export async function getStatus(remote: Remote): Promise<unknown> {
   return (await send(remote, 'GET', '/api/status')).json();
 }
+
+/** Tells the server a sync run finished. Gives up after 10 seconds. */
+export async function reportSyncRun(
+  remote: Remote,
+  r: { finished_at: string; uploaded: number; unchanged: number; errors: number },
+): Promise<void> {
+  await send({ ...remote, timeoutMs: 10_000 }, 'POST', '/api/sync-runs', gzipSync(Buffer.from(JSON.stringify(r), 'utf8')));
+}

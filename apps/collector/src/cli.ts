@@ -90,6 +90,7 @@ function printReport(io: Io, report: SyncReport, dryRun: boolean): void {
     io.out(`Warning: ${w.session}: ${w.bad_lines} unreadable lines, ${w.unknown_records} unknown records, ${w.dropped_blocks} dropped blocks`);
   }
   for (const e of report.errors) io.err(`Error: ${e}`);
+  if (report.reportError) io.err(`Note: could not report this run to the server (${report.reportError}). The sync itself is unaffected.`);
 }
 
 async function personal(io: Io, args: string[]): Promise<void> {
