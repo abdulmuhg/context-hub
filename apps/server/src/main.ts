@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname } from 'node:path';
+import { loadClientBundle } from './client-dist.js';
 import { openDb } from './db.js';
 import { createHandler } from './http.js';
 import { AnthropicLlm, DEFAULT_MODEL, type Effort } from './llm-anthropic.js';
@@ -30,8 +31,11 @@ const web: WebConfig = {
   publicOrigin: publicUrl ?? null,
 };
 
-const server = createServer(createHandler({ db, mcp: handleMcp(db), web, ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
+const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };
+
+const server = createServer(createHandler({ db, mcp: handleMcp(db), web, client, ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
 console.log(publicUrl ? `oauth: on, ${publicUrl}` : 'oauth: off, no PUBLIC_URL');
+console.log(`client bundle: ${client.bundle === null ? 'off' : 'on'}`);
 console.log(`dashboard: on, secure cookies ${web.secureCookies ? 'on' : 'off'}, backup status ${web.backupStatusPath ?? 'none'}`);
 
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];

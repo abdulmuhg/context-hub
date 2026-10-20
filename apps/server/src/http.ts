@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { stripSecrets, type HashedSession } from '@context-hub/core';
 import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun } from './activity.js';
+import { installScript } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
 import { AuthLimiter } from './ratelimit.js';
@@ -29,6 +30,8 @@ export interface AppDeps {
   mcp?: (req: IncomingMessage, res: ServerResponse, body: unknown, caller: McpCaller) => Promise<void>;
   /** When set, the browser dashboard is served. Wired in main.ts. */
   web?: WebConfig;
+  /** The collector's single-file bundle served at /hub.mjs. Wired in main.ts. */
+  client?: { bundle: string | null };
 }
 
 /**
@@ -172,6 +175,20 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     }
 
     if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) return send(res, 200, { status: 'ok' });
+
+    if ((path === '/install' || path === '/hub.mjs') && (method === 'GET' || method === 'HEAD')) {
+      const publicUrl = deps.oauth?.publicUrl ?? deps.web?.publicOrigin ?? null;
+      const text = publicUrl === null ? null : path === '/install' ? installScript(publicUrl) : (deps.client?.bundle ?? null);
+      if (text === null) return send(res, 404, { error: 'Not found' });
+      const type = path === '/install' ? 'text/x-shellscript; charset=utf-8' : 'text/javascript; charset=utf-8';
+      res.writeHead(200, {
+        'Content-Type': type,
+        'Content-Length': Buffer.byteLength(text),
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return void res.end(method === 'HEAD' ? undefined : text);
+    }
 
     if (path === '/api/status' && method === 'GET') {
       authorise(req, res, ['ingest', 'read']);

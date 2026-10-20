@@ -37,6 +37,11 @@ RUN pnpm --filter @context-hub/server build
 RUN pnpm --filter @context-hub/server deploy --prod --legacy /runtime \
  && cp -r apps/server/dist /runtime/dist
 
+# The collector's single-file bundle, which the server hands out as /hub.mjs.
+RUN pnpm --filter @context-hub/collector build \
+ && mkdir -p /runtime/client \
+ && cp apps/collector/dist/bin.js /runtime/client/hub.mjs
+
 # ---------------------------------------------------------------------------
 # Stage 2: runtime
 # ---------------------------------------------------------------------------
@@ -47,6 +52,7 @@ ENV NODE_ENV=production
 COPY --from=build /runtime/node_modules ./node_modules
 COPY --from=build /runtime/package.json ./package.json
 COPY --from=build /runtime/dist ./dist
+COPY --from=build /runtime/client ./client
 
 # Fail the image build, not the live container, if the native module is
 # missing, built for the wrong platform, or lacks full-text search.
