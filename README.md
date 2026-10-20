@@ -6,7 +6,7 @@ stopped. Design: `docs/superpowers/specs/2026-10-10-context-hub-design.md`.
 
 ## Status
 
-All four parts are built and deployed at https://hub.abdulmughnialfikri.com.
+All five parts (including Part 5: OAuth sign-in) are built and deployed at https://hub.abdulmughnialfikri.com.
 Every push to `main` deploys. Not built yet: browser login for chat apps
 (claude.ai, ChatGPT, Gemini), a `save` tool, importers for chat-app exports,
 and a dashboard.
@@ -59,6 +59,23 @@ Raise it with `hub personal level list partial` or `full`.
 
 To sync from inside Claude Code, copy
 `integrations/claude-code/hub-sync.md` to `~/.claude/commands/`.
+
+## Connect claude.ai
+
+Add the custom connector in claude.ai (Customize > Connectors > Add custom connector) with URL `https://hub.abdulmughnialfikri.com/mcp`.
+
+When claude.ai asks you to sign in, run:
+
+    hub connect
+
+Enter the code shown on the hub's sign-in page. Codes are valid 10 minutes, for one use. You can tick or untick "Also allow it to save notes to your projects."
+
+To list and revoke access:
+
+    hub-admin oauth list
+    hub-admin oauth revoke <id>
+
+The server needs `PUBLIC_URL` set to `https://hub.abdulmughnialfikri.com` (or sign-in routes answer 404).
 
 ## Develop
 
