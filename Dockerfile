@@ -31,14 +31,16 @@ RUN pnpm test
 
 RUN pnpm --filter @context-hub/server build
 
+# The collector's single-file bundle, which the server hands out as /hub.mjs.
+# Built before `deploy` below: after it, the workspace is in a production-only
+# state and any further pnpm command tries to reinstall (and fails without a TTY).
+RUN pnpm --filter @context-hub/collector build
+
 # A self-contained copy of the server with production dependencies only,
 # real files instead of pnpm's symlinks. --legacy keeps the pre-pnpm-10
 # behaviour, which needs no workspace injection settings.
 RUN pnpm --filter @context-hub/server deploy --prod --legacy /runtime \
- && cp -r apps/server/dist /runtime/dist
-
-# The collector's single-file bundle, which the server hands out as /hub.mjs.
-RUN pnpm --filter @context-hub/collector build \
+ && cp -r apps/server/dist /runtime/dist \
  && mkdir -p /runtime/client \
  && cp apps/collector/dist/bin.js /runtime/client/hub.mjs
 
