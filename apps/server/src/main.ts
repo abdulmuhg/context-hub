@@ -12,7 +12,9 @@ const port = Number(process.env.PORT ?? 3000);
 
 mkdirSync(dirname(path), { recursive: true });
 const db = openDb(path);
-const server = createServer(createHandler({ db, mcp: handleMcp(db) }));
+const publicUrl = process.env.PUBLIC_URL?.trim();
+const server = createServer(createHandler({ db, mcp: handleMcp(db), ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
+console.log(publicUrl ? `oauth: on, ${publicUrl}` : 'oauth: off, no PUBLIC_URL');
 
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 let worker: { stop: () => Promise<void> } | null = null;

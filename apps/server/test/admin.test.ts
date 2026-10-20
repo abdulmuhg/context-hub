@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runAdmin, type AdminIo } from '../src/admin.js';
 import { openDb } from '../src/db.js';
+import { createGrant, issueTokens } from '../src/oauth/store.js';
 import { upsertSession } from '../src/store.js';
-import { verifyToken } from '../src/tokens.js';
+import { checkCredential, verifyToken } from '../src/tokens.js';
 import { makeSession } from './helpers.js';
 
 let io: AdminIo;
@@ -85,5 +86,44 @@ describe('hub-admin usage', () => {
   it('prints usage for an unknown command', async () => {
     expect(await runAdmin(['dance'], io)).toBe(1);
     expect(err.join('\n')).toMatch(/Usage: hub-admin/);
+  });
+});
+
+describe('hub-admin oauth', () => {
+  const grant = (name = 'Claude') => createGrant(io.db, { clientId: 'dcr_x', clientName: name, scopes: ['hub.read', 'hub.save'] }, NOW.toISOString());
+
+  it('list says so when there are none', async () => {
+    expect(await runAdmin(['oauth', 'list'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/no .*sign-ins/i);
+  });
+
+  it('list shows id, client, scopes, dates and state, and nothing secret', async () => {
+    const id = grant('Claude Desktop');
+    const { access, refresh } = issueTokens(io.db, id, true, NOW.toISOString());
+    grant('Other');
+    await runAdmin(['oauth', 'revoke', '2'], io);
+    out = [];
+    expect(await runAdmin(['oauth', 'list'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/1\s+Claude Desktop\s+hub\.read hub\.save\s+created 2026-10-11\s+last used never\s+active/);
+    expect(text).toMatch(/2\s+Other .*revoked 2026-10-11/);
+    expect(text).not.toContain(access);
+    expect(text).not.toContain(refresh!);
+    expect(text).not.toMatch(/[0-9a-f]{64}/);
+    expect(text).not.toContain('chub_');
+  });
+
+  it('revoke ends the grant so its tokens stop working, and reports unknown or repeated ids', async () => {
+    const id = grant();
+    const { access } = issueTokens(io.db, id, false, NOW.toISOString());
+    expect(checkCredential(io.db, access, NOW.toISOString())).toMatchObject({ kind: 'oauth' });
+    expect(await runAdmin(['oauth', 'revoke', String(id)], io)).toBe(0);
+    expect(out.join('\n')).toContain(`Sign-in ${id} revoked`);
+    expect(checkCredential(io.db, access, NOW.toISOString())).toBe('dead');
+    expect(await runAdmin(['oauth', 'revoke', String(id)], io)).toBe(1);
+    expect(await runAdmin(['oauth', 'revoke', '99'], io)).toBe(1);
+    expect(await runAdmin(['oauth', 'revoke', 'abc'], io)).toBe(1);
+    expect(await runAdmin(['oauth', 'revoke'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/oauth list/);
   });
 });

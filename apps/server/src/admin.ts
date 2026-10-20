@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import type { Db } from './db.js';
 import { digestCounts, getProjectState, markDigestPending, markStateDirty } from './digest-store.js';
-import { createConnectCode } from './oauth/store.js';
+import { createConnectCode, listGrants, revokeGrant } from './oauth/store.js';
 import { resolveProject, splitPublicId } from './store.js';
 import { createToken, listTokens, revokeToken, type Scope } from './tokens.js';
 
@@ -71,6 +71,24 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
     const { code, expiresAt } = createConnectCode(io.db, now);
     io.out(`Sign-in code: ${code}`);
     io.out(`Valid until ${expiresAt}, for one use. Enter it on the hub's sign-in page when claude.ai asks you to sign in.`);
+    return 0;
+  }
+
+  if (command === 'oauth' && sub === 'list') {
+    const rows = listGrants(io.db);
+    if (rows.length === 0) io.out('No Claude app sign-ins yet.');
+    for (const r of rows) {
+      const state = r.revokedAt ? `revoked ${r.revokedAt.slice(0, 10)}` : 'active';
+      io.out(`${r.id}  ${r.clientName}  ${r.scopes.join(' ')}  created ${r.createdAt.slice(0, 10)}  last used ${r.lastUsedAt?.slice(0, 10) ?? 'never'}  ${state}`);
+    }
+    return 0;
+  }
+
+  if (command === 'oauth' && sub === 'revoke') {
+    const id = Number(rest[0]);
+    if (!rest[0] || !Number.isInteger(id)) throw new Fail('Give the numeric id from `hub-admin oauth list`.');
+    if (!revokeGrant(io.db, id, now)) throw new Fail(`No active sign-in with id ${id}.`);
+    io.out(`Sign-in ${id} revoked. Its access and refresh tokens stop working now.`);
     return 0;
   }
 
