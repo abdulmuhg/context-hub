@@ -5,6 +5,7 @@ import type { Db } from './db.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProject, deleteSession, status, upsertSession } from './store.js';
 import { resourceUrl, type OAuthConfig } from './oauth/config.js';
+import { handleOAuth } from './oauth/routes.js';
 import { createConnectCode, touchGrant } from './oauth/store.js';
 import { checkCredential, type Scope } from './tokens.js';
 import { HttpError, parseSession } from './validate.js';
@@ -24,7 +25,7 @@ export interface AppDeps {
   mcp?: (req: IncomingMessage, res: ServerResponse, body: unknown) => Promise<void>;
 }
 
-function send(res: ServerResponse, statusCode: number, body: unknown): void {
+export function send(res: ServerResponse, statusCode: number, body: unknown): void {
   if (res.headersSent) return;
   const text = JSON.stringify(body);
   const headers: Record<string, string | number> = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(text) };
@@ -142,6 +143,17 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
   const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const method = req.method ?? 'GET';
     const path = new URL(req.url ?? '/', 'http://local').pathname;
+
+    if (deps.oauth && (path.startsWith('/.well-known/') || path.startsWith('/oauth/'))) {
+      const handled = await handleOAuth(req, res, path, method, {
+        db,
+        cfg: deps.oauth,
+        limiter,
+        address: clientAddress(req),
+        readBody: () => readBody(req),
+      });
+      if (handled) return;
+    }
 
     if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) return send(res, 200, { status: 'ok' });
 
