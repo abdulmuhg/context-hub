@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import { securityHeaders } from './html.js';
+import { ICON_SVG, iconPng } from './icon.js';
 
 // Everything the pages look like and do lives here, because the Content-Security-Policy
 // allows no inline style or script. Both files are served as-is, with no build step.
@@ -372,18 +373,31 @@ const JS = `(function () {
 })();
 `;
 
-const FILES: Record<string, { type: string; body: string }> = {
+const FILES: Record<string, { type: string; body: string | Buffer }> = {
   '/assets/app.css': { type: 'text/css; charset=utf-8', body: CSS },
   '/assets/app.js': { type: 'text/javascript; charset=utf-8', body: JS },
+  // The app icon. Browsers fetch /favicon.ico by habit, so it is served there too (as a PNG,
+  // which every browser accepts at that address). The home-screen icon is a full square: phones
+  // round the corners themselves.
+  '/favicon.svg': { type: 'image/svg+xml', body: ICON_SVG },
+  '/favicon.ico': { type: 'image/png', body: iconPng(32) },
+  '/apple-touch-icon.png': { type: 'image/png', body: iconPng(180, 0) },
 };
 
 export const isAsset = (path: string): boolean => Object.hasOwn(FILES, path);
 
-/** Serves a stylesheet or script. Needs no session, and keeps long-lived caching instead of `no-store`. */
+/**
+ * Serves a stylesheet, script or icon. Needs no session, and keeps long-lived caching instead of
+ * `no-store`. Icons skip the page CSP: it would forbid the SVG's own style block, and an image
+ * runs no script anyway.
+ */
 export function serveAsset(req: IncomingMessage, res: ServerResponse, path: string): void {
   const file = FILES[path]!;
+  const headers = file.type.startsWith('image/')
+    ? { 'X-Content-Type-Options': 'nosniff' }
+    : securityHeaders();
   res.writeHead(200, {
-    ...securityHeaders(),
+    ...headers,
     'Cache-Control': 'public, max-age=604800',
     'Content-Type': file.type,
     'Content-Length': Buffer.byteLength(file.body),
@@ -402,4 +416,4 @@ const FINGERPRINT: Record<string, string> = Object.fromEntries(
     [...createHash('sha256').update(f.body).digest().subarray(0, 8)].map((b) => String.fromCharCode(97 + (b % 16))).join(''),
   ]),
 );
-export const assetHref = (path: '/assets/app.css' | '/assets/app.js'): string => `${path}?v=${FINGERPRINT[path]}`;
+export const assetHref = (path: '/assets/app.css' | '/assets/app.js' | '/favicon.svg'): string => `${path}?v=${FINGERPRINT[path]}`;

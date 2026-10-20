@@ -117,3 +117,34 @@ describe('assets', () => {
     expect(post.status).toBe(404);
   });
 });
+
+describe('app icon', () => {
+  const pngSize = (b: Buffer): [number, number] => [b.readUInt32BE(16), b.readUInt32BE(20)];
+
+  it('serves the SVG icon, which follows the system theme, without a session', async () => {
+    const res = await fetch(url + '/favicon.svg');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/svg+xml');
+    const svg = await res.text();
+    expect(svg).toContain('<svg');
+    expect(svg).toContain('prefers-color-scheme: dark');
+  });
+
+  it('serves real PNGs at the classic and home-screen addresses', async () => {
+    for (const [path, size] of [['/favicon.ico', 32], ['/apple-touch-icon.png', 180]] as const) {
+      const res = await fetch(url + path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('image/png');
+      const body = Buffer.from(await res.arrayBuffer());
+      expect(body.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect(pngSize(body)).toEqual([size, size]);
+    }
+  });
+
+  it('links the icons from every page, including the sign-in page', async () => {
+    const html = await (await fetch(url + '/login')).text();
+    expect(html).toContain('<link rel="icon" href="/favicon.ico" type="image/png">');
+    expect(html).toMatch(/<link rel="icon" href="\/favicon\.svg\?v=[a-p]+" type="image\/svg\+xml">/);
+    expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  });
+});
