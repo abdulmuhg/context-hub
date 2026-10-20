@@ -1,12 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Db } from '../db.js';
 import type { AuthLimiter } from '../ratelimit.js';
-import { consumeConnectCode, revokeGrant } from '../oauth/store.js';
+import { consumeConnectCode, createConnectCode, revokeGrant } from '../oauth/store.js';
 import { revokeToken } from '../tokens.js';
 import { isAsset, serveAsset } from './assets.js';
 import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
 import {
   activityPage,
+  codePage,
+  codeRefusedPage,
   disconnectConfirmPage,
   disconnectNotFoundPage,
   findDisconnectTarget,
@@ -65,7 +67,7 @@ function projectKeyFrom(path: string): string | null {
 }
 
 /** The POST forms the dashboard owns. `/sign-ins/disconnect` is Task 8's; it is listed so no POST path is ambiguous. */
-const ACTIONS = new Set(['/logout', '/sign-ins/disconnect']);
+const ACTIONS = new Set(['/logout', '/sign-ins/disconnect', '/sign-ins/code']);
 
 /**
  * Whether the browser cookie is marked `Secure`. Keyed off the scheme, not the host: a
@@ -144,6 +146,16 @@ function disconnect(res: ServerResponse, form: URLSearchParams, session: WebSess
   redirectTo(res, '/sign-ins');
 }
 
+/** Issues a one-time code of the asked purpose and shows it once; any other purpose is a 400 and stores nothing. */
+function issueCode(res: ServerResponse, form: URLSearchParams, session: WebSession, ctx: WebCtx): void {
+  const purpose = form.get('purpose');
+  if (purpose !== 'signin' && purpose !== 'device') {
+    return sendDocument(res, 400, codeRefusedPage(session.csrf));
+  }
+  const { code } = createConnectCode(ctx.db, ctx.now(), purpose);
+  sendDocument(res, 200, codePage(purpose, code, ctx.cfg.publicOrigin, session.csrf));
+}
+
 /**
  * Handles the dashboard: pages, sign-in and the POST actions. Returns true if the request was
  * answered. A signed-out page answers 302 to /login and a signed-out action answers 403, both
@@ -175,6 +187,10 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     }
     if (path === '/sign-ins/disconnect') {
       disconnect(res, form, session, ctx);
+      return true;
+    }
+    if (path === '/sign-ins/code') {
+      issueCode(res, form, session, ctx);
       return true;
     }
     return false;

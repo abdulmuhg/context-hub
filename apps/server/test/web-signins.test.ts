@@ -81,6 +81,60 @@ afterEach(async () => {
   await close();
 });
 
+describe('issuing codes', () => {
+  const CODE = /[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}/;
+  const codes = () =>
+    db.prepare('SELECT purpose FROM connect_codes ORDER BY rowid').all() as { purpose: string }[];
+
+  it('shows both buttons with the csrf field', async () => {
+    const html = await page('/sign-ins');
+    expect(html).toContain('action="/sign-ins/code"');
+    expect(html).toContain(`name="csrf" value="${csrfOf()}"`);
+    expect(html).toContain('name="purpose" value="device">Add a computer<');
+    expect(html).toContain('name="purpose" value="signin">New sign-in code<');
+  });
+
+  it('issues a device code with the install line', async () => {
+    const before = codes().length;
+    const res = await post('/sign-ins/code', { csrf: csrfOf(), purpose: 'device' });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toMatch(new RegExp(`>${CODE.source}<`));
+    expect(html).toContain('curl -fsSL https://hub.test/install | sh');
+    expect(html).toContain('hub login');
+    expect(html).toContain('Valid for 10 minutes, for one use.');
+    expect(codes().slice(before)).toEqual([{ purpose: 'device' }]);
+  });
+
+  it('issues a sign-in code that works on /login', async () => {
+    const res = await post('/sign-ins/code', { csrf: csrfOf(), purpose: 'signin' });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Enter it where claude.ai or another browser asks for a sign-in code.');
+    expect(html).not.toContain('curl -fsSL');
+    const code = html.match(CODE)![0];
+    expect((await post('/login', { code }, { cookie: null })).status).toBe(302);
+  });
+
+  it('omits the curl line when no public URL is set', async () => {
+    await close();
+    const s = await startServer({ db, now: () => clock, limiter: new AuthLimiter(() => clock.getTime()), web: web({ publicOrigin: null }) });
+    url = s.url;
+    close = s.close;
+    const html = await (await post('/sign-ins/code', { csrf: csrfOf(), purpose: 'device' })).text();
+    expect(html).not.toContain('curl -fsSL');
+    expect(html).toContain('hub login --url');
+  });
+
+  it('refuses a missing csrf, a foreign Origin and an unknown purpose, storing nothing', async () => {
+    const before = codes().length;
+    expect((await post('/sign-ins/code', { purpose: 'device' })).status).toBe(403);
+    expect((await post('/sign-ins/code', { csrf: csrfOf(), purpose: 'device' }, { headers: { Origin: 'https://evil.test' } })).status).toBe(403);
+    expect((await post('/sign-ins/code', { csrf: csrfOf(), purpose: 'admin' })).status).toBe(400);
+    expect(codes().length).toBe(before);
+  });
+});
+
 describe('the Sign-ins page', () => {
   it('lists Claude apps with their client name and permissions', async () => {
     createGrant(db, { clientId: 'c-1', clientName: 'Claude', scopes: ['hub.read', 'hub.save'] }, ago(3 * HOUR));

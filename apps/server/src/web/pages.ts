@@ -1,7 +1,7 @@
 import { countActivity, listActivity, type Action, type ActivityRow, type Direction } from '../activity.js';
 import type { Db } from '../db.js';
 import type { HubScope } from '../oauth/config.js';
-import { listGrants } from '../oauth/store.js';
+import { listGrants, type CodePurpose } from '../oauth/store.js';
 import { getProject, listProjects, projectName, resolveProject } from '../store.js';
 import { listTokens } from '../tokens.js';
 import { computeHealth, type Health, type Problem } from './health.js';
@@ -452,9 +452,48 @@ export function signInsPage(db: Db, csrf: string, currentSessionId: number): str
     csrf,
     body:
       `<h1>Sign-ins</h1><p class="intro">Every way into the hub. Disconnecting asks once more first.</p>` +
+      `<form method="post" action="/sign-ins/code" class="actions">` +
+      `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+      `<button type="submit" name="purpose" value="device">Add a computer</button>` +
+      `<button type="submit" name="purpose" value="signin">New sign-in code</button></form>` +
       signInGroup('Claude apps', ['Client', 'Permissions', 'Signed in', 'Last used'], grants, csrf) +
       signInGroup('Tokens', ['Label', 'Kind', 'Created', 'Last used'], tokens, csrf) +
       signInGroup('Browsers', ['Signed in', 'Last used', 'Which'], browsers, csrf),
+  });
+}
+
+/**
+ * The page a new one-time code is shown on, once. `hubUrl` is the hub's own origin, or null when
+ * none is configured, in which case the install line is left out.
+ */
+export function codePage(purpose: CodePurpose, code: string, hubUrl: string | null, csrf: string): string {
+  const steps =
+    purpose === 'device'
+      ? (hubUrl === null
+          ? `<p>Run <code>hub login --url &lt;this hub's address&gt;</code> on the new computer.</p>`
+          : `<p>Run these on the new computer:</p>` +
+            `<pre class="copyline">curl -fsSL ${escapeHtml(hubUrl)}/install | sh</pre><pre class="copyline">hub login</pre>`) +
+        `<p>Enter this code when hub login asks for it.</p>`
+      : `<p>Enter it where claude.ai or another browser asks for a sign-in code.</p>`;
+  return pageShell({
+    title: purpose === 'device' ? 'Add a computer' : 'New sign-in code',
+    active: 'sign-ins',
+    csrf,
+    body:
+      `<h1>${purpose === 'device' ? 'Add a computer' : 'New sign-in code'}</h1>` +
+      `<section class="card"><p class="code-value">${escapeHtml(code)}</p>` +
+      `<p class="muted">Valid for 10 minutes, for one use.</p>${steps}` +
+      `<p><a href="/sign-ins">Back to Sign-ins</a></p></section>`,
+  });
+}
+
+/** The 400 for a code request that names neither kind of code. */
+export function codeRefusedPage(csrf: string): string {
+  return pageShell({
+    title: 'No code',
+    active: 'sign-ins',
+    csrf,
+    body: `<h1>No code was made</h1><p>Choose Add a computer or New sign-in code. <a href="/sign-ins">Sign-ins</a></p>`,
   });
 }
 

@@ -91,6 +91,9 @@ time .ago { color: var(--muted); }
 time .ago::before { content: "\\00a0\\00b7\\00a0"; }
 td time .ago, .stat time .ago { display: block; font-size: 12.5px; }
 td time .ago::before, .stat time .ago::before { content: none; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+.code-value { font-family: "Inter", system-ui, sans-serif; font-size: 28px; letter-spacing: 0.12em; font-weight: 600; margin: 0 0 8px; }
+.copyline { font-family: var(--font-mono); font-size: 12.5px; background: var(--chip); border-radius: 4px; padding: 8px 10px; margin: 0 0 8px; overflow-x: auto; user-select: all; }
 .muted { color: var(--muted); }
 .ok { color: var(--success); }
 .bad { color: var(--danger); }
