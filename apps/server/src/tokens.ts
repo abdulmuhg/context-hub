@@ -57,13 +57,16 @@ export type Credential =
  */
 export function checkCredential(db: Db, token: string, now: string): Credential | 'dead' | null {
   if (token === '') return null;
-  if (token.startsWith('chub_at_')) {
+  if (token.startsWith('chub_at_') || token.startsWith('chub_rt_')) {
+    // A legacy token is 'chub_' + base64url, so it can start like an OAuth token by chance (~1 in 262k).
+    // Only a miss in the OAuth tables falls through; a known OAuth token is never a bearer credential.
     const t = findToken(db, token);
-    if (!t || t.kind !== 'access') return null;
-    if (t.expiresAt <= now || t.grant.revokedAt !== null) return 'dead';
-    return { kind: 'oauth', grantId: t.grantId, scopes: t.grant.scopes };
+    if (t) {
+      if (t.kind !== 'access') return null;
+      if (t.expiresAt <= now || t.grant.revokedAt !== null) return 'dead';
+      return { kind: 'oauth', grantId: t.grantId, scopes: t.grant.scopes };
+    }
   }
-  if (token.startsWith('chub_rt_')) return null;
   const row = db.prepare('SELECT id, scope, revoked_at FROM tokens WHERE hash = ?').get(hashToken(token)) as
     | { id: number; scope: Scope; revoked_at: string | null }
     | undefined;

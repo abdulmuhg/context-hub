@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.js';
 import { AuthLimiter } from '../src/ratelimit.js';
@@ -148,5 +149,20 @@ describe('checkCredential', () => {
     expect(checkCredential(db, 'chub_nope', T1)).toBeNull();
     expect(checkCredential(db, '', T1)).toBeNull();
     expect(checkCredential(db, refresh!, T0)).toBeNull();
+  });
+
+  it('still accepts a legacy bearer token whose random part happens to start like an OAuth prefix', () => {
+    const db = openDb(':memory:');
+    for (const raw of ['chub_at_LegacyLooksLikeOAuth0123456789abcdefghijk', 'chub_rt_LegacyLooksLikeOAuth0123456789abcdefghijk']) {
+      db.prepare('INSERT INTO tokens(label, scope, hash, created_at) VALUES (?, ?, ?, ?)').run(
+        'legacy',
+        'read',
+        createHash('sha256').update(raw).digest('hex'),
+        T0,
+      );
+      expect(checkCredential(db, raw, T1)).toEqual({ kind: 'bearer', scope: 'read' });
+    }
+    expect(checkCredential(db, 'chub_at_unknown', T1)).toBeNull();
+    expect(checkCredential(db, 'chub_rt_unknown', T1)).toBeNull();
   });
 });
