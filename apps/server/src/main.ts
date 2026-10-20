@@ -7,7 +7,7 @@ import { AnthropicLlm, DEFAULT_MODEL, type Effort } from './llm-anthropic.js';
 import { handleMcp } from './mcp.js';
 import { parsePublicUrl } from './oauth/config.js';
 import { DEFAULT_MAX_INPUT_TOKENS, startWorker } from './worker.js';
-import type { WebConfig } from './web/routes.js';
+import { secureCookiesFor, type WebConfig } from './web/routes.js';
 
 const path = process.env.DATABASE_PATH ?? './data/hub.sqlite';
 const port = Number(process.env.PORT ?? 3000);
@@ -26,8 +26,7 @@ const web: WebConfig = {
   startedAt: new Date().toISOString(),
   digestsOn: Boolean(process.env.ANTHROPIC_API_KEY),
   backupStatusPath: backupStatus || (existsSync(DEFAULT_BACKUP_STATUS) ? DEFAULT_BACKUP_STATUS : null),
-  // Without a public URL (or on a local one) the browser is on plain http, where a Secure cookie is dropped.
-  secureCookies: publicUrl !== undefined && !publicUrl.startsWith('http://localhost'),
+  secureCookies: secureCookiesFor(publicUrl),
   publicOrigin: publicUrl ?? null,
 };
 

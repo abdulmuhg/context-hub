@@ -34,9 +34,32 @@ export interface WebSession {
 const PAGES = new Set(['/', '/activity', '/projects', '/sign-ins']);
 const isPage = (path: string): boolean => PAGES.has(path) || path.startsWith('/projects/');
 
+/** The POST forms the dashboard owns. `/sign-ins/disconnect` is Task 8's; it is listed so no POST path is ambiguous. */
+const ACTIONS = new Set(['/logout', '/sign-ins/disconnect']);
+
+/**
+ * Whether the browser cookie is marked `Secure`. Keyed off the scheme, not the host: a
+ * `Secure` cookie is dropped on any plain-http origin, and `PUBLIC_URL` also allows
+ * `http://127.0.0.1` and `http://[::1]` besides `http://localhost`.
+ */
+export function secureCookiesFor(publicUrl: string | undefined): boolean {
+  return publicUrl?.startsWith('https://') ?? false;
+}
+
 function currentSession(req: IncomingMessage, ctx: WebCtx): WebSession | null {
   const value = parseCookies(req.headers.cookie)['hub_session'] ?? '';
   return checkWebSession(ctx.db, value, ctx.now());
+}
+
+/**
+ * Whether the browser's `Origin` is this hub's. An absent header is allowed (a plain form post
+ * from an older browser); a present one that differs is a cross-site submission. Skipped when no
+ * public origin is configured, where `SameSite=Strict` and the anti-forgery field still apply.
+ */
+export function originAllowed(req: IncomingMessage, cfg: WebConfig): boolean {
+  const origin = req.headers.origin;
+  if (typeof origin !== 'string' || origin === '' || cfg.publicOrigin === null) return true;
+  return origin === cfg.publicOrigin;
 }
 
 /**
@@ -44,12 +67,13 @@ function currentSession(req: IncomingMessage, ctx: WebCtx): WebSession | null {
  * field, and the browser's `Origin` when it sends one. Shared so every POST form is checked alike.
  */
 export function actionAllowed(req: IncomingMessage, form: URLSearchParams, session: WebSession, cfg: WebConfig): boolean {
-  const origin = req.headers.origin;
-  if (typeof origin === 'string' && origin !== '' && cfg.publicOrigin !== null && origin !== cfg.publicOrigin) return false;
-  return sameCsrf(form.get('csrf') ?? '', session.csrf);
+  return originAllowed(req, cfg) && sameCsrf(form.get('csrf') ?? '', session.csrf);
 }
 
-async function login(res: ServerResponse, ctx: WebCtx): Promise<void> {
+async function login(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Promise<void> {
+  // Refused before the code is read, so a hostile page cannot spend the owner's tries and
+  // get their address blocked by submitting guesses from the owner's browser.
+  if (!originAllowed(req, ctx.cfg)) return forbiddenPage(res);
   // The address is checked before the code, so a blocked address cannot keep guessing.
   if (ctx.limiter.isBlocked(ctx.address)) return signInPage(res, { wrongCode: false, blocked: true });
   const form = new URLSearchParams((await ctx.readBody()).toString('utf8'));
@@ -89,9 +113,12 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
   if (method === 'POST') {
     // Sign-in is the one action a browser without a session may post. Everything else is refused.
     if (path === '/login') {
-      await login(res, ctx);
+      await login(req, res, ctx);
       return true;
     }
+    // A POST to a path the dashboard does not own is left to the 404, so the cookie is never
+    // even looked up on, say, an unknown /api/ path.
+    if (!ACTIONS.has(path) && !isPage(path)) return false;
     const session = currentSession(req, ctx);
     if (session === null) {
       forbiddenPage(res);

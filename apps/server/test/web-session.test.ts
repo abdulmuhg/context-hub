@@ -5,7 +5,7 @@ import { createConnectCode } from '../src/oauth/store.js';
 import { createToken } from '../src/tokens.js';
 import { upsertSession } from '../src/store.js';
 import { listWebSessions, revokeWebSession } from '../src/web/session.js';
-import type { WebConfig } from '../src/web/routes.js';
+import { secureCookiesFor, type WebConfig } from '../src/web/routes.js';
 import { makeSession, startServer } from './helpers.js';
 
 const START = new Date('2026-10-20T00:00:00.000Z');
@@ -74,12 +74,13 @@ afterEach(async () => {
 });
 
 describe('signed-out access', () => {
-  it('sends the bare address to /login and gives nothing away', async () => {
+  it('sends the bare address to /login with an empty body', async () => {
     storeProject();
     const res = await get('/');
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/login');
-    expect(await res.text()).not.toContain('alpha');
+    expect(res.headers.get('content-length')).toBe('0');
+    expect(await res.text()).toBe('');
   });
 
   it('sends a project deep link to /login without naming the project', async () => {
@@ -88,7 +89,17 @@ describe('signed-out access', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/login');
     expect(res.headers.get('location')).not.toContain('alpha');
-    expect(await res.text()).not.toContain('alpha');
+    expect(await res.text()).toBe('');
+  });
+
+  it('names no project in any body a signed-out browser can reach', async () => {
+    storeProject();
+    const bodies = [await (await get('/login')).text(), await (await post('/logout', {})).text()];
+    for (const body of bodies) {
+      // Guards against the claim passing only because the body is empty.
+      expect(body.length).toBeGreaterThan(100);
+      expect(body).not.toMatch(/alpha|github|sqlite|token|\d{2,}/i);
+    }
   });
 
   it('answers HEAD on a page the same way', async () => {
@@ -188,6 +199,26 @@ describe('POST /login', () => {
     expect((await post('/login', { code })).status).toBe(302);
     expect((await post('/login', { code })).status).toBe(200);
   });
+
+  it('refuses a sign-in posted from another site, and those tries never block the address', async () => {
+    const foreign = { headers: { Origin: 'https://evil.test' } };
+    for (let i = 0; i < 11; i++) expect((await post('/login', { code: 'AAAA-AAAA' }, foreign)).status).toBe(403);
+    expect(limiter.isBlocked('127.0.0.1')).toBe(false);
+    const { code } = createConnectCode(db, clock.toISOString());
+    expect((await post('/login', { code }, foreign)).status).toBe(403);
+    // The code was refused before being consumed, so it still works from the hub itself.
+    expect((await post('/login', { code })).status).toBe(302);
+  });
+});
+
+describe('secureCookiesFor', () => {
+  it('follows the scheme, so every loopback address drops Secure', () => {
+    expect(secureCookiesFor('https://hub.test')).toBe(true);
+    expect(secureCookiesFor('http://localhost:3000')).toBe(false);
+    expect(secureCookiesFor('http://127.0.0.1:3000')).toBe(false);
+    expect(secureCookiesFor('http://[::1]:3000')).toBe(false);
+    expect(secureCookiesFor(undefined)).toBe(false);
+  });
 });
 
 describe('an existing session', () => {
@@ -224,6 +255,18 @@ describe('an existing session', () => {
     });
     expect(mcp.status).toBe(401);
     expect((await get('/api/status', cookie)).status).toBe(401);
+  });
+
+  it('is not even looked up by a POST to a path the dashboard does not own', async () => {
+    const cookie = await signIn();
+    const before = listWebSessions(db)[0]!.lastUsedAt;
+    clock = new Date(START.getTime() + 60_000);
+    for (const path of ['/api/nope', '/oauth/nope', '/nope']) {
+      const res = await fetch(url + path, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie } });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toHaveProperty('error');
+    }
+    expect(listWebSessions(db)[0]!.lastUsedAt).toBe(before);
   });
 
   it('does not let a bearer token open a page', async () => {

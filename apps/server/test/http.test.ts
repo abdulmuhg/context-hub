@@ -265,7 +265,10 @@ describe('the bare address', () => {
 
   it('gives nothing away: no counts, versions, projects or paths to data', async () => {
     await put();
-    const text = await (await bare('GET')).text();
+    expect((await bare('GET')).headers.get('location')).toBe('/login');
+    // The redirect carries no body, so the claim is tested against the page it points at.
+    const text = await (await call('GET', '/login')).text();
+    expect(text.length).toBeGreaterThan(100);
     expect(text).not.toMatch(/alpha|session|sqlite|token|version|\d{2,}/i);
   });
 
