@@ -142,7 +142,7 @@ describe('GET /login', () => {
         "script-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     );
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(res.headers.get('referrer-policy')).toBe('same-origin');
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 });

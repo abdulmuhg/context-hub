@@ -39,7 +39,7 @@ describe('page shell', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-security-policy')).toBe(CSP);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(res.headers.get('referrer-policy')).toBe('same-origin');
     expect(res.headers.get('cache-control')).toBe('no-store');
     const html = await res.text();
     expect(html).toContain('href="/assets/app.css"');

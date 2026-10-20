@@ -17,7 +17,10 @@ export function securityHeaders(): Record<string, string> {
   return {
     'Content-Security-Policy': CSP,
     'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    // Not no-referrer: with it, browsers send `Origin: null` on form posts, and the Origin
+    // check on sign-in and every action then refuses the owner's own forms. same-origin still
+    // sends nothing to other sites.
+    'Referrer-Policy': 'same-origin',
     'Cache-Control': 'no-store',
   };
 }
