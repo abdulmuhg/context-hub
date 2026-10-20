@@ -211,9 +211,9 @@ export function activityPage(db: Db, q: ActivityQuery, csrf: string): string {
     pages === 1
       ? ''
       : `<nav class="pager" aria-label="Pages of activity">` +
-        (page > 1 ? `<a href="${at(page - 1)}">Newer</a>` : '') +
+        (page > 1 ? `<a href="${escapeHtml(at(page - 1))}">Newer</a>` : '') +
         `<span class="muted">Page ${page} of ${pages}</span>` +
-        (page < pages ? `<a href="${at(page + 1)}">Older</a>` : '') +
+        (page < pages ? `<a href="${escapeHtml(at(page + 1))}">Older</a>` : '') +
         `</nav>`;
 
   return pageShell({

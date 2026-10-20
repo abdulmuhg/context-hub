@@ -174,6 +174,37 @@ describe('the Activity page', () => {
     expect(html.match(/sessions?<\/span>/g)).toHaveLength(3);
   });
 
+  it('keeps the direction filter in the pager links', async () => {
+    for (let i = 0; i < 60; i++) {
+      log(new Date(START.getTime() - (60 - i) * MINUTE).toISOString(), { direction: 'out', detail: `read ${i}` });
+      log(new Date(START.getTime() - (60 - i) * MINUTE - 1000).toISOString(), { direction: 'in', action: 'note', detail: `save ${i}` });
+    }
+    const one = await page('/activity?direction=out');
+    // The ampersand is written as a character reference, so the attribute is valid HTML.
+    expect(one).toContain('href="/activity?direction=out&amp;page=2"');
+    expect(one).not.toContain('save ');
+
+    const two = await page('/activity?direction=out&page=2');
+    expect(two).toContain('href="/activity?direction=out&amp;page=1"');
+    expect(two).toContain('read 9</td>');
+    expect(two).not.toContain('save ');
+  });
+
+  it('folds a run of uploads a minute and a half apart into one line', async () => {
+    // Each gap is inside the two-minute window, so the chain stays one run however long it is.
+    for (let i = 0; i < 4; i++) {
+      log(new Date(START.getTime() - i * 90_000).toISOString(), {
+        direction: 'in',
+        action: 'upload',
+        projectKey: JSONROOM,
+        actor: 'your PC (collector)',
+      });
+    }
+    const html = await page('/activity');
+    expect(html).toContain('4 sessions');
+    expect(html.match(/sessions?<\/span>/g)).toHaveLength(1);
+  });
+
   it('clamps a page number that is not a page instead of failing', async () => {
     for (let i = 0; i < 120; i++) log(new Date(START.getTime() - (120 - i) * MINUTE).toISOString(), { detail: `row ${i}` });
     for (const q of ['?page=0', '?page=-5', '?page=abc', '?page=', '?page=1e9']) {
@@ -187,6 +218,22 @@ describe('the Activity page', () => {
     // An unknown direction is ignored rather than refused.
     const odd = await page('/activity?direction=sideways');
     expect(odd).toContain('row 119</td>');
+  });
+
+  it('folds the Overview table the same way, through the one shared renderer', async () => {
+    for (let i = 0; i < 12; i++) {
+      log(new Date(START.getTime() - i * 30_000).toISOString(), {
+        direction: 'in',
+        action: 'upload',
+        projectKey: JSONROOM,
+        actor: 'your PC (collector)',
+      });
+    }
+    // The Overview takes the newest ten rows; being one run, they are one line.
+    const html = await page('/');
+    expect(html).toContain('10 sessions');
+    expect(html).not.toContain('upload');
+    expect(html).toContain('saved in');
   });
 
   it('says so when there is nothing to show', async () => {

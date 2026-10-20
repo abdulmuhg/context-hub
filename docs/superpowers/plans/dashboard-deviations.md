@@ -28,3 +28,4 @@
 - Task 7 — `/activity` reads its `?direction=` and `?page=` from `req.url` inside `handleWeb` rather than `handleWeb` taking a new query argument; `path` in http.ts is `pathname` only, and this kept the controller's signature (and Task 8's POST paths) unchanged.
 - Task 7 — a project page lists 10 recent sessions and notes (`get_project`'s `sessions` argument); the MCP default is 5, which is short for a full-width page.
 - Task 7 — `/projects/` with an empty segment, a segment holding a real slash (`/projects/a/b`), a malformed escape (`/projects/%zz`) and an unknown key all answer the same plain 404 "No such project" page inside the signed-in shell, with the usual CSP and security headers; `/nope` still falls through to the JSON 404.
+- Task 7 (fix round 1) — the pager hrefs go through `escapeHtml`, so the query separator is written `&amp;page=2` rather than a bare `&` inside an attribute; the unfiltered links are unchanged.
