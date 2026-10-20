@@ -47,7 +47,9 @@ describe('GET /install and /hub.mjs', () => {
     const body = await res.text();
     expect(body).toContain('set -eu');
     expect(body).toContain("'https://hub.test/hub.mjs'");
-    expect(body).toContain("hub login --url 'https://hub.test'");
+    expect(body).toContain("login --url 'https://hub.test'");
+    // Until ~/.local/bin is on PATH, the next step names the launcher by its full path.
+    expect(body).toContain('hub_cmd="$BIN/hub"');
   });
 
   it('serve the bundle, and 404 when there is none', async () => {

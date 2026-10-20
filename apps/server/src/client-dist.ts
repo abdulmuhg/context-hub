@@ -50,16 +50,20 @@ export function installScript(publicUrl: string): string {
     'chmod +x "$tmp.launcher"',
     'mv "$tmp.launcher" "$BIN/hub"',
     '',
+    // macOS has no ~/.local/bin on PATH by default. Until the profile is reloaded, "hub" is not found
+    // in this terminal, so the next step is printed with the full path in that case.
+    'hub_cmd=hub',
     'case ":$PATH:" in',
     '  *":$BIN:"*) ;;',
     '  *)',
-    '    echo "Add this line to your shell profile so the hub command is found:"',
+    '    hub_cmd="$BIN/hub"',
+    '    echo "To run hub by name in new terminals, add this line to your shell profile (~/.zshrc on a Mac):"',
     '    echo \'  export PATH="$HOME/.local/bin:$PATH"\'',
     '    ;;',
     'esac',
     '',
     '"$BIN/hub" install-commands',
-    `echo "Installed. Next: hub login --url ${quote(url)}"`,
+    `echo "Installed. Next: $hub_cmd login --url ${quote(url)}"`,
     '',
   ].join('\n');
 }
