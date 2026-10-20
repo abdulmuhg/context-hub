@@ -88,6 +88,18 @@ describe('access control', () => {
   });
 });
 
+describe('POST /api/connect-code', () => {
+  it('connect-code needs an ingest token', async () => {
+    expect((await call('POST', '/api/connect-code', { token: read })).status).toBe(403);
+    expect((await call('POST', '/api/connect-code')).status).toBe(401);
+    const res = await call('POST', '/api/connect-code', { token: ingest });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { code: string; expires_at: string };
+    expect(body.code).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/);
+    expect(body.expires_at).toBe(new Date(NOW.getTime() + 10 * 60_000).toISOString());
+  });
+});
+
 describe('PUT /api/sessions', () => {
   it('stores a session and reports the change', async () => {
     const res = await put();

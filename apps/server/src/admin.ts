@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import type { Db } from './db.js';
 import { digestCounts, getProjectState, markDigestPending, markStateDirty } from './digest-store.js';
+import { createConnectCode } from './oauth/store.js';
 import { resolveProject, splitPublicId } from './store.js';
 import { createToken, listTokens, revokeToken, type Scope } from './tokens.js';
 
@@ -16,6 +17,9 @@ const USAGE = `Usage: hub-admin <command>
   token create --label <name> --scope <ingest or read>   create a token (shown once)
   token list                                             list tokens
   token revoke <id>                                      revoke a token
+  connect-code                                           print a one-time sign-in code for claude.ai (10 minutes)
+  oauth list                                             list Claude app sign-ins
+  oauth revoke <id>                                      revoke a Claude app sign-in
   backup <file>                                          write a consistent copy of the database
   redigest <project> | redigest --session <source>:<id>  queue digests again
   rebuild-state <project>                                rebuild a project's state page from all digests
@@ -60,6 +64,13 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
     if (!Number.isInteger(id)) throw new Fail('Give the numeric id from `hub-admin token list`.');
     if (!revokeToken(io.db, id, now)) throw new Fail(`No active token with id ${id}.`);
     io.out(`Token ${id} revoked.`);
+    return 0;
+  }
+
+  if (command === 'connect-code') {
+    const { code, expiresAt } = createConnectCode(io.db, now);
+    io.out(`Sign-in code: ${code}`);
+    io.out(`Valid until ${expiresAt}, for one use. Enter it on the hub's sign-in page when claude.ai asks you to sign in.`);
     return 0;
   }
 

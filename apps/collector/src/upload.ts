@@ -46,6 +46,10 @@ export async function deleteRemote(
   await send(remote, 'DELETE', path);
 }
 
+export async function requestConnectCode(remote: Remote): Promise<{ code: string; expires_at: string }> {
+  return (await (await send(remote, 'POST', '/api/connect-code')).json()) as { code: string; expires_at: string };
+}
+
 export async function getStatus(remote: Remote): Promise<unknown> {
   return (await send(remote, 'GET', '/api/status')).json();
 }

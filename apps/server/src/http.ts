@@ -5,7 +5,7 @@ import type { Db } from './db.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProject, deleteSession, status, upsertSession } from './store.js';
 import { resourceUrl, type OAuthConfig } from './oauth/config.js';
-import { touchGrant } from './oauth/store.js';
+import { createConnectCode, touchGrant } from './oauth/store.js';
 import { checkCredential, type Scope } from './tokens.js';
 import { HttpError, parseSession } from './validate.js';
 
@@ -158,6 +158,13 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     if (path === '/api/status' && method === 'GET') {
       authorise(req, res, ['ingest', 'read']);
       return send(res, 200, status(db));
+    }
+
+    if (path === '/api/connect-code' && method === 'POST') {
+      authorise(req, res, ['ingest']);
+      const { code, expiresAt } = createConnectCode(db, now().toISOString());
+      res.setHeader('Cache-Control', 'no-store');
+      return send(res, 200, { code, expires_at: expiresAt });
     }
 
     const sessionPath = /^\/api\/sessions\/([^/]+)\/(.+)$/.exec(path);

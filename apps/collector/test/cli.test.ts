@@ -198,6 +198,24 @@ describe('hub personal', () => {
   });
 });
 
+describe('hub connect', () => {
+  it('hub connect prints the code and how to use it', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'ingest-secret-token'], io);
+    out = [];
+    io.fetchImpl = async (input, init) => {
+      requests.push({ method: init?.method ?? 'GET', url: String(input) });
+      return new Response(JSON.stringify({ code: 'ABCD-EFGH', expires_at: '2026-10-11T00:10:00.000Z' }), { status: 200 });
+    };
+    expect(await run(['connect'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toContain('ABCD-EFGH');
+    expect(text).toContain('10 minutes');
+    expect(text).toContain('one use');
+    expect(text).not.toContain('ingest-secret-token');
+    expect(requests.at(-1)).toEqual({ method: 'POST', url: 'https://hub.example.com/api/connect-code' });
+  });
+});
+
 describe('hub status and usage', () => {
   it('status prints what the server returns', async () => {
     await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);

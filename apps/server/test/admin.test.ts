@@ -70,6 +70,17 @@ describe('hub-admin backup', () => {
   });
 });
 
+describe('hub-admin connect-code', () => {
+  it('connect-code prints one code and its expiry', async () => {
+    expect(await runAdmin(['connect-code'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text.match(/[A-Z2-9]{4}-[A-Z2-9]{4}/g)).toHaveLength(1);
+    expect(text).toContain('2026-10-11T00:10:00.000Z');
+    expect(text).toMatch(/one use/);
+    expect((io.db.prepare('SELECT COUNT(*) AS n FROM connect_codes').get() as { n: number }).n).toBe(1);
+  });
+});
+
 describe('hub-admin usage', () => {
   it('prints usage for an unknown command', async () => {
     expect(await runAdmin(['dance'], io)).toBe(1);

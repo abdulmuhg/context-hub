@@ -11,7 +11,7 @@ import {
 } from './config.js';
 import { projectMatches, type GitRunner } from './project.js';
 import { listProjects, runSync, type SyncReport } from './sync.js';
-import { deleteRemote, getStatus, type Remote } from './upload.js';
+import { deleteRemote, getStatus, requestConnectCode, type Remote } from './upload.js';
 
 export interface Io {
   home: string;
@@ -35,6 +35,7 @@ const USAGE = `Usage: hub <command>
   sync [--project P] [--session S] [--dry-run]   (--project narrows tracked projects)
   forget <project> | forget --session <source>:<id>
   status                               ask the server for its status
+  connect                              get a one-time code to sign claude.ai in to the hub
   personal add <label> | list | remove <label> | level <card|list|label> <level>`;
 
 const LEVELS: Level[] = ['off', 'warn', 'partial', 'full'];
@@ -246,6 +247,12 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
     }
     case 'status': {
       io.out(JSON.stringify(await getStatus(remote(io)), null, 2));
+      return 0;
+    }
+    case 'connect': {
+      const { code } = await requestConnectCode(remote(io));
+      io.out(`Sign-in code: ${code}`);
+      io.out("Valid for 10 minutes, for one use. Enter it on the hub's sign-in page when claude.ai asks you to sign in.");
       return 0;
     }
     case 'personal':
