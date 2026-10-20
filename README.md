@@ -178,7 +178,7 @@ land in the wrong project.
 
 ### 4. Slash commands for Claude Code
 
-`integrations/claude-code/` holds five commands. The installer puts them in
+`integrations/claude-code/` holds six commands. The installer puts them in
 `~/.claude/commands/` for every repo; to install or refresh them yourself:
 
 ```bash
@@ -190,8 +190,9 @@ hub install-commands
 | `/hub-sync` | Run `hub sync`: upload every tracked project's new sessions. |
 | `/hub-catchup` | Read this project's briefing, check the live git state, and say where things stand. |
 | `/hub-note <text>` | Save a note to this project. Needs the claude.ai connector with "save notes" allowed. |
-| `/hub-status` | Whether this project is tracked, when it last synced, and the hub's totals. |
+| `/hub-status` | Whether this project is tracked, when it last synced, the hub's totals, and whether automatic sync is on. |
 | `/hub-track` | Start tracking this project. |
+| `/hub-auto on\|off\|status` | Turn automatic sync on or off, or show its last run. |
 
 Each works out the project from the folder's `origin` remote, or the folder
 name when there is none.

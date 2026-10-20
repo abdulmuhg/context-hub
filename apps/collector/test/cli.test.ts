@@ -146,10 +146,10 @@ describe('hub login', () => {
 });
 
 describe('hub install-commands', () => {
-  it('writes the five slash commands and overwrites them on a second run', async () => {
+  it('writes the six slash commands and overwrites them on a second run', async () => {
     const dir = join(tempDir(), 'commands');
     expect(await run(['install-commands', '--dir', dir], io)).toBe(0);
-    expect(out).toContain(`Installed 5 slash commands in ${dir}.`);
+    expect(out).toContain(`Installed 6 slash commands in ${dir}.`);
     expect(readdirSync(dir).sort()).toEqual(Object.keys(SLASH_COMMANDS).sort());
     for (const [name, text] of Object.entries(SLASH_COMMANDS)) expect(readFileSync(join(dir, name), 'utf8')).toBe(text);
     writeFileSync(join(dir, 'hub-sync.md'), 'changed');
@@ -159,7 +159,7 @@ describe('hub install-commands', () => {
 
   it('defaults to ~/.claude/commands', async () => {
     expect(await run(['install-commands'], io)).toBe(0);
-    expect(readdirSync(join(io.home, '.claude', 'commands'))).toHaveLength(5);
+    expect(readdirSync(join(io.home, '.claude', 'commands'))).toHaveLength(6);
   });
 });
 
