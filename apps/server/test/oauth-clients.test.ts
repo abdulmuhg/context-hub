@@ -112,12 +112,20 @@ describe('resolveClient', () => {
     expect(r.ok).toBe(false);
   });
 
-  it.each(['localhost', '127.0.0.1', '10.1.2.3', '192.168.1.5', '169.254.169.254', '[::1]'])('refuses a URL whose host is %s', async (host) => {
+  it.each(['localhost', '127.0.0.1', '10.1.2.3', '192.168.1.5', '169.254.169.254', '[::1]', '[::ffff:a00:1]', '[::ffff:7f00:1]', '[::ffff:a9fe:a9fe]', '[::7f00:1]', '[2002:7f00:1::]', '[64:ff9b::a00:1]', 'localhost.'])('refuses a URL whose host is %s', async (host) => {
     const u = `https://${host}/m.json`;
     const f = vi.fn(respond(JSON.stringify({ client_id: u, redirect_uris: [OK] })));
     const r = await resolveClient(db, cfgWith(f), u, NOW);
     expect(r.ok).toBe(false);
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it('accepts a public IPv6 literal', async () => {
+    const u = 'https://[2606:4700::1111]/m.json';
+    const f = vi.fn(respond(JSON.stringify({ client_id: u, redirect_uris: [OK] })));
+    const r = await resolveClient(db, cfgWith(f), u, NOW);
+    expect(r.ok).toBe(true);
+    expect(f).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a name that resolves to a private address', async () => {

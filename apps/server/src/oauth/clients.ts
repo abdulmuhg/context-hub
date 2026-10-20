@@ -20,20 +20,55 @@ function privateV4(a: string): boolean {
   );
 }
 
+/** Parses an IPv6 literal into 16 bytes (handles :: and an embedded dotted tail). Null if malformed. */
+function parseV6(a: string): number[] | null {
+  let tail: number[] = [];
+  let s = a;
+  const dot = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (dot) {
+    if (isIP(dot[1]!) !== 4) return null;
+    tail = dot[1]!.split('.').map(Number);
+    s = s.slice(0, s.length - dot[1]!.length) + '0:0';
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const groups = (x: string): string[] => (x === '' ? [] : x.split(':'));
+  const head = groups(halves[0]!);
+  const rest = halves.length === 2 ? groups(halves[1]!) : [];
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  const all = [...head, ...(halves.length === 2 ? Array<string>(missing).fill('0') : []), ...rest];
+  const bytes: number[] = [];
+  for (const g of all) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+    const n = parseInt(g, 16);
+    bytes.push(n >> 8, n & 255);
+  }
+  if (bytes.length !== 16) return null;
+  if (tail.length) bytes.splice(12, 4, ...tail);
+  return bytes;
+}
+
+/** True for anything that is not a plain public unicast address. Fails closed on malformed input. */
 export function isPrivateAddress(addr: string): boolean {
   const a = addr.replace(/^\[|\]$/g, '').toLowerCase();
   const kind = isIP(a);
   if (kind === 4) return privateV4(a);
   if (kind !== 6) return true;
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
-  if (mapped) return privateV4(mapped[1]!);
-  if (a === '::' || a === '::1') return true;
-  const first = parseInt(a.split(':')[0] || '0', 16);
-  return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00;
+  const b = parseV6(a);
+  if (!b) return true;
+  const v4 = (o: number): string => `${b[o]}.${b[o + 1]}.${b[o + 2]}.${b[o + 3]}`;
+  const zeros = (n: number): boolean => b.slice(0, n).every((x) => x === 0);
+  if (zeros(10) && b[10] === 0xff && b[11] === 0xff) return privateV4(v4(12)); // ::ffff:0:0/96
+  if (zeros(12)) return privateV4(v4(12)); // ::/96 (includes :: and ::1, which read as 0.x)
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && b.slice(4, 12).every((x) => x === 0)) return privateV4(v4(12)); // 64:ff9b::/96
+  if (b[0] === 0x20 && b[1] === 0x02) return privateV4(v4(2)); // 2002::/16 (6to4)
+  if (b[0] === 0) return true;
+  return (b[0]! & 0xfe) === 0xfc || (b[0] === 0xfe && (b[1]! & 0xc0) === 0x80) || b[0] === 0xff;
 }
 
 async function hostIsPublic(host: string, cfg: OAuthConfig): Promise<boolean> {
-  const h = host.toLowerCase();
+  const h = host.toLowerCase().replace(/\.$/, '');
   if (h === 'localhost' || h.endsWith('.localhost')) return false;
   if (isIP(h.replace(/^\[|\]$/g, '')) !== 0) return !isPrivateAddress(h);
   try {
