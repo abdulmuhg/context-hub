@@ -58,8 +58,25 @@ authority, and every digest item points at the message it came from.
 list. The default level is `warn`: the value is reported but still uploaded.
 Raise it with `hub personal level list partial` or `full`.
 
-To sync from inside Claude Code, copy
-`integrations/claude-code/hub-sync.md` to `~/.claude/commands/`.
+### Slash commands for Claude Code
+
+`integrations/claude-code/` holds five commands. Copy them to
+`~/.claude/commands/` to use them in every repo:
+
+```
+cp integrations/claude-code/hub-*.md ~/.claude/commands/
+```
+
+| Command | What it does |
+|---|---|
+| `/hub-sync` | Upload this project's new sessions. `/hub-sync all` uploads every tracked project. |
+| `/hub-catchup` | Read this project's hub page, check the live git state, and say where things stand. |
+| `/hub-note <text>` | Save a note to this project. Needs the claude.ai connector with "save notes" allowed. |
+| `/hub-status` | Whether this project is tracked, when it last synced, and the server's totals. |
+| `/hub-track` | Start tracking this project. |
+
+Each works out the project from the folder's `origin` remote, or the folder
+name when there is none. Copy the files again after changing them.
 
 ## Connect claude.ai
 
