@@ -290,7 +290,6 @@ export function rotateRefresh(db: Db, old: TokenRecord, now: string): { access: 
     const pair = issuePair(db, old.grantId, now);
     const newRefreshHash = sha256(pair.refresh);
     db.prepare('UPDATE oauth_tokens SET replaced_at = COALESCE(replaced_at, ?), replaced_by = ? WHERE hash = ?').run(now, newRefreshHash, old.hash);
-    db.prepare('UPDATE oauth_tokens SET expires_at = ? WHERE pair_hash = ? AND expires_at > ?').run(now, old.hash, now);
     return pair;
   })();
 }
