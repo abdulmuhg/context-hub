@@ -121,4 +121,17 @@ describe('pruneClients', () => {
     expect(getClient(db, 'fresh')).not.toBeNull();
     expect(getClient(db, 'cimd-old')).not.toBeNull();
   });
+
+  it('keeps at most 100 unused DCR clients, dropping the oldest', () => {
+    for (let i = 0; i < 105; i++) {
+      saveClient(db, { clientId: 'c' + i, kind: 'dcr', name: 'x', redirectUris: ['https://claude.ai/api/mcp/auth_callback'] }, plus(T0, i * 1000));
+    }
+    createGrant(db, { clientId: 'c0', clientName: 'x', scopes: ['hub.read'] }, T0);
+    pruneClients(db, plus(T0, 200_000));
+    expect(getClient(db, 'c0')).not.toBeNull();
+    expect(getClient(db, 'c1')).toBeNull();
+    expect(getClient(db, 'c4')).toBeNull();
+    expect(getClient(db, 'c5')).not.toBeNull();
+    expect(getClient(db, 'c104')).not.toBeNull();
+  });
 });

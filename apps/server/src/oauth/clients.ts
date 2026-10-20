@@ -7,6 +7,8 @@ import { getClient, saveClient, type StoredClient } from './store.js';
 export const MAX_CLIENT_DOC = 64 * 1024;
 const CIMD_TIMEOUT_MS = 3_000;
 const CIMD_CACHE_MS = 24 * 3_600_000;
+/** Client metadata documents are fetched only from the origins of the allowed redirects. */
+const CIMD_ORIGINS = new Set(ALLOWED_REDIRECTS.map((u) => new URL(u).origin));
 
 export type ResolveResult = { ok: true; client: StoredClient } | { ok: false; reason: string };
 
@@ -133,6 +135,9 @@ async function resolveCimd(db: Db, cfg: OAuthConfig, clientId: string, now: stri
     return { ok: false, reason: 'client_id is not a valid URL' };
   }
   if (url.protocol !== 'https:' || url.username || url.password || url.hash) return { ok: false, reason: 'client_id must be a plain https URL' };
+  // Only Claude's own sites, the origins of the allowed redirects. This keeps an anonymous
+  // caller from making the hub fetch arbitrary addresses, as Anthropic's guidance suggests.
+  if (!CIMD_ORIGINS.has(url.origin)) return { ok: false, reason: 'client_id is not on a Claude site' };
   if (!(await hostIsPublic(url.hostname, cfg))) return { ok: false, reason: 'client_id points at a private or unresolvable address' };
   const text = await fetchDocument(url, cfg);
   if (text === null) return { ok: false, reason: 'client metadata document could not be fetched' };
@@ -146,7 +151,8 @@ async function resolveCimd(db: Db, cfg: OAuthConfig, clientId: string, now: stri
   if (d === null || typeof d !== 'object' || d.client_id !== clientId) return { ok: false, reason: 'client_id in the document does not match its URL' };
   const redirects = Array.isArray(d.redirect_uris) ? d.redirect_uris.filter(isAllowedRedirect) : [];
   if (redirects.length === 0) return { ok: false, reason: 'no allowed redirect_uri in the document' };
-  const name = typeof d.client_name === 'string' && d.client_name.trim() ? d.client_name.trim().slice(0, 100) : url.hostname;
+  // The document is self-asserted, so the page names its host, not its client_name.
+  const name = url.hostname;
   saveClient(db, { clientId, kind: 'cimd', name, redirectUris: redirects }, now);
   const saved = getClient(db, clientId);
   return saved ? { ok: true, client: saved } : { ok: false, reason: 'could not save client' };

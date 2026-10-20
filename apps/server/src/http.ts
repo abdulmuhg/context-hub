@@ -134,9 +134,13 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       }
       return;
     }
+    // A stale token this hub issued is not a guess: answer 401 with the challenge so the
+    // client refreshes, even from a blocked address. On Anthropic's shared addresses a
+    // stranger's guesses must not stall the owner's connector.
+    if (found === 'dead') return unauthorised(true);
     const address = clientAddress(req);
     if (limiter.isBlocked(address)) throw new HttpError(429, 'Too many failed attempts. Try again in 15 minutes.');
-    if (found === null) limiter.recordFailure(address);
+    limiter.recordFailure(address);
     return unauthorised(true);
   };
 

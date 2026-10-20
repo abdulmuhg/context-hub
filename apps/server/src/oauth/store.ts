@@ -66,14 +66,21 @@ export function getClient(db: Db, clientId: string): StoredClient | null {
 }
 
 /** Deletes DCR clients registered over 30 days ago that never got a grant. */
+/** Unused DCR clients kept at most. Registration needs no credential, so it must not grow without bound. */
+const MAX_UNUSED_CLIENTS = 100;
+
 export function pruneClients(db: Db, now: string): number {
   const cutoff = plus(now, -30 * 86_400_000);
-  return db
+  const unused = `kind = 'dcr' AND client_id NOT IN (SELECT client_id FROM oauth_grants)`;
+  const old = db.prepare(`DELETE FROM oauth_clients WHERE ${unused} AND created_at < ?`).run(cutoff).changes;
+  const excess = db
     .prepare(
-      `DELETE FROM oauth_clients WHERE kind = 'dcr' AND created_at < ?
-       AND client_id NOT IN (SELECT client_id FROM oauth_grants)`,
+      `DELETE FROM oauth_clients WHERE client_id IN (
+         SELECT client_id FROM oauth_clients WHERE ${unused}
+         ORDER BY created_at DESC, client_id DESC LIMIT -1 OFFSET ?)`,
     )
-    .run(cutoff).changes;
+    .run(MAX_UNUSED_CLIENTS).changes;
+  return old + excess;
 }
 
 // ---- grants ----

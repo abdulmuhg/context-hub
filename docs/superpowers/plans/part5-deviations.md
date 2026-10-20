@@ -65,3 +65,14 @@ Fixed during review, inside the plan's scope: the IPv4-mapped IPv6 SSRF gap in t
 ## Manual test (Task 9 Step 4/5)
 
 Not run. Nothing was deployed or pushed.
+
+## Owner review fixes (2026-10-20)
+
+Applied after the branch was handed back, each with a test:
+
+- **Stale tokens from a blocked address get 401, not 429.** A hub-issued token that has expired or been revoked now answers 401 with the `WWW-Authenticate` challenge even when the address is blocked, so Claude refreshes instead of stalling. Only unknown tokens see the block and count. This closes the first item under "Raised by the final review".
+- **Client ID Metadata Documents are fetched only from `https://claude.ai` and `https://claude.com`**, the origins of the allowed redirects, as Anthropic's lazy-authentication guide suggests. This removes the arbitrary outbound fetch from anonymous `GET /oauth/authorize`, and with it the deferred fetch-volume, DNS-rebinding and non-443-port concerns. The private-address checks stay as a second layer.
+- **The sign-in page names a CIMD client by its host** (`claude.ai`), not by the document's self-chosen `client_name`, also per that guide.
+- **At most 100 unused DCR clients are kept**, newest first, so unauthenticated registration cannot grow the table without bound. (DCR redirect URIs were already limited to the two allowed values.)
+
+Still deferred, accepted for now: a lost response to the first code exchange makes the retry revoke the grant (sign in again); the grace-window theft caveats; `/mcp/` with a trailing slash; connect codes issued while `PUBLIC_URL` is unset; and the minor items above.

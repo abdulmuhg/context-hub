@@ -182,13 +182,13 @@ describe('GET/POST /oauth/authorize', () => {
   });
 
   it('checks the limiter before resolving a client', async () => {
-    const doc = JSON.stringify({ client_id: 'https://client.example/meta.json', client_name: 'Cimd', redirect_uris: [CB] });
+    const doc = JSON.stringify({ client_id: 'https://claude.ai/oauth/client-metadata.json', client_name: 'Cimd', redirect_uris: [CB] });
     const fetchImpl = vi.fn(async () => new Response(doc, { status: 200 })) as unknown as typeof fetch;
     await start({ fetchImpl, lookup: async () => [{ address: '93.184.216.34' }] });
     const id = await register();
     const a = { 'X-Forwarded-For': '203.0.113.7' };
     for (let i = 0; i < 10; i++) await postForm({ ...params(id), code: 'BAD' + i }, a);
-    const q = new URLSearchParams(params('https://client.example/meta.json'));
+    const q = new URLSearchParams(params('https://claude.ai/oauth/client-metadata.json'));
     const blocked = await fetch(`${url}/oauth/authorize?${q}`, { redirect: 'manual', headers: a });
     expect(blocked.status).toBe(429);
     expect(fetchImpl).not.toHaveBeenCalled();

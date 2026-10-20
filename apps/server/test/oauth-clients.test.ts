@@ -69,14 +69,14 @@ describe('resolveClient', () => {
   beforeEach(() => {
     db = openDb(':memory:');
   });
-  const URL_ = 'https://client.example/meta.json';
+  const URL_ = 'https://claude.ai/oauth/client-metadata.json';
   const doc = (over: object = {}) => JSON.stringify({ client_id: URL_, client_name: 'Cimd', redirect_uris: [OK], ...over });
   const cfgWith = (fetchImpl: typeof fetch, lookup = publicLookup): OAuthConfig => ({ publicUrl: 'https://hub.test', fetchImpl, lookup });
   const respond = (body: string) => (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
 
   it('accepts a document whose client_id equals its URL and lists an allowed redirect', async () => {
     const r = await resolveClient(db, cfgWith(respond(doc())), URL_, NOW);
-    expect(r).toMatchObject({ ok: true, client: { clientId: URL_, kind: 'cimd', name: 'Cimd', redirectUris: [OK] } });
+    expect(r).toMatchObject({ ok: true, client: { clientId: URL_, kind: 'cimd', name: 'claude.ai', redirectUris: [OK] } });
     expect(getClient(db, URL_)).not.toBeNull();
   });
 
@@ -120,12 +120,24 @@ describe('resolveClient', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it('accepts a public IPv6 literal', async () => {
-    const u = 'https://[2606:4700::1111]/m.json';
+  it.each([
+    'https://client.example/meta.json',
+    'https://[2606:4700::1111]/m.json',
+    'https://claude.ai.evil.example/m.json',
+    'https://evilclaude.ai/m.json',
+    'https://claude.ai:8443/m.json',
+  ])('only fetches documents from claude.ai or claude.com, refusing %s', async (u) => {
     const f = vi.fn(respond(JSON.stringify({ client_id: u, redirect_uris: [OK] })));
     const r = await resolveClient(db, cfgWith(f), u, NOW);
-    expect(r.ok).toBe(true);
-    expect(f).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(false);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('accepts claude.com as well, and names the host rather than the self-chosen name', async () => {
+    const u = 'https://claude.com/oauth/client-metadata.json';
+    const body = JSON.stringify({ client_id: u, client_name: 'Totally Trustworthy', redirect_uris: [OK] });
+    const r = await resolveClient(db, cfgWith(respond(body)), u, NOW);
+    expect(r).toMatchObject({ ok: true, client: { name: 'claude.com' } });
   });
 
   it('refuses a name that resolves to a private address', async () => {

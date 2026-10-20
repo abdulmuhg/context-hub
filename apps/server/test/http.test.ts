@@ -299,6 +299,16 @@ describe('limiter rules', () => {
     expect((await mcp(read, h)).status).not.toBe(429);
   });
 
+  it('a stale hub-issued token gets 401 with the challenge even from a blocked address', async () => {
+    const h = { 'X-Forwarded-For': '7.7.7.7' };
+    for (let i = 0; i < 10; i++) await mcp('chub_unknown', h);
+    expect((await mcp('chub_unknown', h)).status).toBe(429);
+    const expired = oauthToken(['hub.read'], '2026-10-10T00:00:00.000Z');
+    const res = await mcp(expired, h);
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate') ?? '').toContain('error="invalid_token"');
+  });
+
   it('an expired hub-issued access token does not count', async () => {
     const expired = oauthToken(['hub.read'], '2026-10-10T00:00:00.000Z');
     for (let i = 0; i < 20; i++) expect((await mcp(expired)).status).toBe(401);
