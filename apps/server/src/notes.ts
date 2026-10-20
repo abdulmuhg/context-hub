@@ -9,7 +9,7 @@ export const NOTE_TEXT_MAX = 20000;
 const DEDUPE_MS = 10 * 60 * 1000;
 
 export type SaveNoteResult =
-  | { ok: true; session_id: string; project: string; duplicate: boolean; redactions: number }
+  | { ok: true; session_id: string; project: string; title: string; duplicate: boolean; redactions: number }
   | { ok: false; error: 'unknown_project'; candidates: string[] }
   | { ok: false; error: 'invalid'; message: string };
 
@@ -49,7 +49,7 @@ export function saveNote(db: Db, input: { project: string; title: string; text: 
     )
     .get(project.id, t.text, cutoff, b.text) as { id: string } | undefined;
   if (prior) {
-    return { ok: true, session_id: publicId('note', prior.id), project: project.key, duplicate: true, redactions };
+    return { ok: true, session_id: publicId('note', prior.id), project: project.key, title: t.text, duplicate: true, redactions };
   }
 
   const id = 'n_' + randomBytes(16).toString('base64url');
@@ -67,5 +67,5 @@ export function saveNote(db: Db, input: { project: string; title: string; text: 
     messages: [{ seq: 0, role: 'user', kind: 'text', ts: now, text: b.text }],
   };
   upsertSession(db, { ...session, content_hash: contentHash(session) }, now);
-  return { ok: true, session_id: publicId('note', id), project: project.key, duplicate: false, redactions };
+  return { ok: true, session_id: publicId('note', id), project: project.key, title: t.text, duplicate: false, redactions };
 }

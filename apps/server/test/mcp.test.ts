@@ -388,6 +388,22 @@ describe('the activity log', () => {
     }
   });
 
+  it('save_note logs the cleaned title, not the raw one', async () => {
+    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true, actor: 'claude.ai' }), log: () => {} });
+    const saver = await connect(createToken(db, 'chat', 'read', NOW).token, started.url);
+    const secret = 'ghp_' + 'A1b2C3d4E5'.repeat(4);
+    try {
+      await callOn(saver, 'save_note', { project: 'alpha', title: `  key ${secret}  `, text: 'body' });
+      const r = only();
+      expect(r.detail).toContain('[REDACTED:github]');
+      expect(r.detail).not.toContain(secret);
+      expect(r.detail).toBe(r.detail!.trim());
+    } finally {
+      await saver.close();
+      await started.close();
+    }
+  });
+
   it('an OAuth caller is named by its client', async () => {
     const started = await startServer({ db, mcp: handleMcp(db), oauth: { publicUrl: 'https://hub.test' }, log: () => {} });
     const grantId = createGrant(db, { clientId: 'c1', clientName: 'claude.ai', scopes: ['hub.read'] }, new Date().toISOString());

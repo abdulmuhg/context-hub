@@ -174,7 +174,7 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false, act
           if (result.error === 'unknown_project') return unknownProject(project, result.candidates);
           return fail(result.message);
         }
-        record({ direction: 'in', action: 'note', projectKey: result.project, sessionRef: result.session_id, detail: title });
+        record({ direction: 'in', action: 'note', projectKey: result.project, sessionRef: result.session_id, detail: result.title.slice(0, 100) });
         return ok({ saved: true, session_id: result.session_id, project: result.project, duplicate: result.duplicate });
       },
     );
