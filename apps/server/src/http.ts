@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { stripSecrets, type HashedSession } from '@context-hub/core';
+import { forgetActivityForProject, forgetActivityForSession, logActivitySafe } from './activity.js';
 import type { Db } from './db.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProject, deleteSession, status, upsertSession } from './store.js';
@@ -8,7 +9,7 @@ import { resourceUrl, type OAuthConfig } from './oauth/config.js';
 import { handleOAuth } from './oauth/routes.js';
 import { createConnectCode, touchGrant } from './oauth/store.js';
 import type { McpCaller } from './mcp.js';
-import { checkCredential, type Credential, type Scope } from './tokens.js';
+import { actorFor, checkCredential, type Credential, type Scope } from './tokens.js';
 import { HttpError, parseSession } from './validate.js';
 
 export const MAX_BODY = 20 * 1024 * 1024;
@@ -186,21 +187,62 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
 
     const sessionPath = /^\/api\/sessions\/([^/]+)\/(.+)$/.exec(path);
     if (sessionPath && (method === 'PUT' || method === 'DELETE')) {
-      authorise(req, res, ['ingest']);
+      const actor = actorFor(authorise(req, res, ['ingest']));
       const source = decodePart(sessionPath[1]!);
       const id = decodePart(sessionPath[2]!);
-      if (method === 'DELETE') return send(res, 200, { deleted: deleteSession(db, source, id) });
+      if (method === 'DELETE') {
+        const ref = `${source}:${id}`;
+        const owner = db
+          .prepare('SELECT p.key AS key FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.source = ? AND s.source_session_id = ?')
+          .get(source, id) as { key: string } | undefined;
+        const deleted = deleteSession(db, source, id);
+        try {
+          forgetActivityForSession(db, ref);
+        } catch (e) {
+          log(`activity log failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        logActivitySafe(
+          db,
+          { direction: 'in', action: 'delete', projectKey: owner?.key ?? null, sessionRef: null, actor, detail: null },
+          now().toISOString(),
+          log,
+        );
+        return send(res, 200, { deleted });
+      }
       const parsed = parseSession(await readJson(req), source, id);
       const { session, redactions } = stripAgain(parsed);
       if (redactions > 0) log(`${source}:${id}: server stripped ${redactions} secret(s); the collector may be out of date`);
       const { changed } = upsertSession(db, session, now().toISOString());
+      if (changed) {
+        logActivitySafe(
+          db,
+          {
+            direction: 'in',
+            action: 'upload',
+            projectKey: session.project_key,
+            sessionRef: `${source}:${id}`,
+            actor,
+            detail: session.title.slice(0, 100),
+          },
+          now().toISOString(),
+          log,
+        );
+      }
       return send(res, 200, { stored: true, changed, server_redactions: redactions });
     }
 
     const projectPath = /^\/api\/projects\/(.+)$/.exec(path);
     if (projectPath && method === 'DELETE') {
-      authorise(req, res, ['ingest']);
-      return send(res, 200, { deleted: deleteProject(db, decodePart(projectPath[1]!)) });
+      const actor = actorFor(authorise(req, res, ['ingest']));
+      const key = decodePart(projectPath[1]!);
+      const deleted = deleteProject(db, key);
+      try {
+        forgetActivityForProject(db, key);
+      } catch (e) {
+        log(`activity log failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      logActivitySafe(db, { direction: 'in', action: 'delete', projectKey: null, sessionRef: null, actor, detail: null }, now().toISOString(), log);
+      return send(res, 200, { deleted });
     }
 
     if (path === '/mcp') {
@@ -212,7 +254,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       if (!deps.mcp) return send(res, 501, { error: 'The lookup tools are not enabled on this server' });
       // Saving is an OAuth grant's privilege: a bearer token (read) never gets the tool.
       const canSave = credential.kind === 'oauth' && credential.scopes.includes('hub.save');
-      return deps.mcp(req, res, await readJson(req), { canSave });
+      return deps.mcp(req, res, await readJson(req), { canSave, actor: actorFor(credential) });
     }
 
     send(res, 404, { error: 'Not found' });

@@ -206,7 +206,7 @@ export interface TokenRecord {
   expiresAt: string;
   replacedAt: string | null;
   replacedBy: string | null;
-  grant: { scopes: HubScope[]; clientId: string; revokedAt: string | null };
+  grant: { scopes: HubScope[]; clientId: string; clientName: string; revokedAt: string | null };
 }
 
 function insertToken(
@@ -249,7 +249,7 @@ export function findToken(db: Db, token: string): TokenRecord | null {
   const r = db
     .prepare(
       `SELECT t.hash, t.grant_id, t.kind, t.expires_at, t.replaced_at, t.replaced_by,
-              g.scopes, g.client_id, g.revoked_at
+              g.scopes, g.client_id, g.client_name, g.revoked_at
        FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id WHERE t.hash = ?`,
     )
     .get(sha256(token)) as
@@ -262,6 +262,7 @@ export function findToken(db: Db, token: string): TokenRecord | null {
         replaced_by: string | null;
         scopes: string;
         client_id: string;
+        client_name: string;
         revoked_at: string | null;
       }
     | undefined;
@@ -273,7 +274,7 @@ export function findToken(db: Db, token: string): TokenRecord | null {
     expiresAt: r.expires_at,
     replacedAt: r.replaced_at,
     replacedBy: r.replaced_by,
-    grant: { scopes: parseScopes(r.scopes), clientId: r.client_id, revokedAt: r.revoked_at },
+    grant: { scopes: parseScopes(r.scopes), clientId: r.client_id, clientName: r.client_name, revokedAt: r.revoked_at },
   };
 }
 

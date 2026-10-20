@@ -40,6 +40,15 @@ export function logActivity(db: Db, e: ActivityEntry, now: string): void {
   })();
 }
 
+/** Like logActivity, but a failure is written to the server log and swallowed: logging must never fail a request. */
+export function logActivitySafe(db: Db, e: ActivityEntry, now: string, log: (line: string) => void = console.error): void {
+  try {
+    logActivity(db, e, now);
+  } catch (err) {
+    log(`activity log failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** Newest first. */
 export function listActivity(db: Db, opts: { direction?: Direction; limit: number; offset: number }): ActivityRow[] {
   const where = opts.direction ? 'WHERE direction = ?' : '';

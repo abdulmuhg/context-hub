@@ -1,6 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { stripSecrets } from '@context-hub/core';
 import * as z from 'zod/v4';
+import { logActivitySafe, type ActivityEntry } from './activity.js';
 import type { Db } from './db.js';
 import type { AppDeps } from './http.js';
 import { saveNote } from './notes.js';
@@ -64,11 +66,15 @@ function projectNames(db: Db): string {
 /** What the caller's credential allows. A read-only caller never sees save_note. */
 export interface McpCaller {
   canSave: boolean;
+  /** Who the activity log names for this caller's lookups. */
+  actor: string;
 }
 
-export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): McpServer {
+export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false, actor: 'unknown' }): McpServer {
   const server = new McpServer({ name: 'context-hub', version: '0.1.0' }, { instructions: INSTRUCTIONS });
   const names = projectNames(db);
+  const record = (e: Omit<ActivityEntry, 'actor'>): void =>
+    logActivitySafe(db, { ...e, actor: caller.actor }, new Date().toISOString());
 
   server.registerTool(
     'list_projects',
@@ -76,7 +82,11 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): 
       description: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, and notes saved from chats). Projects in the hub: ${names}.`,
       inputSchema: {},
     },
-    async () => ok({ projects: listProjects(db), last_synced_at: lastSynced(db) }),
+    async () => {
+      const result = ok({ projects: listProjects(db), last_synced_at: lastSynced(db) });
+      record({ direction: 'out', action: 'list_projects', projectKey: null, sessionRef: null, detail: null });
+      return result;
+    },
   );
 
   server.registerTool(
@@ -91,7 +101,9 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): 
     async ({ project, sessions }) => {
       const resolved = resolveProject(db, project);
       if (!resolved.ok) return unknownProject(project, resolved.candidates);
-      return ok(getProject(db, resolved.id, sessions ?? 5));
+      const result = ok(getProject(db, resolved.id, sessions ?? 5));
+      record({ direction: 'out', action: 'get_project', projectKey: resolved.key, sessionRef: null, detail: null });
+      return result;
     },
   );
 
@@ -110,12 +122,16 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): 
     },
     async ({ query, project, source, since, until, limit }) => {
       let projectId: number | undefined;
+      let projectKey: string | null = null;
       if (project !== undefined) {
         const resolved = resolveProject(db, project);
         if (!resolved.ok) return unknownProject(project, resolved.candidates);
         projectId = resolved.id;
+        projectKey = resolved.key;
       }
-      return ok({ hits: search(db, { query, projectId, source, since, until, limit }), last_synced_at: lastSynced(db) });
+      const result = ok({ hits: search(db, { query, projectId, source, since, until, limit }), last_synced_at: lastSynced(db) });
+      record({ direction: 'out', action: 'search', projectKey, sessionRef: null, detail: stripSecrets(query).text.slice(0, 100) });
+      return result;
     },
   );
 
@@ -133,7 +149,9 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): 
       if (!parts) return fail('A session id is written <source>:<id>, for example claude-code:1234.');
       const page = getSessionPage(db, parts.source, parts.id, from_seq ?? 0);
       if (!page) return fail(`No session with id "${session_id}". Use search or get_project to find valid ids.`);
-      return ok(page);
+      const result = ok(page);
+      record({ direction: 'out', action: 'get_session', projectKey: page.session.project, sessionRef: session_id, detail: null });
+      return result;
     },
   );
 
@@ -156,6 +174,7 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): 
           if (result.error === 'unknown_project') return unknownProject(project, result.candidates);
           return fail(result.message);
         }
+        record({ direction: 'in', action: 'note', projectKey: result.project, sessionRef: result.session_id, detail: title });
         return ok({ saved: true, session_id: result.session_id, project: result.project, duplicate: result.duplicate });
       },
     );

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import { createGrant, issueTokens, revokeGrant } from '../src/oauth/store.js';
-import { checkCredential, createToken, listTokens, revokeToken, verifyToken } from '../src/tokens.js';
+import { actorFor, checkCredential, createToken, listTokens, revokeToken, verifyToken } from '../src/tokens.js';
 
 const T0 = '2026-10-11T00:00:00.000Z';
 const T1 = '2026-10-11T01:00:00.000Z';
@@ -113,8 +113,8 @@ describe('checkCredential', () => {
 
   it('accepts a live bearer token with its scope', () => {
     const db = openDb(':memory:');
-    const { token } = createToken(db, 'x', 'read', T0);
-    expect(checkCredential(db, token, T1)).toEqual({ kind: 'bearer', scope: 'read' });
+    const { id, token } = createToken(db, 'x', 'read', T0);
+    expect(checkCredential(db, token, T1)).toEqual({ kind: 'bearer', scope: 'read', id, label: 'x' });
   });
 
   it('accepts a live OAuth access token with its grant and scopes', () => {
@@ -125,6 +125,7 @@ describe('checkCredential', () => {
       kind: 'oauth',
       grantId,
       scopes: ['hub.read'],
+      clientName: 'Claude',
     });
   });
 
@@ -160,9 +161,17 @@ describe('checkCredential', () => {
         createHash('sha256').update(raw).digest('hex'),
         T0,
       );
-      expect(checkCredential(db, raw, T1)).toEqual({ kind: 'bearer', scope: 'read' });
+      expect(checkCredential(db, raw, T1)).toMatchObject({ kind: 'bearer', scope: 'read', label: 'legacy' });
     }
     expect(checkCredential(db, 'chub_at_unknown', T1)).toBeNull();
     expect(checkCredential(db, 'chub_rt_unknown', T1)).toBeNull();
+  });
+});
+
+describe('actorFor', () => {
+  it('names an ingest token as the PC, a read token by label, and an OAuth grant by its client', () => {
+    expect(actorFor({ kind: 'bearer', scope: 'ingest', id: 1, label: 'collector' })).toBe('your PC (collector)');
+    expect(actorFor({ kind: 'bearer', scope: 'read', id: 2, label: 'assistant' })).toBe('read token: assistant');
+    expect(actorFor({ kind: 'oauth', grantId: 3, scopes: ['hub.read'], clientName: 'claude.ai' })).toBe('claude.ai');
   });
 });

@@ -1,7 +1,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { listActivity } from '../src/activity.js';
 import { openDb, type Db } from '../src/db.js';
+import { createGrant, issueTokens } from '../src/oauth/store.js';
 import { handleMcp, INSTRUCTIONS } from '../src/mcp.js';
 import { PAGE_BUDGET, upsertSession } from '../src/store.js';
 import { createToken } from '../src/tokens.js';
@@ -150,7 +152,7 @@ describe('save_note', () => {
   let saverClose: () => Promise<void>;
 
   beforeEach(async () => {
-    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true }), log: () => {} });
+    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true, actor: 'Claude' }), log: () => {} });
     saverClose = started.close;
     saver = await connect(createToken(db, 'chat', 'read', NOW).token, started.url);
   });
@@ -265,7 +267,7 @@ describe('the exact description of every tool', () => {
     // alpha newest, so the order in the pinned strings is the one recency gives.
     upsertSession(db, makeSession({ source_session_id: 'b3', project_key: 'local:beta', last_activity_at: '2026-10-09T10:00:00.000Z' }), NOW);
     upsertSession(db, makeSession({ source_session_id: 'a3', last_activity_at: '2026-10-10T10:00:00.000Z' }), NOW);
-    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true }), log: () => {} });
+    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true, actor: 'Claude' }), log: () => {} });
     saverClose = started.close;
     saver = await connect(createToken(db, 'chat', 'read', NOW).token, started.url);
   });
@@ -311,5 +313,98 @@ describe('instructions: the hub is a briefing, not a live status', () => {
     expect(INSTRUCTIONS).toMatch(/verify/i);
     expect(INSTRUCTIONS).toMatch(/before (acting|recommending)/i);
     expect(INSTRUCTIONS).toMatch(/cannot check|can't check|no way to check/i);
+  });
+});
+
+describe('the activity log', () => {
+  const rows = () => listActivity(db, { limit: 50, offset: 0 });
+  const only = () => {
+    const r = rows();
+    expect(r).toHaveLength(1);
+    return r[0]!;
+  };
+
+  it('list_projects logs an out row for a read token, with no project', async () => {
+    await tool('list_projects');
+    expect(only()).toMatchObject({ direction: 'out', action: 'list_projects', projectKey: null, sessionRef: null, actor: 'read token: assistant', detail: null });
+  });
+
+  it('get_project logs the resolved key', async () => {
+    await tool('get_project', { project: 'Alpha' });
+    expect(only()).toMatchObject({ direction: 'out', action: 'get_project', projectKey: 'github.com/me/alpha', actor: 'read token: assistant' });
+  });
+
+  it('a get_project that finds nothing logs nothing', async () => {
+    await tool('get_project', { project: 'gamma' });
+    expect(rows()).toEqual([]);
+  });
+
+  it('search logs the project key when given, and the query', async () => {
+    await tool('search', { query: 'hit rate', project: 'alpha' });
+    expect(only()).toMatchObject({ action: 'search', projectKey: 'github.com/me/alpha', detail: 'hit rate' });
+  });
+
+  it('search without a project logs no project, and cuts the query to 100 characters', async () => {
+    await tool('search', { query: 'word '.repeat(40) });
+    const r = only();
+    expect(r.projectKey).toBeNull();
+    expect(r.detail).toBe(('word '.repeat(40)).slice(0, 100));
+  });
+
+  it('a search query holding a GitHub token is logged redacted', async () => {
+    const secret = 'ghp_' + 'A1b2C3d4E5'.repeat(4) ;
+    await tool('search', { query: `find ${secret}` });
+    const r = only();
+    expect(r.detail).toContain('[REDACTED:github]');
+    expect(r.detail).not.toContain(secret);
+  });
+
+  it('get_session logs the session ref and its project', async () => {
+    await tool('get_session', { session_id: 'claude-code:a1' });
+    expect(only()).toMatchObject({ action: 'get_session', sessionRef: 'claude-code:a1', projectKey: 'github.com/me/alpha' });
+  });
+
+  it('a get_session that finds nothing logs nothing', async () => {
+    await tool('get_session', { session_id: 'claude-code:nope' });
+    expect(rows()).toEqual([]);
+  });
+
+  it('save_note logs an in row with the title, project and session', async () => {
+    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true, actor: 'claude.ai' }), log: () => {} });
+    const saver = await connect(createToken(db, 'chat', 'read', NOW).token, started.url);
+    try {
+      const saved = await callOn(saver, 'save_note', { project: 'alpha', title: 'Deploy steps', text: 'run hub sync' });
+      expect(only()).toMatchObject({
+        direction: 'in',
+        action: 'note',
+        projectKey: 'github.com/me/alpha',
+        sessionRef: saved.data.session_id,
+        actor: 'claude.ai',
+        detail: 'Deploy steps',
+      });
+    } finally {
+      await saver.close();
+      await started.close();
+    }
+  });
+
+  it('an OAuth caller is named by its client', async () => {
+    const started = await startServer({ db, mcp: handleMcp(db), oauth: { publicUrl: 'https://hub.test' }, log: () => {} });
+    const grantId = createGrant(db, { clientId: 'c1', clientName: 'claude.ai', scopes: ['hub.read'] }, new Date().toISOString());
+    const c = await connect(issueTokens(db, grantId, false, new Date().toISOString()).access, started.url);
+    try {
+      await callOn(c, 'list_projects');
+      expect(only()).toMatchObject({ action: 'list_projects', actor: 'claude.ai' });
+    } finally {
+      await c.close();
+      await started.close();
+    }
+  });
+
+  it('a failure to log never fails the tool', async () => {
+    db.exec('DROP TABLE activity');
+    const { isError, data } = await tool('list_projects');
+    expect(isError).toBe(false);
+    expect(data.projects).toHaveLength(2);
   });
 });

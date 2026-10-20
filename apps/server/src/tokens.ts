@@ -48,8 +48,14 @@ export function revokeToken(db: Db, id: number, now: string): boolean {
 }
 
 export type Credential =
-  | { kind: 'bearer'; scope: Scope }
-  | { kind: 'oauth'; grantId: number; scopes: HubScope[] };
+  | { kind: 'bearer'; scope: Scope; id: number; label: string }
+  | { kind: 'oauth'; grantId: number; scopes: HubScope[]; clientName: string };
+
+/** Who the activity log says made a request. */
+export function actorFor(c: Credential): string {
+  if (c.kind === 'oauth') return c.clientName;
+  return c.scope === 'ingest' ? `your PC (${c.label})` : `read token: ${c.label}`;
+}
 
 /**
  * Classifies a presented bearer token. 'dead' means this hub issued it but it is expired or revoked,
@@ -64,14 +70,14 @@ export function checkCredential(db: Db, token: string, now: string): Credential 
     if (t) {
       if (t.kind !== 'access') return null;
       if (t.expiresAt <= now || t.grant.revokedAt !== null) return 'dead';
-      return { kind: 'oauth', grantId: t.grantId, scopes: t.grant.scopes };
+      return { kind: 'oauth', grantId: t.grantId, scopes: t.grant.scopes, clientName: t.grant.clientName };
     }
   }
-  const row = db.prepare('SELECT id, scope, revoked_at FROM tokens WHERE hash = ?').get(hashToken(token)) as
-    | { id: number; scope: Scope; revoked_at: string | null }
+  const row = db.prepare('SELECT id, label, scope, revoked_at FROM tokens WHERE hash = ?').get(hashToken(token)) as
+    | { id: number; label: string; scope: Scope; revoked_at: string | null }
     | undefined;
   if (!row) return null;
   if (row.revoked_at !== null) return 'dead';
   db.prepare('UPDATE tokens SET last_used_at = ? WHERE id = ?').run(now, row.id);
-  return { kind: 'bearer', scope: row.scope };
+  return { kind: 'bearer', scope: row.scope, id: row.id, label: row.label };
 }

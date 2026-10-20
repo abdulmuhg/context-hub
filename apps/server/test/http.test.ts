@@ -4,6 +4,7 @@ import { openDb, type Db } from '../src/db.js';
 import { MAX_BODY, send } from '../src/http.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import { createGrant, issueTokens, listGrants } from '../src/oauth/store.js';
+import { listActivity } from '../src/activity.js';
 import { createToken, revokeToken } from '../src/tokens.js';
 import { contentHash } from '@context-hub/core';
 import { gz, makeSession, startServer, text } from './helpers.js';
@@ -270,11 +271,73 @@ describe('the bare address', () => {
   });
 });
 
+describe('the activity log: uploads and deletes', () => {
+  const rows = () => listActivity(db, { limit: 50, offset: 0 });
+
+  it('an upload that changes something logs one row, naming the PC', async () => {
+    await put(makeSession({ title: 'Fix the login bug' }));
+    expect(rows()).toEqual([
+      {
+        id: expect.any(Number),
+        at: NOW.toISOString(),
+        direction: 'in',
+        action: 'upload',
+        projectKey: 'github.com/me/alpha',
+        sessionRef: 'claude-code:s1',
+        actor: 'your PC (collector)',
+        detail: 'Fix the login bug',
+      },
+    ]);
+  });
+
+  it('cuts a long title to 100 characters', async () => {
+    await put(makeSession({ title: 'x'.repeat(150) }));
+    expect(rows()[0]!.detail).toBe('x'.repeat(100));
+  });
+
+  it('an unchanged re-upload logs nothing', async () => {
+    await put();
+    await put();
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('deleting a session removes its earlier rows and leaves one delete row without a session ref', async () => {
+    await put();
+    await put(makeSession({ source_session_id: 's2' }));
+    const res = await call('DELETE', '/api/sessions/claude-code/s1', { token: ingest });
+    expect(res.status).toBe(200);
+    const after = rows();
+    expect(after.filter((r) => r.sessionRef === 'claude-code:s1')).toEqual([]);
+    expect(after.filter((r) => r.action === 'upload').map((r) => r.sessionRef)).toEqual(['claude-code:s2']);
+    const del = after.filter((r) => r.action === 'delete');
+    expect(del).toHaveLength(1);
+    expect(del[0]).toMatchObject({ direction: 'in', projectKey: 'github.com/me/alpha', sessionRef: null, actor: 'your PC (collector)' });
+  });
+
+  it('deleting a project removes all its rows and logs a delete with no project', async () => {
+    await put();
+    await put(makeSession({ source_session_id: 's9', project_key: 'local:other' }));
+    const res = await call('DELETE', `/api/projects/${encodeURIComponent('github.com/me/alpha')}`, { token: ingest });
+    expect(res.status).toBe(200);
+    const after = rows();
+    expect(after.filter((r) => r.projectKey === 'github.com/me/alpha')).toEqual([]);
+    expect(after.filter((r) => r.action === 'delete')).toMatchObject([{ direction: 'in', projectKey: null, sessionRef: null }]);
+    expect(after.filter((r) => r.action === 'upload')).toHaveLength(1);
+  });
+
+  it('a failure to log never fails the request', async () => {
+    db.exec('DROP TABLE activity');
+    const res = await put();
+    expect(res.status).toBe(200);
+    expect(logs.some((l) => l.includes('activity'))).toBe(true);
+  });
+});
+
 describe('the caller passed to the MCP handler', () => {
   const OAUTH = { publicUrl: 'https://hub.test' };
   let cUrl: string;
   let cClose: () => Promise<void>;
-  let callers: { canSave: boolean }[];
+  let callers: { canSave: boolean; actor: string }[];
 
   const oauthToken = (scopes: ('hub.read' | 'hub.save')[]): string => {
     const grantId = createGrant(db, { clientId: 'client-1', clientName: 'Claude', scopes }, NOW.toISOString());
@@ -304,7 +367,11 @@ describe('the caller passed to the MCP handler', () => {
     expect((await post(oauthToken(['hub.read', 'hub.save']))).status).toBe(200);
     expect((await post(oauthToken(['hub.read']))).status).toBe(200);
     expect((await post(read)).status).toBe(200);
-    expect(callers).toEqual([{ canSave: true }, { canSave: false }, { canSave: false }]);
+    expect(callers).toEqual([
+      { canSave: true, actor: 'Claude' },
+      { canSave: false, actor: 'Claude' },
+      { canSave: false, actor: 'read token: assistant' },
+    ]);
   });
 });
 
