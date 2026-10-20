@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { OAuthConfig } from '../src/oauth/config.js';
 import { openDb, type Db } from '../src/db.js';
 import { createConnectCode } from '../src/oauth/store.js';
 import { listGrants } from '../src/oauth/store.js';
@@ -15,9 +16,9 @@ afterEach(async () => {
 
 let db: Db;
 let url: string;
-async function start(): Promise<void> {
+async function start(extra: Partial<OAuthConfig> = {}): Promise<void> {
   db = openDb(':memory:');
-  const s = await startServer({ db, oauth: { publicUrl: 'https://hub.test' } });
+  const s = await startServer({ db, oauth: { publicUrl: 'https://hub.test', ...extra } });
   close = s.close;
   url = s.url;
 }
@@ -168,5 +169,39 @@ describe('GET/POST /oauth/authorize', () => {
     expect((await postForm({ ...params(id), code })).status).toBe(302);
     expect((await postForm({ ...params(id), code })).status).toBe(200);
     expect(listGrants(db)).toHaveLength(1);
+  });
+
+  it('keeps the declined save choice on retry', async () => {
+    await start();
+    const id = await register();
+    const wrong = await postForm({ ...params(id), code: 'WRONG-CODE' });
+    expect(await wrong.text()).not.toMatch(/<input[^>]*name="save"[^>]*checked/);
+    const { code } = createConnectCode(db, NOW);
+    expect((await postForm({ ...params(id), code })).status).toBe(302);
+    expect(listGrants(db)[0]!.scopes).not.toContain('hub.save');
+  });
+
+  it('checks the limiter before resolving a client', async () => {
+    const doc = JSON.stringify({ client_id: 'https://client.example/meta.json', client_name: 'Cimd', redirect_uris: [CB] });
+    const fetchImpl = vi.fn(async () => new Response(doc, { status: 200 })) as unknown as typeof fetch;
+    await start({ fetchImpl, lookup: async () => [{ address: '93.184.216.34' }] });
+    const id = await register();
+    const a = { 'X-Forwarded-For': '203.0.113.7' };
+    for (let i = 0; i < 10; i++) await postForm({ ...params(id), code: 'BAD' + i }, a);
+    const q = new URLSearchParams(params('https://client.example/meta.json'));
+    const blocked = await fetch(`${url}/oauth/authorize?${q}`, { redirect: 'manual', headers: a });
+    expect(blocked.status).toBe(429);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const other = await fetch(`${url}/oauth/authorize?${q}`, { redirect: 'manual', headers: { 'X-Forwarded-For': '203.0.113.8' } });
+    expect(other.status).toBe(200);
+  });
+
+  it('does not burn a connect code on a request that fails validation', async () => {
+    await start();
+    const id = await register();
+    const { code } = createConnectCode(db, NOW);
+    const bad = await postForm({ ...params(id, { redirect_uri: 'https://claude.ai/api/mcp/auth_callback/' }), code });
+    expect(bad.status).toBe(400);
+    expect((await postForm({ ...params(id), code })).status).toBe(302);
   });
 });

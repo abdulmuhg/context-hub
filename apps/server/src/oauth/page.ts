@@ -45,6 +45,7 @@ export interface SignInView {
   /** Parameters repeated as hidden inputs so a retry needs no restart. */
   hidden: Record<string, string>;
   wrongCode: boolean;
+  saveTicked: boolean;
 }
 
 export function signInPage(res: ServerResponse, v: SignInView): void {
@@ -59,7 +60,7 @@ export function signInPage(res: ServerResponse, v: SignInView): void {
 <p>${esc(v.clientName)} wants to read your project history. After you sign in, you'll be sent back to ${esc(v.redirectHost)}.</p>
 ${err}
 <form method="post" action="/oauth/authorize" autocomplete="off">${hidden}
-<label class="check"><input type="checkbox" name="save" value="on" checked> Also allow it to save notes to your projects</label>
+<label class="check"><input type="checkbox" name="save" value="on"${v.saveTicked ? " checked" : ""}> Also allow it to save notes to your projects</label>
 <label for="code">Sign-in code</label>
 <p class="hint">Run hub connect on your PC to get one.</p>
 <input type="text" id="code" name="code" required autocomplete="off" autocapitalize="characters" spellcheck="false">

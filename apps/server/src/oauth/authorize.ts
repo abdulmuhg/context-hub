@@ -27,6 +27,9 @@ export async function authorize(req: IncomingMessage, res: ServerResponse, metho
 
   const now = (ctx.cfg.now?.() ?? new Date()).toISOString();
 
+  // The browser address is checked first: client resolution can cost a DNS lookup and an HTTPS fetch.
+  if (ctx.limiter.isBlocked(ctx.address)) return errorPage(res, 429, 'Too many wrong codes. Try again in 15 minutes.');
+
   // 1. Client and redirect_uri. Any failure is an error page, never a redirect.
   if (!p.client_id) return errorPage(res, 400, 'The request does not say which app is asking.');
   const resolved = await resolveClient(ctx.db, ctx.cfg, p.client_id, now);
@@ -52,13 +55,12 @@ export async function authorize(req: IncomingMessage, res: ServerResponse, metho
   for (const k of PARAMS) if (p[k] !== undefined) hidden[k] = p[k]!;
   const view = { clientName: client.name, redirectHost: new URL(redirectUri).host, hidden };
 
-  if (form === null) return signInPage(res, { ...view, wrongCode: false });
+  if (form === null) return signInPage(res, { ...view, wrongCode: false, saveTicked: true });
 
   // 3. The connect code. A blocked address is refused before the code is tried.
-  if (ctx.limiter.isBlocked(ctx.address)) return errorPage(res, 429, 'Too many wrong codes. Try again in 15 minutes.');
   if (!consumeConnectCode(ctx.db, form.get('code') ?? '', now)) {
     ctx.limiter.recordFailure(ctx.address);
-    return signInPage(res, { ...view, wrongCode: true });
+    return signInPage(res, { ...view, wrongCode: true, saveTicked: form.get('save') === 'on' });
   }
 
   // Unknown scopes are dropped: every grant reads, saving needs the ticked box.
