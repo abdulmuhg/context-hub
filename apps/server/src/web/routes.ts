@@ -1,10 +1,22 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Db } from '../db.js';
 import type { AuthLimiter } from '../ratelimit.js';
-import { consumeConnectCode } from '../oauth/store.js';
+import { consumeConnectCode, revokeGrant } from '../oauth/store.js';
+import { revokeToken } from '../tokens.js';
 import { isAsset, serveAsset } from './assets.js';
 import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
-import { activityPage, overviewPage, parseActivityQuery, projectNotFoundPage, projectPage, projectsPage } from './pages.js';
+import {
+  activityPage,
+  disconnectConfirmPage,
+  disconnectNotFoundPage,
+  findDisconnectTarget,
+  overviewPage,
+  parseActivityQuery,
+  projectNotFoundPage,
+  projectPage,
+  projectsPage,
+  signInsPage,
+} from './pages.js';
 import { checkWebSession, clearedCookie, createWebSession, parseCookies, revokeWebSession, sameCsrf, sessionCookie } from './session.js';
 
 export interface WebConfig {
@@ -112,6 +124,27 @@ function logout(res: ServerResponse, session: WebSession, ctx: WebCtx): void {
 }
 
 /**
+ * Disconnects a sign-in in two steps. The first post only shows what disconnecting costs; the
+ * second, carrying `confirm`, revokes. The kind and the wording come from the database, so no
+ * form can make the page understate what it is about to cut off, and disconnecting the browser
+ * that asked also clears its cookie and sends it to the sign-in page.
+ */
+function disconnect(res: ServerResponse, form: URLSearchParams, session: WebSession, ctx: WebCtx): void {
+  const target = findDisconnectTarget(ctx.db, form.get('kind') ?? '', form.get('id') ?? '', session.id);
+  if (target === null) return sendDocument(res, 404, disconnectNotFoundPage(session.csrf));
+  if (form.get('confirm') !== 'yes') return sendDocument(res, 200, disconnectConfirmPage(target, session.csrf));
+  const now = ctx.now();
+  if (target.kind === 'grant') revokeGrant(ctx.db, target.id, now);
+  else if (target.kind === 'token') revokeToken(ctx.db, target.id, now);
+  else revokeWebSession(ctx.db, target.id, now);
+  if (target.kind === 'browser' && target.isCurrent) {
+    res.setHeader('Set-Cookie', clearedCookie(ctx.cfg.secureCookies));
+    return redirectTo(res, '/login');
+  }
+  redirectTo(res, '/sign-ins');
+}
+
+/**
  * Handles the dashboard: pages, sign-in and the POST actions. Returns true if the request was
  * answered. A signed-out page answers 302 to /login and a signed-out action answers 403, both
  * without naming anything that is stored.
@@ -138,6 +171,10 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     }
     if (path === '/logout') {
       logout(res, session, ctx);
+      return true;
+    }
+    if (path === '/sign-ins/disconnect') {
+      disconnect(res, form, session, ctx);
       return true;
     }
     return false;
@@ -173,6 +210,10 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
   }
   if (path === '/projects') {
     sendDocument(res, 200, projectsPage(ctx.db, session.csrf));
+    return true;
+  }
+  if (path === '/sign-ins') {
+    sendDocument(res, 200, signInsPage(ctx.db, session.csrf, session.id));
     return true;
   }
   if (path.startsWith(PROJECT_PREFIX)) {

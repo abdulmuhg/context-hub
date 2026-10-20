@@ -1,10 +1,14 @@
 import { countActivity, listActivity, type Action, type ActivityRow, type Direction } from '../activity.js';
 import type { Db } from '../db.js';
+import type { HubScope } from '../oauth/config.js';
+import { listGrants } from '../oauth/store.js';
 import { getProject, listProjects, resolveProject } from '../store.js';
+import { listTokens } from '../tokens.js';
 import { computeHealth, type Health, type Problem } from './health.js';
 import { escapeHtml, pageShell } from './html.js';
 import { renderMarkdown } from './markdown.js';
 import type { WebConfig } from './routes.js';
+import { listBrowsers } from './session.js';
 
 /** How many activity rows the Overview shows before the link to the Activity page. */
 const OVERVIEW_ACTIVITY_ROWS = 10;
@@ -303,6 +307,193 @@ export function projectPage(db: Db, key: string, csrf: string): string | null {
       state +
       `<section class="card"><h2>Recent sessions and notes</h2>${recent}</section>` +
       `<p class="muted">Last synced ${timeTag(view.last_synced_at)}</p>`,
+  });
+}
+
+/** What a Claude app is allowed to do, in plain words rather than the stored scope names. */
+const PERMISSION: Record<HubScope, string> = {
+  'hub.read': 'read',
+  'hub.save': 'save notes',
+  offline_access: 'stay signed in',
+};
+
+/** The kinds of token, named as the PC's `hub` command and an assistant would recognise them. */
+const TOKEN_KIND: Record<string, string> = { ingest: 'upload', read: 'read' };
+
+/** A time that may be missing, for a credential that has never been used. */
+const maybeTime = (iso: string | null): string => (iso === null ? `<span class="muted">Never</span>` : timeTag(iso));
+
+/** One listed way into the hub. `cells` is trusted HTML the caller has already escaped. */
+interface SignInEntry {
+  kind: DisconnectKind;
+  id: number;
+  cells: string[];
+  revokedAt: string | null;
+}
+
+/**
+ * One group of sign-ins as a table. An active entry gets the Disconnect form, which posts the
+ * kind and the id and nothing else; a revoked one is greyed, shows when it was revoked and has
+ * no button, because there is nothing left to disconnect.
+ */
+function signInGroup(title: string, headers: string[], entries: SignInEntry[], csrf: string): string {
+  if (entries.length === 0) return `<section class="card"><h2>${title}</h2><p class="muted">None.</p></section>`;
+  const rows = entries
+    .map((e) => {
+      const action =
+        e.revokedAt === null
+          ? `<form method="post" action="/sign-ins/disconnect">` +
+            `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+            `<input type="hidden" name="kind" value="${e.kind}">` +
+            `<input type="hidden" name="id" value="${e.id}">` +
+            `<button type="submit" class="danger">Disconnect</button></form>`
+          : `<span class="muted">Disconnected ${timeTag(e.revokedAt)}</span>`;
+      return (
+        `<tr${e.revokedAt === null ? '' : ' class="revoked"'}>` +
+        e.cells.map((c) => `<td>${c}</td>`).join('') +
+        `<td class="actions">${action}</td></tr>`
+      );
+    })
+    .join('');
+  return (
+    `<section class="card"><h2>${title}</h2><div class="table-wrap"><table><thead><tr>` +
+    headers.map((h) => `<th>${h}</th>`).join('') +
+    `<th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`
+  );
+}
+
+/**
+ * The Sign-ins page (spec 3.5): Claude apps, tokens and browsers, each with a Disconnect button.
+ * `currentSessionId` is the browser making the request, taken from its cookie, so "this browser"
+ * is decided here and never by anything the browser sends.
+ */
+export function signInsPage(db: Db, csrf: string, currentSessionId: number): string {
+  const grants = listGrants(db).map(
+    (g): SignInEntry => ({
+      kind: 'grant',
+      id: g.id,
+      cells: [
+        escapeHtml(g.clientName),
+        g.scopes.map((s) => escapeHtml(PERMISSION[s] ?? s)).join(', '),
+        timeTag(g.createdAt),
+        maybeTime(g.lastUsedAt),
+      ],
+      revokedAt: g.revokedAt,
+    }),
+  );
+  const tokens = listTokens(db).map(
+    (t): SignInEntry => ({
+      kind: 'token',
+      id: t.id,
+      cells: [
+        escapeHtml(t.label),
+        `<span class="mono">${escapeHtml(TOKEN_KIND[t.scope] ?? t.scope)}</span>`,
+        timeTag(t.created_at),
+        maybeTime(t.last_used_at),
+      ],
+      revokedAt: t.revoked_at,
+    }),
+  );
+  const browsers = listBrowsers(db).map(
+    (b): SignInEntry => ({
+      kind: 'browser',
+      id: b.id,
+      cells: [timeTag(b.createdAt), timeTag(b.lastUsedAt), b.id === currentSessionId ? `<strong>this browser</strong>` : ''],
+      revokedAt: b.revokedAt,
+    }),
+  );
+  return pageShell({
+    title: 'Sign-ins',
+    active: 'sign-ins',
+    csrf,
+    body:
+      `<h1>Sign-ins</h1><p class="muted">Every way into the hub. Disconnecting asks once more first.</p>` +
+      signInGroup('Claude apps', ['Client', 'Permissions', 'Signed in', 'Last used'], grants, csrf) +
+      signInGroup('Tokens', ['Label', 'Kind', 'Created', 'Last used'], tokens, csrf) +
+      signInGroup('Browsers', ['Signed in', 'Last used', 'Which'], browsers, csrf),
+  });
+}
+
+/** The three things a Disconnect can aim at. */
+export type DisconnectKind = 'grant' | 'token' | 'browser';
+
+/** A live sign-in a Disconnect may revoke, with the line its confirmation page names. */
+export interface DisconnectTarget {
+  kind: DisconnectKind;
+  id: number;
+  /** Whether this is the browser that posted the form, which Disconnect also signs out. */
+  isCurrent: boolean;
+  /** Trusted HTML: server-owned wording, with only a client name escaped into it. */
+  consequence: string;
+}
+
+const UPLOAD_CONSEQUENCE = `Your PC's hub sync will stop working until you create a new upload token on the server.`;
+const READ_CONSEQUENCE = 'Assistants using this token (for example Claude Code) will lose access to the hub.';
+
+/**
+ * Looks up what a Disconnect aims at and what disconnecting it costs. Everything but the kind and
+ * the id is read from the database, so a form claiming a different scope changes no wording. Null
+ * for an id that is not a plain number, names nothing, or names something already revoked, which
+ * the caller answers with the not-found page rather than revoking anything.
+ */
+export function findDisconnectTarget(db: Db, kind: string, rawId: string, currentSessionId: number): DisconnectTarget | null {
+  // Digits only, then matched against rows already read: an id past a safe integer finds nothing
+  // rather than reaching a bind parameter. A narrower `WHERE id = ?` here would need its own guard.
+  if (!/^\d+$/.test(rawId)) return null;
+  const id = Number(rawId);
+  if (kind === 'grant') {
+    const grant = listGrants(db).find((g) => g.id === id && g.revokedAt === null);
+    if (grant === undefined) return null;
+    return { kind, id, isCurrent: false, consequence: `${escapeHtml(grant.clientName)} will need to sign in again.` };
+  }
+  if (kind === 'token') {
+    const token = listTokens(db).find((t) => t.id === id && t.revoked_at === null);
+    if (token === undefined) return null;
+    return { kind, id, isCurrent: false, consequence: token.scope === 'ingest' ? UPLOAD_CONSEQUENCE : READ_CONSEQUENCE };
+  }
+  if (kind === 'browser') {
+    const browser = listBrowsers(db).find((b) => b.id === id && b.revokedAt === null);
+    if (browser === undefined) return null;
+    const isCurrent = id === currentSessionId;
+    return {
+      kind,
+      id,
+      isCurrent,
+      consequence: isCurrent ? 'This signs this browser out.' : 'That browser will be signed out.',
+    };
+  }
+  return null;
+}
+
+/**
+ * The first step of a Disconnect: the consequence, a Disconnect button that carries the same
+ * fields plus `confirm`, and a Cancel link back. Nothing is revoked until that second post.
+ */
+export function disconnectConfirmPage(target: DisconnectTarget, csrf: string): string {
+  return pageShell({
+    title: 'Disconnect',
+    active: 'sign-ins',
+    csrf,
+    body:
+      `<h1>Disconnect this sign-in?</h1>` +
+      `<section class="card"><p>${target.consequence}</p>` +
+      `<form method="post" action="/sign-ins/disconnect" class="confirm">` +
+      `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+      `<input type="hidden" name="kind" value="${target.kind}">` +
+      `<input type="hidden" name="id" value="${target.id}">` +
+      `<input type="hidden" name="confirm" value="yes">` +
+      `<button type="submit" class="danger">Disconnect</button>` +
+      `<a href="/sign-ins">Cancel</a></form></section>`,
+  });
+}
+
+/** The 404 for a Disconnect that names no live sign-in. It says nothing about what is stored. */
+export function disconnectNotFoundPage(csrf: string): string {
+  return pageShell({
+    title: 'Not found',
+    active: 'sign-ins',
+    csrf,
+    body: `<h1>No such sign-in</h1><p>Nothing was disconnected. <a href="/sign-ins">All sign-ins</a></p>`,
   });
 }
 

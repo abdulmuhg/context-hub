@@ -68,6 +68,28 @@ export function listWebSessions(db: Db): WebSessionRow[] {
   }));
 }
 
+/**
+ * What the Sign-ins page shows about a browser. The cookie hash and the anti-forgery value are
+ * left out of the type, so neither can reach a page by accident.
+ */
+export interface BrowserRow {
+  id: number;
+  createdAt: string;
+  lastUsedAt: string;
+  revokedAt: string | null;
+}
+
+/** The browsers for the Sign-ins page, oldest first. Revoked ones stay listed. */
+export function listBrowsers(db: Db): BrowserRow[] {
+  const rows = db.prepare('SELECT id, created_at, last_used_at, revoked_at FROM web_sessions ORDER BY id').all() as {
+    id: number;
+    created_at: string;
+    last_used_at: string;
+    revoked_at: string | null;
+  }[];
+  return rows.map((r) => ({ id: r.id, createdAt: r.created_at, lastUsedAt: r.last_used_at, revokedAt: r.revoked_at }));
+}
+
 /** Compares a submitted anti-forgery token with the stored one without leaking where they differ. */
 export function sameCsrf(submitted: string, stored: string): boolean {
   const a = Buffer.from(submitted, 'utf8');

@@ -196,6 +196,12 @@ td.num { font-family: var(--font-mono); }
 .state h1, .state h2 { font-size: 1.05rem; }
 .state h3, .state h4 { font-size: 0.95rem; }
 
+/* Sign-ins: one table per group, with the Disconnect button in the last column */
+td.actions { text-align: right; white-space: nowrap; }
+td.actions form { margin: 0; }
+tr.revoked, tr.revoked a { color: var(--muted); }
+.confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+
 /* Sign-in */
 .signin { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
 .signin form { display: flex; flex-direction: column; gap: 10px; }
