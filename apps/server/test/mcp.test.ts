@@ -13,16 +13,28 @@ let url: string;
 let close: () => Promise<void>;
 let client: Client;
 
-async function connect(token: string): Promise<Client> {
+async function connect(token: string, base = url): Promise<Client> {
   const c = new Client({ name: 'test-client', version: '0.0.0' });
-  await c.connect(new StreamableHTTPClientTransport(new URL(url + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  await c.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
   return c;
 }
 
-async function tool(name: string, args: Record<string, unknown> = {}): Promise<{ data: any; isError: boolean }> {
-  const res = (await client.callTool({ name, arguments: args })) as { content: { type: string; text: string }[]; isError?: boolean };
+async function callOn(c: Client, name: string, args: Record<string, unknown> = {}): Promise<{ data: any; isError: boolean }> {
+  const res = (await c.callTool({ name, arguments: args })) as { content: { type: string; text: string }[]; isError?: boolean };
   return { data: JSON.parse(res.content[0]!.text), isError: res.isError === true };
 }
+
+async function tool(name: string, args: Record<string, unknown> = {}): Promise<{ data: any; isError: boolean }> {
+  return callOn(client, name, args);
+}
+
+/** The description of one tool as this client currently sees it. */
+async function describeTool(c: Client, name: string): Promise<string> {
+  const { tools } = await c.listTools();
+  return tools.find((t) => t.name === name)?.description ?? '';
+}
+
+const countSessions = (): number => (db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n;
 
 beforeEach(async () => {
   db = openDb(':memory:');
@@ -133,7 +145,116 @@ describe('get_session', () => {
   });
 });
 
+describe('save_note', () => {
+  let saver: Client;
+  let saverClose: () => Promise<void>;
+
+  beforeEach(async () => {
+    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true }), log: () => {} });
+    saverClose = started.close;
+    saver = await connect(createToken(db, 'chat', 'read', NOW).token, started.url);
+  });
+
+  afterEach(async () => {
+    await saver.close();
+    await saverClose();
+  });
+
+  it('a caller that can save sees save_note and can save', async () => {
+    const { tools } = await saver.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(['get_project', 'get_session', 'list_projects', 'save_note', 'search']);
+
+    const saved = await callOn(saver, 'save_note', { project: 'alpha', title: 'Deploy steps', text: 'run hub sync, then restart the container' });
+    expect(saved.isError).toBe(false);
+    expect(saved.data).toMatchObject({ saved: true, project: 'github.com/me/alpha', duplicate: false });
+    expect(saved.data.session_id).toMatch(/^note:n_[A-Za-z0-9_-]{22}$/);
+
+    const { data } = await callOn(saver, 'get_project', { project: 'alpha' });
+    expect(data.recent.map((s: any) => s.session_id)).toContain(saved.data.session_id);
+    expect(data.recent.find((s: any) => s.session_id === saved.data.session_id)).toMatchObject({ source: 'note', title: 'Deploy steps' });
+  });
+
+  it('a read-only caller does not see save_note', async () => {
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(['get_project', 'get_session', 'list_projects', 'search']);
+    const before = countSessions();
+    const refused = (await client
+      .callTool({ name: 'save_note', arguments: { project: 'alpha', title: 'x', text: 'y' } })
+      .catch((e: Error) => ({ content: [{ text: e.message }], isError: true }))) as { content: { text: string }[]; isError?: boolean };
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]!.text).toMatch(/save_note not found/);
+    expect(countSessions()).toBe(before);
+  });
+
+  it('save_note with an unknown or ambiguous project returns the candidates and saves nothing', async () => {
+    const before = countSessions();
+    const unknown = await callOn(saver, 'save_note', { project: 'gamma', title: 'Note', text: 'nothing to see' });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.data.error).toMatch(/No single project matches "gamma"/);
+    expect(unknown.data.candidates).toEqual(['github.com/me/alpha', 'local:beta']);
+    expect(countSessions()).toBe(before);
+
+    upsertSession(db, makeSession({ source_session_id: 'd1', project_key: 'local:dup' }), NOW);
+    upsertSession(db, makeSession({ source_session_id: 'd2', project_key: 'github.com/me/dup' }), NOW);
+    const after = countSessions();
+    const ambiguous = await callOn(saver, 'save_note', { project: 'dup', title: 'Note', text: 'nothing to see' });
+    expect(ambiguous.isError).toBe(true);
+    expect(ambiguous.data.candidates.sort()).toEqual(['github.com/me/dup', 'local:dup']);
+    expect(countSessions()).toBe(after);
+  });
+
+  it('search accepts source note', async () => {
+    await callOn(saver, 'save_note', { project: 'beta', title: 'Note', text: 'the flurblewidget needs a rebuild' });
+    const { data, isError } = await callOn(saver, 'search', { query: 'flurblewidget', source: 'note' });
+    expect(isError).toBe(false);
+    expect(data.hits).toHaveLength(1);
+    expect(data.hits[0].session_id).toMatch(/^note:/);
+    expect((await callOn(saver, 'search', { query: 'flurblewidget', source: 'codex' })).data.hits).toHaveLength(0);
+  });
+});
+
+describe('tool descriptions', () => {
+  it('descriptions name the projects, most recently active first', async () => {
+    upsertSession(db, makeSession({ source_session_id: 'b2', project_key: 'local:beta', last_activity_at: '2026-10-09T10:00:00.000Z' }), NOW);
+    const betaFirst = await describeTool(client, 'get_project');
+    expect(betaFirst).toContain('Projects: beta, alpha.');
+    expect(betaFirst).toContain('before searching past chats');
+
+    upsertSession(db, makeSession({ source_session_id: 'a2', last_activity_at: '2026-10-10T10:00:00.000Z' }), NOW);
+    expect(await describeTool(client, 'get_project')).toContain('Projects: alpha, beta.');
+    expect(await describeTool(client, 'list_projects')).toContain('Projects in the hub: alpha, beta.');
+    expect(await describeTool(client, 'search')).toContain('Covers the coding sessions and notes of: alpha, beta.');
+  });
+
+  it('builds the description from the database on every request', async () => {
+    expect(await describeTool(client, 'get_project')).not.toContain('gamma');
+    upsertSession(db, makeSession({ source_session_id: 'g1', project_key: 'local:gamma', last_activity_at: '2026-10-09T10:00:00.000Z' }), NOW);
+    expect(await describeTool(client, 'get_project')).toContain('gamma');
+  });
+
+  it('lists at most 20 names, and an empty hub says so', async () => {
+    for (let i = 0; i < 25; i++) {
+      const minute = String(i).padStart(2, '0');
+      upsertSession(db, makeSession({ source_session_id: `m${i}`, project_key: `local:p${i}`, last_activity_at: `2026-10-11T10:${minute}:00.000Z` }), NOW);
+    }
+    const description = await describeTool(client, 'list_projects');
+    const names = description.slice(description.indexOf('Projects in the hub: ') + 'Projects in the hub: '.length).replace(/\.$/, '').split(', ');
+    expect(names).toHaveLength(20);
+
+    db.exec('DELETE FROM search_index; DELETE FROM messages; DELETE FROM sessions; DELETE FROM projects;');
+    for (const name of ['list_projects', 'get_project', 'search']) {
+      expect(await describeTool(client, name)).toContain('The hub has no projects yet.');
+    }
+  });
+});
+
 describe('instructions: the hub is a briefing, not a live status', () => {
+  it('tells the assistant to use these tools when the user names a project', () => {
+    expect(INSTRUCTIONS).toContain(
+      'When the user names one of their software projects, use these tools rather than searching past chats: coding sessions are stored here, not in the chat app.',
+    );
+  });
+
   it('says the record misses changes made outside a conversation, and names the common ones', () => {
     expect(INSTRUCTIONS).toMatch(/outside (a|any) (recorded )?conversation/i);
     expect(INSTRUCTIONS).toMatch(/pull request/i);

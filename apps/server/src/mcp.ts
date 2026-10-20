@@ -3,12 +3,14 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import * as z from 'zod/v4';
 import type { Db } from './db.js';
 import type { AppDeps } from './http.js';
+import { saveNote } from './notes.js';
 import { search } from './search.js';
 import { getProject, getSessionPage, listProjects, resolveProject, splitPublicId } from './store.js';
 
 export const INSTRUCTIONS = [
   "context-hub holds the user's past AI assistant conversations about their projects.",
   'When the user refers to earlier work, names a project, or asks to continue something, call get_project before answering. If you are not sure which project they mean, call list_projects first.',
+  'When the user names one of their software projects, use these tools rather than searching past chats: coding sessions are stored here, not in the chat app.',
   'Use search to find a specific decision or detail, and get_session to read the original conversation behind a result.',
   'Digests are summaries and can be wrong; when a detail matters, open the session with get_session.',
   'A session with digest_status "pending" or a digest marked stale has changed since its digest was written; a state page marked stale may describe work that was removed. In those cases read the session itself before relying on the summary.',
@@ -38,19 +40,48 @@ function unknownProject(input: string, candidates: string[]): ToolResult {
   return fail(`No single project matches "${input}". ${why}`, { candidates });
 }
 
-export function buildMcpServer(db: Db): McpServer {
+/** How many project names a tool description lists. */
+const NAMES_IN_DESCRIPTION = 20;
+
+/**
+ * The project names for a tool description: names rather than keys, most recently
+ * active first. Read on every request, so a description is never out of date.
+ */
+function projectNames(db: Db): string {
+  const rows = db
+    .prepare(
+      `SELECT p.name AS name FROM projects p JOIN sessions s ON s.project_id = p.id
+       GROUP BY p.id
+       ORDER BY MAX(s.last_activity_at) DESC, p.key
+       LIMIT ?`,
+    )
+    .all(NAMES_IN_DESCRIPTION) as { name: string }[];
+  if (rows.length === 0) return 'The hub has no projects yet.';
+  return rows.map((r) => r.name).join(', ');
+}
+
+/** What the caller's credential allows. A read-only caller never sees save_note. */
+export interface McpCaller {
+  canSave: boolean;
+}
+
+export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false }): McpServer {
   const server = new McpServer({ name: 'context-hub', version: '0.1.0' }, { instructions: INSTRUCTIONS });
+  const names = projectNames(db);
 
   server.registerTool(
     'list_projects',
-    { description: 'List every project in the hub with its last activity and last sync time.', inputSchema: {} },
+    {
+      description: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, and notes saved from chats). Projects in the hub: ${names}.`,
+      inputSchema: {},
+    },
     async () => ok({ projects: listProjects(db), last_synced_at: lastSynced(db) }),
   );
 
   server.registerTool(
     'get_project',
     {
-      description: 'Catch up on one project: its state and its most recent sessions. Call this first when the user wants to continue earlier work.',
+      description: `Catch up on one of the user's software projects: its current state and recent coding sessions. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
       inputSchema: {
         project: z.string().describe('A project key or name, for example "jsonroom" or "github.com/abdulmuhg/jsonroom"'),
         sessions: z.number().int().min(1).max(20).optional().describe('How many recent sessions to include. Default 5.'),
@@ -66,11 +97,11 @@ export function buildMcpServer(db: Db): McpServer {
   server.registerTool(
     'search',
     {
-      description: 'Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match.',
+      description: `Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match. Covers the coding sessions and notes of: ${names}.`,
       inputSchema: {
         query: z.string().describe('Words or "quoted phrases" to look for'),
         project: z.string().optional().describe('Limit to one project (key or name)'),
-        source: z.enum(['claude-code', 'codex', 'antigravity']).optional().describe('Limit to one tool'),
+        source: z.enum(['claude-code', 'codex', 'antigravity', 'note']).optional().describe('Limit to one tool'),
         since: z.string().optional().describe('Earliest date, YYYY-MM-DD'),
         until: z.string().optional().describe('Latest date, YYYY-MM-DD'),
         limit: z.number().int().min(1).max(50).optional().describe('Maximum results. Default 10.'),
@@ -105,13 +136,37 @@ export function buildMcpServer(db: Db): McpServer {
     },
   );
 
+  // Only a caller whose grant allows saving gets the tool at all, so an unauthorised
+  // call is refused by the server as an unknown tool rather than by a check inside it.
+  if (caller.canSave) {
+    server.registerTool(
+      'save_note',
+      {
+        description: `Save a short note into one of the user's existing projects, so it is there in later sessions in any tool. Use only when the user asks to save, remember or record something for a project. Never include passwords, keys, card numbers or phone numbers. Projects: ${names}.`,
+        inputSchema: {
+          project: z.string().describe('An existing project key or name. A note never creates a project.'),
+          title: z.string().describe('A short line naming what this note is about'),
+          text: z.string().describe('The note itself'),
+        },
+      },
+      async ({ project, title, text }) => {
+        const result = saveNote(db, { project, title, text }, new Date().toISOString());
+        if (!result.ok) {
+          if (result.error === 'unknown_project') return unknownProject(project, result.candidates);
+          return fail(result.message);
+        }
+        return ok({ saved: true, session_id: result.session_id, project: result.project, duplicate: result.duplicate });
+      },
+    );
+  }
+
   return server;
 }
 
 /** Stateless: a fresh server and transport per request, closed when the response ends. */
 export function handleMcp(db: Db): NonNullable<AppDeps['mcp']> {
-  return async (req, res, body) => {
-    const server = buildMcpServer(db);
+  return async (req, res, body, caller) => {
+    const server = buildMcpServer(db, caller);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       void transport.close();

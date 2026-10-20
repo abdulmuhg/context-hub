@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { gzipSync } from 'node:zlib';
 import { openDb, type Db } from '../src/db.js';
-import { MAX_BODY } from '../src/http.js';
+import { MAX_BODY, send } from '../src/http.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import { createGrant, issueTokens, listGrants } from '../src/oauth/store.js';
 import { createToken, revokeToken } from '../src/tokens.js';
@@ -267,6 +267,44 @@ describe('the bare address', () => {
     expect((await call('HEAD', '/')).status).toBe(200);
     expect((await call('GET', '/index.html')).status).toBe(404);
     expect((await call('POST', '/')).status).toBe(404);
+  });
+});
+
+describe('the caller passed to the MCP handler', () => {
+  const OAUTH = { publicUrl: 'https://hub.test' };
+  let cUrl: string;
+  let cClose: () => Promise<void>;
+  let callers: { canSave: boolean }[];
+
+  const oauthToken = (scopes: ('hub.read' | 'hub.save')[]): string => {
+    const grantId = createGrant(db, { clientId: 'client-1', clientName: 'Claude', scopes }, NOW.toISOString());
+    return issueTokens(db, grantId, false, NOW.toISOString()).access;
+  };
+
+  const post = (token: string) =>
+    fetch(cUrl + '/mcp', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
+
+  beforeEach(async () => {
+    callers = [];
+    ({ url: cUrl, close: cClose } = await startServer({
+      db,
+      now: () => NOW,
+      oauth: OAUTH,
+      mcp: async (_req, res, _body, caller) => {
+        callers.push(caller);
+        send(res, 200, { ok: true });
+      },
+    }));
+  });
+  afterEach(async () => {
+    await cClose();
+  });
+
+  it('an OAuth grant with hub.save gets canSave; without it, or with a bearer token, it does not', async () => {
+    expect((await post(oauthToken(['hub.read', 'hub.save']))).status).toBe(200);
+    expect((await post(oauthToken(['hub.read']))).status).toBe(200);
+    expect((await post(read)).status).toBe(200);
+    expect(callers).toEqual([{ canSave: true }, { canSave: false }, { canSave: false }]);
   });
 });
 

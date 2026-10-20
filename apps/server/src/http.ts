@@ -7,7 +7,8 @@ import { deleteProject, deleteSession, status, upsertSession } from './store.js'
 import { resourceUrl, type OAuthConfig } from './oauth/config.js';
 import { handleOAuth } from './oauth/routes.js';
 import { createConnectCode, touchGrant } from './oauth/store.js';
-import { checkCredential, type Scope } from './tokens.js';
+import type { McpCaller } from './mcp.js';
+import { checkCredential, type Credential, type Scope } from './tokens.js';
 import { HttpError, parseSession } from './validate.js';
 
 export const MAX_BODY = 20 * 1024 * 1024;
@@ -22,7 +23,7 @@ export interface AppDeps {
   /** When set, /mcp 401s carry a WWW-Authenticate challenge and OAuth access tokens are accepted there. */
   oauth?: OAuthConfig;
   /** Handles POST /mcp once the caller is authorised. Wired in main.ts. */
-  mcp?: (req: IncomingMessage, res: ServerResponse, body: unknown) => Promise<void>;
+  mcp?: (req: IncomingMessage, res: ServerResponse, body: unknown, caller: McpCaller) => Promise<void>;
 }
 
 export function send(res: ServerResponse, statusCode: number, body: unknown): void {
@@ -115,8 +116,8 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     res.setHeader('WWW-Authenticate', presented ? `Bearer error="invalid_token", ${metadata}` : `Bearer ${metadata}`);
   };
 
-  /** `mcp` marks the one route that also accepts OAuth access tokens (with hub.read). */
-  const authorise = (req: IncomingMessage, res: ServerResponse, allowed: Scope[], mcp = false): void => {
+  /** `mcp` marks the one route that also accepts OAuth access tokens (with hub.read). Returns the credential it accepted. */
+  const authorise = (req: IncomingMessage, res: ServerResponse, allowed: Scope[], mcp = false): Credential => {
     const unauthorised = (presented: boolean): never => {
       if (mcp) challenge(res, presented);
       throw new HttpError(401, 'A valid token is required');
@@ -132,7 +133,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         if (!mcp || !found.scopes.includes('hub.read')) throw new HttpError(403, 'This token cannot be used here; it needs hub.read on /mcp');
         touchGrant(db, found.grantId, now().toISOString());
       }
-      return;
+      return found;
     }
     // A stale token this hub issued is not a guess: answer 401 with the challenge so the
     // client refreshes, even from a blocked address. On Anthropic's shared addresses a
@@ -203,13 +204,15 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     }
 
     if (path === '/mcp') {
-      authorise(req, res, ['read'], true);
+      const credential = authorise(req, res, ['read'], true);
       if (method !== 'POST') {
         res.setHeader('Allow', 'POST');
         return send(res, 405, { error: 'Only POST is supported on /mcp' });
       }
       if (!deps.mcp) return send(res, 501, { error: 'The lookup tools are not enabled on this server' });
-      return deps.mcp(req, res, await readJson(req));
+      // Saving is an OAuth grant's privilege: a bearer token (read) never gets the tool.
+      const canSave = credential.kind === 'oauth' && credential.scopes.includes('hub.save');
+      return deps.mcp(req, res, await readJson(req), { canSave });
     }
 
     send(res, 404, { error: 'Not found' });
