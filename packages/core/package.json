@@ -1,7 +1,16 @@
 {
   "name": "@context-hub/core",
+  "description": "Shared code for context-hub: session format, secret stripping, personal-data filter",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abdulmuhg/context-hub.git",
+    "directory": "packages/core"
+  },
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  }
 }

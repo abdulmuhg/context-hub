@@ -1,5 +1,12 @@
 {
   "name": "@context-hub/server",
+  "description": "The context-hub server: storage, search, summaries, MCP tools, sign-in and dashboard",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abdulmuhg/context-hub.git",
+    "directory": "apps/server"
+  },
   "version": "0.0.0",
   "private": true,
   "type": "module",

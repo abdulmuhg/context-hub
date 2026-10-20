@@ -1,9 +1,18 @@
 {
   "name": "@context-hub/collector",
+  "description": "The hub command: finds local AI sessions and uploads the projects you choose",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abdulmuhg/context-hub.git",
+    "directory": "apps/collector"
+  },
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": { "hub": "./dist/bin.js" },
+  "bin": {
+    "hub": "./dist/bin.js"
+  },
   "exports": {
     "./sync": "./src/sync.ts",
     "./config": "./src/config.ts"

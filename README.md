@@ -209,18 +209,29 @@ minutes.
 
 ## Host your own hub
 
-You need a Linux server with Docker, a domain name, and an HTTPS reverse
-proxy in front (the reference setup uses Caddy). The hub is one container
-with one SQLite file on a volume.
+You need a Linux server with Docker, a domain name pointing at it, and an
+HTTPS reverse proxy in front. The hub is one container with one SQLite file
+on a volume.
+
+**The quickest route is the [`deploy/`](deploy) folder:** a ready
+`docker-compose.yml` with Caddy (which gets the HTTPS certificate by itself),
+a settings template and a nightly backup script, with step-by-step
+instructions in [`deploy/README.md`](deploy/README.md).
 
 ### Build and run
 
 The repo's `Dockerfile` builds the image and runs the typecheck and the
-whole test suite as part of the build. The reference deployment builds it in
-GitHub Actions (`.github/workflows/deploy.yml`), pushes it to GHCR, and has
-the server pull it; the server never builds.
+whole test suite as part of the build:
 
-A minimal run:
+```bash
+docker build -t context-hub .
+```
+
+The reference deployment builds it in GitHub Actions
+(`.github/workflows/deploy.yml`, which only runs on the original repository),
+pushes it to GHCR, and has the server pull it, so the server never builds.
+
+A minimal run without the `deploy/` folder:
 
 ```bash
 docker run -d --name context-hub \
@@ -228,7 +239,7 @@ docker run -d --name context-hub \
   -e PUBLIC_URL=https://hub.example.com \
   -e ANTHROPIC_API_KEY=sk-ant-... \
   -p 127.0.0.1:3000:3000 \
-  ghcr.io/<you>/context-hub:<tag>
+  context-hub
 ```
 
 Point your HTTPS proxy at port 3000. Keep the container off the public
@@ -320,9 +331,15 @@ pnpm --filter @context-hub/server build
 DATABASE_PATH=./data/hub.sqlite node apps/server/dist/main.js
 ```
 
-Designs and plans are in `docs/superpowers/specs/` and
-`docs/superpowers/plans/`. Start with
-`docs/superpowers/specs/2026-10-10-context-hub-design.md`.
+Designs and plans are in [`docs/superpowers/`](docs/superpowers); see its
+README for how to read them.
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
+the privacy rules every change must keep, and what a pull request needs.
+Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Status
 
@@ -336,3 +353,7 @@ Live at https://hub.abdulmughnialfikri.com, used by its owner. Every push to
 | MCP lookups for Claude Code and other tools | ChatGPT and Gemini sign-in |
 | Sign-in for claude.ai, desktop and mobile; `save_note` | A hub for more than one person |
 | Dashboard, activity log, sync reports, off-site backups | |
+
+## License
+
+[MIT](LICENSE)

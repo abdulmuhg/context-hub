@@ -12,7 +12,7 @@ describe('normalizeRemote', () => {
     expect(normalizeRemote(url)).toBe(key);
   });
 
-  it.each([['jsonroom'], [''], ['C:\\Users\\abdul\\project\\jsonroom'], ['/home/abdul/jsonroom']])(
+  it.each([['jsonroom'], [''], ['C:\\Users\\you\\project\\jsonroom'], ['/home/you/jsonroom']])(
     'returns null for %s',
     (value) => {
       expect(normalizeRemote(value)).toBeNull();

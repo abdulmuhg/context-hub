@@ -4,7 +4,7 @@
 
 **Goal:** Run the context-hub server on the VPS at `https://hub.abdulmughnialfikri.com`, deployed from CI like `job-engine`, with a nightly backup, and connect the collector and one assistant to it.
 
-**Architecture:** Nothing new is designed here. The work follows "Adding another app" in `C:\Users\abdul\project\vps-stack\README.md`, which is the authority; where this plan and that runbook disagree, the runbook wins and this plan is corrected. The app repo gains a `Dockerfile` and a deploy workflow. The `vps-stack` repo gains a compose file, an env example, two Caddy site blocks, a network and a backup script. The server holds one stateful thing for this app: a SQLite file in a Docker volume.
+**Architecture:** Nothing new is designed here. The work follows "Adding another app" in `~/project/vps-stack\README.md`, which is the authority; where this plan and that runbook disagree, the runbook wins and this plan is corrected. The app repo gains a `Dockerfile` and a deploy workflow. The `vps-stack` repo gains a compose file, an env example, two Caddy site blocks, a network and a backup script. The server holds one stateful thing for this app: a SQLite file in a Docker volume.
 
 **Tech Stack:** Docker (multi-stage, `node:22-slim`), GitHub Actions, GHCR, Docker Compose, Caddy 2, cron.
 
@@ -29,7 +29,7 @@ Every step is tagged.
 
 ## Global Constraints
 
-- Two repos are edited: `C:\Users\abdul\project\context-hub` (branch `part4-deploy`) and `C:\Users\abdul\project\vps-stack` (branch `add-context-hub`). Do not commit to `main` in either until the owner says to merge.
+- Two repos are edited: `~/project/context-hub` (branch `part4-deploy`) and `~/project/vps-stack` (branch `add-context-hub`). Do not commit to `main` in either until the owner says to merge.
 - **Commit messages carry no `Co-Authored-By` line and no other attribution trailer**, in both repos.
 - Never commit a real `.env`. `vps-stack`'s `.gitignore` allows only `*.env.example`.
 - Hostnames go in `edge/Caddyfile` in git and are never edited on the server.
@@ -38,7 +38,7 @@ Every step is tagged.
 - Every service has a `mem_limit`. This one: `256m`.
 - Network name: `edge-hub`. Primary hostname: `hub.abdulmughnialfikri.com`. Redirecting hostname: `hub.hanadul.site`.
 - The container listens on port `3000` and stores its database at `/data/hub.sqlite`.
-- Both DNS records must resolve to `43.153.206.230` **before** Caddy is recreated. A failed certificate challenge can lock the hostname out for a week.
+- Both DNS records must resolve to `<server-ip>` **before** Caddy is recreated. A failed certificate challenge can lock the hostname out for a week.
 - After any Caddyfile change the Caddy container is **recreated**, not reloaded (the runbook explains why a reload silently keeps the old file).
 - Ask before anything destructive. Nothing in this plan needs `docker compose down -v`; do not run it.
 - Never claim the deploy worked without the full verification list in Task 9.
@@ -58,13 +58,13 @@ Every step is tagged.
 ### Task 1: Dockerfile [agent]
 
 **Files:**
-- Create: `C:\Users\abdul\project\context-hub\Dockerfile`
-- Create: `C:\Users\abdul\project\context-hub\.dockerignore`
+- Create: `~/project/context-hub\Dockerfile`
+- Create: `~/project/context-hub\.dockerignore`
 
 - [ ] **Step 1: Create the branch**
 
 ```bash
-cd /c/Users/abdul/project/context-hub
+cd ~/project/context-hub
 git checkout -b part4-deploy
 ```
 
@@ -209,7 +209,7 @@ git commit -m "Add Dockerfile for the server"
 ### Task 2: Deploy workflow [agent]
 
 **Files:**
-- Create: `C:\Users\abdul\project\context-hub\.github\workflows\deploy.yml`
+- Create: `~/project/context-hub\.github\workflows\deploy.yml`
 
 - [ ] **Step 1: Write the workflow**
 
@@ -303,15 +303,15 @@ git commit -m "Add deploy workflow, manual trigger only"
 ### Task 3: Compose file, env example, network and Caddy [agent]
 
 **Files:**
-- Create: `C:\Users\abdul\project\vps-stack\context-hub\docker-compose.yml`
-- Create: `C:\Users\abdul\project\vps-stack\context-hub\.env.example`
-- Modify: `C:\Users\abdul\project\vps-stack\edge\docker-compose.yml`
-- Modify: `C:\Users\abdul\project\vps-stack\edge\Caddyfile`
+- Create: `~/project/vps-stack\context-hub\docker-compose.yml`
+- Create: `~/project/vps-stack\context-hub\.env.example`
+- Modify: `~/project/vps-stack\edge\docker-compose.yml`
+- Modify: `~/project/vps-stack\edge\Caddyfile`
 
 - [ ] **Step 1: Create the branch**
 
 ```bash
-cd /c/Users/abdul/project/vps-stack
+cd ~/project/vps-stack
 git status --short        # must print nothing; if it does, stop and ask the owner
 git checkout -b add-context-hub
 ```
@@ -448,7 +448,7 @@ hub.hanadul.site {
 - [ ] **Step 6: Check both compose files parse**
 
 ```bash
-cd /c/Users/abdul/project/vps-stack
+cd ~/project/vps-stack
 IMAGE_TAG=sha-test docker compose -f context-hub/docker-compose.yml --env-file context-hub/.env.example config --quiet && echo "context-hub compose: ok"
 docker compose -f edge/docker-compose.yml config --quiet && echo "edge compose: ok"
 docker run --rm -v "$(pwd)/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -468,7 +468,7 @@ git commit -m "Add context-hub: compose file, env example, network and hostnames
 ### Task 4: Backup script [agent]
 
 **Files:**
-- Create: `C:\Users\abdul\project\vps-stack\scripts\backup-context-hub.sh`
+- Create: `~/project/vps-stack\scripts\backup-context-hub.sh`
 
 - [ ] **Step 1: Write the script**
 
@@ -543,7 +543,7 @@ echo "pruned local backups older than ${RETENTION_DAYS} days"
 - [ ] **Step 2: Mark it executable in git and check its syntax**
 
 ```bash
-cd /c/Users/abdul/project/vps-stack
+cd ~/project/vps-stack
 bash -n scripts/backup-context-hub.sh && echo "syntax: ok"
 git add scripts/backup-context-hub.sh
 git update-index --chmod=+x scripts/backup-context-hub.sh
@@ -557,7 +557,7 @@ Expected: `syntax: ok`, and both scripts listed with mode `100755`. If `backup-n
 This proves the script end to end without touching the server. It needs the `context-hub:local` image from Task 1; skip this step if that build was skipped.
 
 ```bash
-cd /c/Users/abdul/project/vps-stack
+cd ~/project/vps-stack
 TMP="$(mktemp -d)"
 mkdir -p "${TMP}/context-hub"
 cat > "${TMP}/context-hub/docker-compose.yml" <<'EOF'
@@ -591,8 +591,8 @@ git commit -m "Add nightly backup script for context-hub"
 ### Task 5: Update the runbook [agent]
 
 **Files:**
-- Modify: `C:\Users\abdul\project\vps-stack\README.md`
-- Modify: `C:\Users\abdul\project\vps-stack\CLAUDE.md`
+- Modify: `~/project/vps-stack\README.md`
+- Modify: `~/project/vps-stack\CLAUDE.md`
 
 The runbook says `README.md` wins and that both files must stay correct. Make these edits; keep the existing wording style.
 
@@ -660,7 +660,7 @@ A token is shown once. `ingest` is for the collector, `read` for an assistant.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /c/Users/abdul/project/vps-stack
+cd ~/project/vps-stack
 git add README.md CLAUDE.md
 git commit -m "Document context-hub in the runbook"
 ```
@@ -680,7 +680,7 @@ Work through these in order. Each is verifiable before the next depends on it.
 Twenty-three early commits on `main` carry `Co-Authored-By` lines. They are local only until the first push. To remove them, the owner runs this once, on `main`, before Step 2:
 
 ```bash
-cd /c/Users/abdul/project/context-hub
+cd ~/project/context-hub
 git checkout main
 FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --msg-filter "sed '/^Co-Authored-By:/d'" -- --all
 git log --format=%B | grep -c "^Co-Authored-By:"     # expect 0
@@ -691,7 +691,7 @@ This rewrites every commit hash, which is harmless before the first push and mus
 - [ ] **Step 2 [agent, after go-ahead]: Merge the deploy branch and create the private repository**
 
 ```bash
-cd /c/Users/abdul/project/context-hub
+cd ~/project/context-hub
 git checkout main && git merge --ff-only part4-deploy
 gh repo create abdulmuhg/context-hub --private --source . --remote origin --push
 gh repo view abdulmuhg/context-hub --json visibility,defaultBranchRef --jq '.visibility, .defaultBranchRef.name'
@@ -704,7 +704,7 @@ Expected: `PRIVATE` and `main`. If Step 1 was run after branches were created, r
 The owner runs these. The third reads the private deploy key from disk straight into GitHub; nothing is printed.
 
 ```bash
-gh secret set SSH_HOST --repo abdulmuhg/context-hub --body "43.153.206.230"
+gh secret set SSH_HOST --repo abdulmuhg/context-hub --body "<server-ip>"
 gh secret set SSH_USER --repo abdulmuhg/context-hub --body "ubuntu"
 gh secret set SSH_KEY  --repo abdulmuhg/context-hub < "$USERPROFILE/.ssh/vps_deploy"
 gh secret list --repo abdulmuhg/context-hub
@@ -716,7 +716,7 @@ Expected: three names listed. The same deploy key serves every repo; do not crea
 
 - [ ] **Step 1 [owner]: Create both DNS records**
 
-At each domain's registrar, add an `A` record for `hub` pointing to `43.153.206.230`: one on `abdulmughnialfikri.com`, one on `hanadul.site`.
+At each domain's registrar, add an `A` record for `hub` pointing to `<server-ip>`: one on `abdulmughnialfikri.com`, one on `hanadul.site`.
 
 - [ ] **Step 2 [agent]: Confirm both resolve before going further**
 
@@ -725,19 +725,19 @@ nslookup hub.abdulmughnialfikri.com 1.1.1.1
 nslookup hub.hanadul.site 1.1.1.1
 ```
 
-Expected: each answers `43.153.206.230`. If either does not, stop. Do not continue to Step 5 until both do; a failed certificate challenge can cost a week.
+Expected: each answers `<server-ip>`. If either does not, stop. Do not continue to Step 5 until both do; a failed certificate challenge can cost a week.
 
 - [ ] **Step 3 [agent, after go-ahead]: Publish the `vps-stack` changes**
 
 ```bash
-cd /c/Users/abdul/project/vps-stack
+cd ~/project/vps-stack
 git checkout main && git merge --ff-only add-context-hub && git push
 ```
 
 - [ ] **Step 4 [agent, after go-ahead]: Create the network and pull the config on the server**
 
 ```bash
-ssh ubuntu@43.153.206.230 'docker network create edge-hub && cd /opt/stack && git pull --ff-only && ls context-hub'
+ssh ubuntu@<server-ip> 'docker network create edge-hub && cd /opt/stack && git pull --ff-only && ls context-hub'
 ```
 
 Expected: a network id, a fast-forward, and `docker-compose.yml` listed.
@@ -747,7 +747,7 @@ Expected: a network id, a fast-forward, and `docker-compose.yml` listed.
 The owner does this over SSH, in a real terminal:
 
 ```bash
-ssh ubuntu@43.153.206.230
+ssh ubuntu@<server-ip>
 cd /opt/stack/context-hub
 cp .env.example .env && chmod 600 .env
 nano .env        # paste the Anthropic API key; leave IMAGE_TAG as it is
@@ -758,13 +758,13 @@ Save the key in a password manager as well. To go live without digests first, le
 - [ ] **Step 6 [agent, after go-ahead]: Recreate Caddy so it joins the new network and loads the new hostnames**
 
 ```bash
-ssh ubuntu@43.153.206.230 'cd /opt/stack && docker compose -f edge/docker-compose.yml up -d --force-recreate caddy && sleep 5 && docker compose -f edge/docker-compose.yml exec -T caddy cat /etc/caddy/Caddyfile | grep -c "hub.abdulmughnialfikri.com"'
+ssh ubuntu@<server-ip> 'cd /opt/stack && docker compose -f edge/docker-compose.yml up -d --force-recreate caddy && sleep 5 && docker compose -f edge/docker-compose.yml exec -T caddy cat /etc/caddy/Caddyfile | grep -c "hub.abdulmughnialfikri.com"'
 ```
 
 Expected: `1`. Recreating drops the other two sites for a few seconds; say so before running it. Then watch certificates being issued:
 
 ```bash
-ssh ubuntu@43.153.206.230 'cd /opt/stack && docker compose -f edge/docker-compose.yml logs --since 2m caddy | grep -i -E "certificate obtained|error" | tail -20'
+ssh ubuntu@<server-ip> 'cd /opt/stack && docker compose -f edge/docker-compose.yml logs --since 2m caddy | grep -i -E "certificate obtained|error" | tail -20'
 ```
 
 Expected: `certificate obtained successfully` for both new hostnames and no errors. Until Task 8 deploys the app, `https://hub.abdulmughnialfikri.com` answers 502; that is expected.
@@ -795,7 +795,7 @@ Expected: both jobs green. If `build` fails, the cause is in the Dockerfile or a
 - [ ] **Step 1 [agent]: The runbook's four checks**
 
 ```bash
-ssh ubuntu@43.153.206.230 "docker ps --format 'table {{.Names}}\t{{.Status}}' && grep '^IMAGE_TAG=' /opt/stack/context-hub/.env"
+ssh ubuntu@<server-ip> "docker ps --format 'table {{.Names}}\t{{.Status}}' && grep '^IMAGE_TAG=' /opt/stack/context-hub/.env"
 curl -s https://hub.abdulmughnialfikri.com/healthz
 curl -s -o /dev/null -w '%{http_code}\n' https://hub.abdulmughnialfikri.com/api/status
 ```
@@ -823,13 +823,13 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer chub_wrong" h
 Expected: `429`. That proves the limiter counted this PC's real address, so Caddy discarded the forged header. If it prints `401`, the forged header reached the app: stop and fix the Caddy site block with `header_up X-Forwarded-For {remote_host}` inside `reverse_proxy`, recreate Caddy, and repeat. Note that this PC's address is now blocked for 15 minutes; wait before Task 10, or restart the container to clear it:
 
 ```bash
-ssh ubuntu@43.153.206.230 'cd /opt/stack/context-hub && docker compose restart context-hub'
+ssh ubuntu@<server-ip> 'cd /opt/stack/context-hub && docker compose restart context-hub'
 ```
 
 - [ ] **Step 4 [agent]: The log shows the expected start-up lines**
 
 ```bash
-ssh ubuntu@43.153.206.230 'cd /opt/stack/context-hub && docker compose logs --tail 20 context-hub'
+ssh ubuntu@<server-ip> 'cd /opt/stack/context-hub && docker compose logs --tail 20 context-hub'
 ```
 
 Expected: `context-hub listening on :3000, database /data/hub.sqlite`, and either `digests: on, model claude-haiku-5-5, effort low` or `digests: off…`, matching what the owner put in `.env`. No stack traces.
@@ -843,7 +843,7 @@ In `vps-stack/README.md`, change the "Current state" row from `planned:` to the 
 - [ ] **Step 1 [agent, after go-ahead]: Run the script once and look at the result**
 
 ```bash
-ssh ubuntu@43.153.206.230 '/opt/stack/scripts/backup-context-hub.sh && ls -lh /opt/stack/backups/ | grep context-hub'
+ssh ubuntu@<server-ip> '/opt/stack/scripts/backup-context-hub.sh && ls -lh /opt/stack/backups/ | grep context-hub'
 ```
 
 Expected: `wrote …`, and a non-empty `context-hub-<stamp>.sqlite.gz`.
@@ -853,7 +853,7 @@ Expected: `wrote …`, and a non-empty `context-hub-<stamp>.sqlite.gz`.
 A backup nobody has opened is not a backup. This restores into a throwaway container, not the live volume:
 
 ```bash
-ssh ubuntu@43.153.206.230 'cd /opt/stack && F=$(ls -t backups/context-hub-*.sqlite.gz | head -1) && gunzip -c "$F" > /tmp/restore-check.sqlite && docker run --rm -v /tmp/restore-check.sqlite:/check.sqlite:ro --entrypoint node ghcr.io/abdulmuhg/context-hub:$(grep "^IMAGE_TAG=" context-hub/.env | cut -d= -f2) -e "import(\"better-sqlite3\").then((m)=>{const d=new m.default(\"/check.sqlite\",{readonly:true});console.log(d.pragma(\"integrity_check\",{simple:true}), d.pragma(\"user_version\",{simple:true}))})"; rm -f /tmp/restore-check.sqlite'
+ssh ubuntu@<server-ip> 'cd /opt/stack && F=$(ls -t backups/context-hub-*.sqlite.gz | head -1) && gunzip -c "$F" > /tmp/restore-check.sqlite && docker run --rm -v /tmp/restore-check.sqlite:/check.sqlite:ro --entrypoint node ghcr.io/abdulmuhg/context-hub:$(grep "^IMAGE_TAG=" context-hub/.env | cut -d= -f2) -e "import(\"better-sqlite3\").then((m)=>{const d=new m.default(\"/check.sqlite\",{readonly:true});console.log(d.pragma(\"integrity_check\",{simple:true}), d.pragma(\"user_version\",{simple:true}))})"; rm -f /tmp/restore-check.sqlite'
 ```
 
 Expected: `ok 3` (integrity check passed, schema version 3).
@@ -861,7 +861,7 @@ Expected: `ok 3` (integrity check passed, schema version 3).
 - [ ] **Step 3 [agent, after go-ahead]: Schedule it nightly**
 
 ```bash
-ssh ubuntu@43.153.206.230 '(crontab -l 2>/dev/null; echo "30 3 * * * /opt/stack/scripts/backup-context-hub.sh >> /opt/stack/backups/backup.log 2>&1") | crontab - && crontab -l'
+ssh ubuntu@<server-ip> '(crontab -l 2>/dev/null; echo "30 3 * * * /opt/stack/scripts/backup-context-hub.sh >> /opt/stack/backups/backup.log 2>&1") | crontab - && crontab -l'
 ```
 
 Expected: both the n8n line (03:15) and the new line (03:30) listed, each once.
@@ -873,7 +873,7 @@ Expected: both the n8n line (03:15) and the new line (03:30) listed, each once.
 The owner runs these on the server and copies each token as it is shown. It is shown once.
 
 ```bash
-ssh ubuntu@43.153.206.230
+ssh ubuntu@<server-ip>
 cd /opt/stack/context-hub
 docker compose exec context-hub node /app/dist/admin-bin.js token create --label collector-pc --scope ingest
 docker compose exec context-hub node /app/dist/admin-bin.js token create --label claude-code-pc --scope read
@@ -882,7 +882,7 @@ docker compose exec context-hub node /app/dist/admin-bin.js token create --label
 - [ ] **Step 2 [agent, after go-ahead]: Install the `hub` command on this PC**
 
 ```bash
-cd /c/Users/abdul/project/context-hub
+cd ~/project/context-hub
 pnpm --filter @context-hub/collector build
 cd apps/collector && pnpm link --global
 hub projects | head -5
@@ -920,7 +920,7 @@ Expected: `Uploaded N sessions`, and `hub status` showing the same number of ses
 - [ ] **Step 6 [agent, after go-ahead]: Check the first real digests (Review Focus 5)**
 
 ```bash
-ssh ubuntu@43.153.206.230 'cd /opt/stack/context-hub && sleep 30 && docker compose exec -T context-hub node /app/dist/admin-bin.js digests && docker compose logs --tail 30 context-hub | grep -i -E "digest|state"'
+ssh ubuntu@<server-ip> 'cd /opt/stack/context-hub && sleep 30 && docker compose exec -T context-hub node /app/dist/admin-bin.js digests && docker compose logs --tail 30 context-hub | grep -i -E "digest|state"'
 ```
 
 Expected: `ok` counts rising, `failed: 0`, `refused: 0`. If every digest failed with the same error, the model call is being rejected. Read the error in the output, fix it in `apps/server/src/llm-anthropic.ts` on a branch with a test, deploy, and run `hub-admin redigest <project>`. Do not track more projects until one digest has succeeded.
@@ -950,7 +950,7 @@ This is the backfill. Sessions are digested one at a time, oldest first.
 - [ ] **Step 10 [owner, optional]: Install the slash command**
 
 ```bash
-cp /c/Users/abdul/project/context-hub/integrations/claude-code/hub-sync.md ~/.claude/commands/
+cp ~/project/context-hub/integrations/claude-code/hub-sync.md ~/.claude/commands/
 ```
 
 ### Task 12: Turn on automatic deploys
@@ -959,7 +959,7 @@ Only now, with one green manual run and everything in Task 9 verified.
 
 - [ ] **Step 1 [agent, after go-ahead]: Add the push trigger**
 
-In `C:\Users\abdul\project\context-hub\.github\workflows\deploy.yml`, replace the `on:` block and its comment with:
+In `~/project/context-hub\.github\workflows\deploy.yml`, replace the `on:` block and its comment with:
 
 ```yaml
 # Every commit to main deploys. Enabled after a manual dispatch went green
@@ -972,7 +972,7 @@ on:
 ```
 
 ```bash
-cd /c/Users/abdul/project/context-hub
+cd ~/project/context-hub
 git add .github/workflows/deploy.yml
 git commit -m "Deploy on every push to main"
 git push
@@ -992,7 +992,7 @@ Replace the `## Status` paragraph in `README.md` with: `All four parts are built
 The same as every app on this server:
 
 ```bash
-ssh ubuntu@43.153.206.230
+ssh ubuntu@<server-ip>
 cd /opt/stack/context-hub
 sed -i 's|^IMAGE_TAG=.*|IMAGE_TAG=sha-<previous>|' .env
 docker compose pull && docker compose up -d

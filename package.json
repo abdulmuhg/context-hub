@@ -1,5 +1,11 @@
 {
   "name": "context-hub",
+  "description": "One private place for your AI-assistant history, so any assistant can pick up where the last one stopped",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abdulmuhg/context-hub.git"
+  },
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.17.0",

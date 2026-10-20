@@ -2,3 +2,8 @@ node_modules/
 dist/
 .superpowers/
 data/
+# Real settings and secrets, never committed. The examples are.
+.env
+.env.*
+!.env.example
+deploy/backups/

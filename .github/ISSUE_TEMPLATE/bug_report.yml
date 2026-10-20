@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems go in a private report instead** (Security tab > Report a vulnerability).
+        Please remove any tokens, codes, session text or personal details from what you paste.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `hub sync`
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part
+      options:
+        - The hub command (collector)
+        - The hub server
+        - The dashboard
+        - Claude apps sign-in or MCP tools
+        - Install script
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Operating system and Node version
+      placeholder: macOS 26, Node 22.17
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or logs
+      description: Error messages or log lines, with secrets removed.
+      render: text

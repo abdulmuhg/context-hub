@@ -1,0 +1,48 @@
+# A complete single-server context-hub: the hub and Caddy for HTTPS.
+# See deploy/README.md. Copy this folder to the server, fill in .env and the
+# Caddyfile, then: docker compose up -d
+services:
+  context-hub:
+    # Build it yourself (`docker build -t context-hub .` in the repository) or
+    # use an image your CI pushes. Pin a tag; avoid :latest on a server.
+    image: ${HUB_IMAGE:?set HUB_IMAGE in .env}
+    restart: unless-stopped
+    # Not published to the host: only Caddy reaches it.
+    expose:
+      - "3000"
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+      DATABASE_PATH: /data/hub.sqlite
+    volumes:
+      # The hub's only state: one SQLite file. Back it up with backup.sh.
+      - hub_data:/data
+      # Read-only, and only the status folder: backup.sh writes one JSON file
+      # here about its last run, which the dashboard shows.
+      - ./backups/status:/backup-status:ro
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - context-hub
+
+volumes:
+  hub_data:
+  caddy_data:
+  caddy_config:

@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   build:
+    # Forks inherit this workflow but have no server or secrets: deploy only from the owner's repository.
+    if: github.repository == 'abdulmuhg/context-hub'
     runs-on: ubuntu-latest
     permissions:
       contents: read

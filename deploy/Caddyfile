@@ -1,0 +1,24 @@
+# Replace hub.example.com with your hub's address. Its DNS must point at this
+# server before Caddy starts, so Caddy can get the HTTPS certificate.
+hub.example.com {
+	# No `encode gzip`: the MCP endpoint streams server-sent events, and the
+	# upload endpoint already receives gzip from the hub command.
+
+	# Uploading a long session can take a while on a slow link.
+	reverse_proxy context-hub:3000 {
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# `?` sets a header only when the hub has not set it. The dashboard sends its
+	# own Referrer-Policy (same-origin): with no-referrer, browsers send
+	# `Origin: null` on form posts and the dashboard refuses sign-in.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		?X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		?Referrer-Policy "same-origin"
+	}
+}
