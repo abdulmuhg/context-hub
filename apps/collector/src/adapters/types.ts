@@ -23,7 +23,10 @@ export interface RawSession {
   account_id: string | null;
   parent: string | null;
   title: string | null;
+  /** The folder used most (see `cwds`). Uploaded as the session's folder. */
   cwd: string | null;
+  /** The folder of every record, in order. The project is decided by vote over these. */
+  cwds: string[];
   git_branch: string | null;
   remote_hint: string | null;
   path_hints: string[];
@@ -52,6 +55,7 @@ export function emptyRaw(file: SessionFile): RawSession {
     parent: file.parent,
     title: null,
     cwd: null,
+    cwds: [],
     git_branch: null,
     remote_hint: null,
     path_hints: [],
@@ -69,4 +73,27 @@ export function readLines(path: string): string[] {
 export function pushText(raw: RawSession, role: 'user' | 'assistant', ts: string | null, text: string): void {
   if (text.trim() === '') return;
   raw.messages.push({ seq: raw.messages.length, role, kind: 'text', ts, text });
+}
+
+/** Note the folder one record ran in. */
+export function recordCwd(raw: RawSession, cwd: unknown): void {
+  if (typeof cwd === 'string' && cwd !== '') raw.cwds.push(cwd);
+}
+
+/** The folder used most; on a tie, the one used last. */
+export function mostUsed(paths: readonly string[]): string | null {
+  const seen = new Map<string, { count: number; last: number }>();
+  paths.forEach((p, i) => {
+    const s = seen.get(p) ?? { count: 0, last: 0 };
+    seen.set(p, { count: s.count + 1, last: i });
+  });
+  let best: string | null = null;
+  let bestScore = { count: 0, last: -1 };
+  for (const [p, s] of seen) {
+    if (s.count > bestScore.count || (s.count === bestScore.count && s.last > bestScore.last)) {
+      best = p;
+      bestScore = s;
+    }
+  }
+  return best;
 }

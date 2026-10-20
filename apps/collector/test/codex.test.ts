@@ -56,6 +56,16 @@ describe('codex.read', () => {
     expect(raw.cwd).toBe('/work/other');
   });
 
+  it('records the folder of every turn and reports the one used most', () => {
+    const raw = read([
+      wrap('session_meta', { id: UUID, cwd: '/scratch' }),
+      wrap('turn_context', { cwd: '/work/demo' }),
+      wrap('turn_context', { cwd: '/work/demo' }),
+    ]);
+    expect(raw.cwds).toEqual(['/scratch', '/work/demo', '/work/demo']);
+    expect(raw.cwd).toBe('/work/demo');
+  });
+
   // Review Focus 2
   it('reads each turn once although event_msg repeats it', () => {
     const raw = read([

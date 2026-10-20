@@ -52,6 +52,51 @@ describe('resolveProjectKey', () => {
     expect(resolveProjectKey(input, deps({}))).toBe('github.com/abdulmuhg/harmonize');
   });
 
+  describe('when a session ran in more than one folder', () => {
+    const d = deps(
+      {
+        '/work/hub': { remote: 'git@github.com:abdulmuhg/context-hub.git', top: '/work/hub' },
+        'C:\\work\\hub': { remote: 'git@github.com:abdulmuhg/context-hub.git', top: 'C:\\work\\hub' },
+        '/work/jsonroom': { remote: 'git@github.com:abdulmuhg/jsonroom.git', top: '/work/jsonroom' },
+      },
+      ['/scratch/abc'],
+    );
+    const at = (...cwds: string[]) => ({ ...none, cwd: cwds[0] ?? null, cwds });
+
+    it('files it under the project where most of the work happened, not the first folder', () => {
+      const input = at('/scratch/abc', '/work/hub', '/work/hub', '/work/jsonroom', '/work/hub');
+      expect(resolveProjectKey(input, d)).toBe('github.com/abdulmuhg/context-hub');
+    });
+
+    it('keeps the majority when the session moves to another project late on', () => {
+      const input = at('/work/hub', '/work/hub', '/work/hub', '/work/jsonroom', '/work/jsonroom');
+      expect(resolveProjectKey(input, d)).toBe('github.com/abdulmuhg/context-hub');
+    });
+
+    it('breaks a tie in favour of the folder used last', () => {
+      expect(resolveProjectKey(at('/work/hub', '/work/jsonroom'), d)).toBe('github.com/abdulmuhg/jsonroom');
+      expect(resolveProjectKey(at('/work/jsonroom', '/work/hub'), d)).toBe('github.com/abdulmuhg/context-hub');
+    });
+
+    it('counts two spellings of the same repo together', () => {
+      const input = at('/work/jsonroom', '/work/jsonroom', '/work/hub', 'C:\\work\\hub');
+      // 2 jsonroom against 1 + 1 context-hub: a tie, so the later folder wins.
+      expect(resolveProjectKey(input, d)).toBe('github.com/abdulmuhg/context-hub');
+    });
+
+    it('still prefers a remote hint recorded by the tool', () => {
+      const input = { ...at('/work/hub', '/work/hub'), remoteHint: 'https://github.com/abdulmuhg/harmonize.git' };
+      expect(resolveProjectKey(input, d)).toBe('github.com/abdulmuhg/harmonize');
+    });
+
+    it('lets a hub assign override the vote', () => {
+      const voted = resolveProjectKey(at('/work/hub', '/work/hub', '/work/jsonroom'), d);
+      expect(voted).toBe('github.com/abdulmuhg/context-hub');
+      const overrides = { aliases: {}, assignments: { 'claude-code:s1': 'github.com/abdulmuhg/jsonroom' } };
+      expect(applyOverrides(voted, 'claude-code:s1', overrides)).toBe('github.com/abdulmuhg/jsonroom');
+    });
+  });
+
   it('returns unfiled when there is no folder and no hint', () => {
     expect(resolveProjectKey(none, deps({}))).toBe('unfiled');
   });

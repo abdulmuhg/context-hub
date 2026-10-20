@@ -10,6 +10,12 @@ export interface ResolveDeps {
 
 export interface ResolveInput {
   cwd: string | null;
+  /**
+   * The folder of every record, in order. When given, the project is decided
+   * by vote over these rather than by `cwd` alone, so a session that starts in
+   * a scratch folder and does its work in a repo is filed under the repo.
+   */
+  cwds?: readonly string[];
   /** A remote URL the tool itself recorded, if any. */
   remoteHint: string | null;
   /** Absolute paths seen in tool calls, used when there is no cwd. */
@@ -57,15 +63,47 @@ function repoKeyForHint(hint: string, deps: ResolveDeps): string | null {
   return keyForExistingDir(dir, deps.git);
 }
 
+function keyForCwd(cwd: string, deps: ResolveDeps): string {
+  if (!deps.exists(cwd)) return `local:${baseName(cwd)}`;
+  return keyForExistingDir(cwd, deps.git);
+}
+
+/**
+ * The project with the most records. Folders are resolved first, so two
+ * spellings of one repo, or a repo and its subfolder, count together. On a
+ * tie the project worked in last wins, as the better guess at where the work
+ * went.
+ */
+function votedKey(cwds: readonly string[], deps: ResolveDeps): string {
+  const keyOf = new Map<string, string>();
+  const votes = new Map<string, { count: number; last: number }>();
+  cwds.forEach((cwd, i) => {
+    let key = keyOf.get(cwd);
+    if (key === undefined) {
+      key = keyForCwd(cwd, deps);
+      keyOf.set(cwd, key);
+    }
+    const v = votes.get(key) ?? { count: 0, last: 0 };
+    votes.set(key, { count: v.count + 1, last: i });
+  });
+  let best = '';
+  let score = { count: 0, last: -1 };
+  for (const [key, v] of votes) {
+    if (v.count > score.count || (v.count === score.count && v.last > score.last)) {
+      best = key;
+      score = v;
+    }
+  }
+  return best;
+}
+
 export function resolveProjectKey(input: ResolveInput, deps: ResolveDeps): string {
   if (input.remoteHint) {
     const hinted = normalizeRemote(input.remoteHint);
     if (hinted) return hinted;
   }
-  if (input.cwd) {
-    if (!deps.exists(input.cwd)) return `local:${baseName(input.cwd)}`;
-    return keyForExistingDir(input.cwd, deps.git);
-  }
+  if (input.cwds && input.cwds.length > 0) return votedKey(input.cwds, deps);
+  if (input.cwd) return keyForCwd(input.cwd, deps);
   const votes = new Map<string, number>();
   for (const hint of input.pathHints) {
     const key = repoKeyForHint(hint, deps);

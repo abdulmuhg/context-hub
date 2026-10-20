@@ -114,8 +114,9 @@ export function saveToken(dir: string, token: string): void {
  *
  * 1: first release
  * 2: account id read from bridge-session records; hub tokens stripped
+ * 3: project decided by vote over every folder a session ran in, not the first
  */
-export const COLLECTOR_REVISION = 2;
+export const COLLECTOR_REVISION = 3;
 
 /** Covers everything that changes what a session looks like when uploaded. */
 export function settingsFingerprint(cfg: Config, entries: PersonalEntry[], revision: number = COLLECTOR_REVISION): string {

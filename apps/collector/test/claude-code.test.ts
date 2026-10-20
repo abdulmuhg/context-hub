@@ -64,6 +64,16 @@ describe('claudeCode.read', () => {
     ]);
   });
 
+  it('records the folder of every message and reports the one used most', () => {
+    const raw = read([
+      rec('user', 'start', { cwd: 'C:\\scratch' }),
+      rec('assistant', [{ type: 'text', text: 'ok' }], { cwd: 'C:\\work\\demo' }),
+      rec('user', 'next', { cwd: 'C:\\work\\demo' }),
+    ]);
+    expect(raw.cwds).toEqual(['C:\\scratch', 'C:\\work\\demo', 'C:\\work\\demo']);
+    expect(raw.cwd).toBe('C:\\work\\demo');
+  });
+
   it('pairs a tool call with its result and marks errors', () => {
     const raw = read([
       rec('assistant', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'pnpm test' } }]),

@@ -108,7 +108,7 @@ function scan(opts: Pick<SyncOptions, 'home' | 'hubDir' | 'adapters' | 'git' | '
       } else {
         raw = read(file);
         const resolved = resolveProjectKey(
-          { cwd: raw.cwd, remoteHint: raw.remote_hint, pathHints: raw.path_hints },
+          { cwd: raw.cwd, cwds: raw.cwds, remoteHint: raw.remote_hint, pathHints: raw.path_hints },
           deps,
         );
         projectKey = applyOverrides(resolved, sessionKey, cfg);

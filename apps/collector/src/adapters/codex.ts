@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ToolCallMessage } from '@context-hub/core';
-import { emptyRaw, pushText, readLines, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
+import { emptyRaw, mostUsed, pushText, readLines, recordCwd, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
 
 const UUID_AT_END = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
@@ -118,12 +118,12 @@ function read(file: SessionFile): RawSession {
     const { kind, body, ts } = classify(r);
     switch (kind) {
       case 'session_meta':
-        raw.cwd ??= typeof body.cwd === 'string' ? body.cwd : null;
+        recordCwd(raw, body.cwd);
         if (typeof body.git?.repository_url === 'string') raw.remote_hint = body.git.repository_url;
         if (typeof body.git?.branch === 'string') raw.git_branch = body.git.branch;
         break;
       case 'turn_context':
-        raw.cwd ??= typeof body.cwd === 'string' ? body.cwd : null;
+        recordCwd(raw, body.cwd);
         break;
       case 'response_item':
         item(body, ts);
@@ -135,6 +135,7 @@ function read(file: SessionFile): RawSession {
         raw.warnings.unknown_records++;
     }
   }
+  raw.cwd = mostUsed(raw.cwds);
   return raw;
 }
 

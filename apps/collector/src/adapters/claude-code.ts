@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ToolCallMessage } from '@context-hub/core';
-import { emptyRaw, pushText, readLines, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
+import { emptyRaw, mostUsed, pushText, readLines, recordCwd, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
 
 /** Record types that carry no conversation content. Anything else unknown is counted. */
 const IGNORED_RECORDS = new Set([
@@ -76,7 +76,7 @@ function read(file: SessionFile): RawSession {
       continue;
     }
 
-    raw.cwd ??= typeof r.cwd === 'string' ? r.cwd : null;
+    recordCwd(raw, r.cwd);
     raw.account_id ??= typeof r.ownerAccountUuid === 'string' ? r.ownerAccountUuid : null;
     if (typeof r.gitBranch === 'string' && r.gitBranch !== '') raw.git_branch = r.gitBranch;
     if (r.isMeta === true) continue;
@@ -130,6 +130,7 @@ function read(file: SessionFile): RawSession {
       }
     }
   }
+  raw.cwd = mostUsed(raw.cwds);
   return raw;
 }
 
