@@ -71,6 +71,10 @@ When claude.ai asks you to sign in, run:
 
 Enter the code shown on the hub's sign-in page. Codes are valid 10 minutes, for one use. You can tick or untick "Also allow it to save notes to your projects."
 
+**Saving notes from a chat**
+
+Ask the chat to save something to a named project. The project must already exist; a note never creates one. Notes appear with source `note` in get_project and search. This requires the connector's sign-in grant: when signing in, tick "Also allow it to save notes to your projects." Remove a note with `hub forget --session note:<id>`.
+
 To list and revoke access:
 
     hub-admin oauth list
