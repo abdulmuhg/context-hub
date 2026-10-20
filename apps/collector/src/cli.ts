@@ -1,7 +1,9 @@
+import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
 import { SLASH_COMMANDS } from './commands.js';
 import type { Level } from '@context-hub/core';
 import {
@@ -29,6 +31,10 @@ export interface Io {
   hostname?: () => string;
   /** True when stdin and stdout are a terminal, so it is safe to ask questions. */
   interactive?: boolean;
+  /** For `hub auto` and `hub sync --auto`: the node binary and the running hub script. */
+  execPath?: string;
+  bundlePath?: string;
+  spawn?: typeof spawn;
 }
 
 const USAGE = `Usage: hub <command>
@@ -181,6 +187,34 @@ async function personal(io: Io, args: string[]): Promise<void> {
   }
 }
 
+function bundleOf(io: Io): string {
+  return io.bundlePath ?? resolve(process.argv[1] ?? '');
+}
+
+function autoCase(io: Io, sub: string | undefined): number {
+  const settings = join(io.home, '.claude', 'settings.json');
+  const log = join(io.hubDir, 'auto.log');
+  if (sub === 'on') {
+    const command = hookCommand(io.execPath ?? process.execPath, bundleOf(io));
+    const { changed } = autoOn(settings, command);
+    io.out(changed ? 'Automatic sync is on. When a Claude Code session ends, hub syncs your tracked projects in the background.' : 'Automatic sync was already on.');
+    io.out(`Log: ${log}`);
+    return 0;
+  }
+  if (sub === 'off') {
+    const { removed } = autoOff(settings, basename(bundleOf(io)));
+    io.out(removed > 0 ? 'Automatic sync is off.' : 'Automatic sync was not on.');
+    return 0;
+  }
+  if (sub === 'status') {
+    const { on, lastLine } = autoStatus(settings, log);
+    io.out(on ? 'Automatic sync is on.' : 'Automatic sync is off.');
+    io.out(lastLine ? `Last run: ${lastLine}` : 'No automatic run yet.');
+    return 0;
+  }
+  throw new Fail('Usage: hub auto on | off | status');
+}
+
 async function offerNewProjects(io: Io): Promise<void> {
   const fresh = newProjects(listProjects(scanOpts(io)), loadConfig(io.hubDir));
   if (fresh.length === 0) return;
@@ -283,8 +317,29 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
     case 'sync': {
       const { values } = parseArgs({
         args: rest,
-        options: { project: { type: 'string' }, session: { type: 'string' }, 'dry-run': { type: 'boolean' } },
+        options: {
+          project: { type: 'string' },
+          session: { type: 'string' },
+          'dry-run': { type: 'boolean' },
+          auto: { type: 'boolean' },
+          'auto-child': { type: 'boolean' },
+        },
       });
+      if (values.auto) {
+        // Return at once so closing Claude Code is never delayed; a detached child does the work.
+        const child = (io.spawn ?? spawn)(io.execPath ?? process.execPath, [bundleOf(io), 'sync', '--auto-child'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.on?.('error', () => {});
+        child.unref();
+        return 0;
+      }
+      if (values['auto-child']) {
+        await runAutoChild({ ...scanOpts(io), fetchImpl: io.fetchImpl });
+        return 0;
+      }
       const dryRun = values['dry-run'] === true;
       const plain = !dryRun && !values.project && !values.session;
       if (plain) await offerNewProjects(io);
@@ -357,6 +412,8 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       io.out(`Installed ${Object.keys(SLASH_COMMANDS).length} slash commands in ${dir}.`);
       return 0;
     }
+    case 'auto':
+      return autoCase(io, rest[0]);
     case 'personal':
       await personal(io, rest);
       return 0;
