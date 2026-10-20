@@ -56,7 +56,8 @@ function projectNames(db: Db): string {
        LIMIT ?`,
     )
     .all(NAMES_IN_DESCRIPTION) as { name: string }[];
-  if (rows.length === 0) return 'The hub has no projects yet.';
+  // No trailing period: every description template supplies its own.
+  if (rows.length === 0) return 'The hub has no projects yet';
   return rows.map((r) => r.name).join(', ');
 }
 

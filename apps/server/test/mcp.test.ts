@@ -248,6 +248,52 @@ describe('tool descriptions', () => {
   });
 });
 
+/** The descriptions claude.ai chooses tools by. Pinned whole, so no edit changes them by accident. */
+describe('the exact description of every tool', () => {
+  const NAMES = 'alpha, beta';
+  const expected = (names: string): Record<string, string> => ({
+    list_projects: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, and notes saved from chats). Projects in the hub: ${names}.`,
+    get_project: `Catch up on one of the user's software projects: its current state and recent coding sessions. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
+    search: `Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match. Covers the coding sessions and notes of: ${names}.`,
+    save_note: `Save a short note into one of the user's existing projects, so it is there in later sessions in any tool. Use only when the user asks to save, remember or record something for a project. Never include passwords, keys, card numbers or phone numbers. Projects: ${names}.`,
+  });
+
+  let saver: Client;
+  let saverClose: () => Promise<void>;
+
+  beforeEach(async () => {
+    // alpha newest, so the order in the pinned strings is the one recency gives.
+    upsertSession(db, makeSession({ source_session_id: 'b3', project_key: 'local:beta', last_activity_at: '2026-10-09T10:00:00.000Z' }), NOW);
+    upsertSession(db, makeSession({ source_session_id: 'a3', last_activity_at: '2026-10-10T10:00:00.000Z' }), NOW);
+    const started = await startServer({ db, mcp: (req, res, body) => handleMcp(db)(req, res, body, { canSave: true }), log: () => {} });
+    saverClose = started.close;
+    saver = await connect(createToken(db, 'chat', 'read', NOW).token, started.url);
+  });
+
+  afterEach(async () => {
+    await saver.close();
+    await saverClose();
+  });
+
+  it('reads character-for-character as the plan writes it', async () => {
+    for (const [name, description] of Object.entries(expected(NAMES))) {
+      expect(await describeTool(saver, name)).toBe(description);
+    }
+    expect(await describeTool(saver, 'get_session')).toBe(
+      'Read one stored conversation. Long sessions come in pages: pass next_seq from the previous page as from_seq to continue.',
+    );
+  });
+
+  it('ends in a single period when the hub is empty', async () => {
+    db.exec('DELETE FROM search_index; DELETE FROM messages; DELETE FROM sessions; DELETE FROM projects;');
+    for (const [name, description] of Object.entries(expected('The hub has no projects yet'))) {
+      const actual = await describeTool(saver, name);
+      expect(actual).toBe(description);
+      expect(actual).not.toContain('..');
+    }
+  });
+});
+
 describe('instructions: the hub is a briefing, not a live status', () => {
   it('tells the assistant to use these tools when the user names a project', () => {
     expect(INSTRUCTIONS).toContain(
