@@ -5,6 +5,7 @@ import { send } from '../http.js';
 import { randomBytes } from 'node:crypto';
 import { isAllowedRedirect, MAX_CLIENT_DOC } from './clients.js';
 import { pruneClients, saveClient } from './store.js';
+import { authorize } from './authorize.js';
 import { authorizationServerMetadata, protectedResourceMetadata, type OAuthConfig } from './config.js';
 
 export interface OAuthCtx {
@@ -82,6 +83,10 @@ export async function handleOAuth(req: IncomingMessage, res: ServerResponse, pat
       json(res, 200, authorizationServerMetadata(ctx.cfg));
       return true;
     }
+  }
+  if ((method === 'GET' || method === 'POST') && path === '/oauth/authorize') {
+    await authorize(req, res, method, ctx);
+    return true;
   }
   if (method === 'POST' && path === '/oauth/register') {
     await register(req, res, ctx);
