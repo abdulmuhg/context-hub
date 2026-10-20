@@ -56,10 +56,24 @@ you open **Customize > Connectors > context-hub**, click **Disconnect**, then
 ### 2. Upload this computer's sessions
 
 Reading needs nothing local. Uploading this computer's own sessions needs
-the `hub` command and an upload token.
+the `hub` command (Node 22 or newer) and a connection to the hub.
 
-**Today** (a simpler two-command install is planned, see
-`docs/superpowers/plans/2026-10-20-context-hub-device-setup.md`):
+**macOS and Linux.** In the dashboard open **Sign-ins > Add a computer**; it
+shows a one-time code and the two commands to run on the new computer:
+
+```bash
+curl -fsSL https://hub.abdulmughnialfikri.com/install | sh
+hub login
+```
+
+`hub login` asks for the hub address (the first time), a name for the computer and the code, then saves the
+address and an upload token in `~/.context-hub`. The installer puts `hub`
+in `~/.local/bin` (it tells you if that is not on your `PATH`) and installs
+the Claude Code slash commands. Run the first line again to update; it leaves
+`~/.context-hub` alone. If the computer is lost, **Disconnect** its token on
+the Sign-ins page.
+
+**Windows** has no installer yet:
 
 ```bash
 git clone https://github.com/abdulmuhg/context-hub.git
@@ -68,17 +82,12 @@ pnpm install
 pnpm --filter @context-hub/collector build
 ```
 
-Put a small `hub` launcher on your `PATH` that runs
-`node /path/to/context-hub/apps/collector/dist/bin.js "$@"` (macOS/Linux:
-a shell script in `~/.local/bin`; Windows: a `hub.cmd` in your npm global
-folder). Then connect it with an upload token from the hub's owner (created
-with `hub-admin token create --label <this computer> --scope ingest`):
-
-```bash
-hub init --url https://hub.abdulmughnialfikri.com
-```
-
-It asks for the token and keeps it in `~/.context-hub/credentials`.
+Put a `hub.cmd` that runs
+`node C:path	ocontext-hubappscollectordistin.js %*` in your npm
+global folder, then run `hub login --url https://hub.abdulmughnialfikri.com`
+and enter a code from **Sign-ins > Add a computer**. (An upload token made on
+the server with `hub-admin token create --label <this computer> --scope ingest`
+also works: `hub init --url <address>`.)
 
 ### 3. Choose projects and sync
 
@@ -108,11 +117,11 @@ land in the wrong project.
 
 ### 4. Slash commands for Claude Code
 
-`integrations/claude-code/` holds five commands. Copy them to
-`~/.claude/commands/` to use them in every repo:
+`integrations/claude-code/` holds five commands. The installer puts them in
+`~/.claude/commands/` for every repo; to install or refresh them yourself:
 
 ```bash
-cp integrations/claude-code/hub-*.md ~/.claude/commands/
+hub install-commands
 ```
 
 | Command | What it does |
@@ -142,7 +151,9 @@ the browser stays signed in for 30 days.
 ### Sign-in codes
 
 The Claude apps and the dashboard both sign in with a one-time code: valid 10
-minutes, one use. Get one from any computer where `hub` is already set up:
+minutes, one use. The easiest way is **Sign-ins > New sign-in code** in the
+dashboard (and **Add a computer** makes the other kind, for `hub login`; the
+two are not interchangeable). From a computer where `hub` is already set up:
 
 ```bash
 hub connect
@@ -271,7 +282,7 @@ Live at https://hub.abdulmughnialfikri.com, used by its owner. Every push to
 
 | Built | Planned or parked |
 |---|---|
-| Collector for Claude Code, Codex and Antigravity; secret stripping and a personal-data filter | Two-command setup for a new computer |
+| Collector for Claude Code, Codex and Antigravity; secret stripping and a personal-data filter | Windows installer |
 | Summaries and per-project briefings, with a review step that drops settled items | Importer for claude.ai export files (waits on a real export) |
 | MCP lookups for Claude Code and other tools | ChatGPT and Gemini sign-in |
 | Sign-in for claude.ai, desktop and mobile; `save_note` | A hub for more than one person |
