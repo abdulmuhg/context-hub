@@ -11,6 +11,7 @@ import { createConnectCode, touchGrant } from './oauth/store.js';
 import type { McpCaller } from './mcp.js';
 import { actorFor, checkCredential, type Credential, type Scope } from './tokens.js';
 import { HttpError, parseSession } from './validate.js';
+import { handleWeb, type WebConfig } from './web/routes.js';
 
 export const MAX_BODY = 20 * 1024 * 1024;
 /** How long an unread request body is discarded before the connection is cut. */
@@ -25,25 +26,33 @@ export interface AppDeps {
   oauth?: OAuthConfig;
   /** Handles POST /mcp once the caller is authorised. Wired in main.ts. */
   mcp?: (req: IncomingMessage, res: ServerResponse, body: unknown, caller: McpCaller) => Promise<void>;
+  /** When set, the browser dashboard is served. Wired in main.ts. */
+  web?: WebConfig;
+}
+
+/**
+ * If we answer before reading the whole request body, the unread bytes would be
+ * parsed as the next request on a kept-alive connection and stall the client.
+ * So discard what is still arriving. Closing the socket instead would reset it
+ * before the client has read this answer. The timer bounds how long a client
+ * can keep sending into the void.
+ */
+export function drainBody(res: ServerResponse): void {
+  const req = res.req;
+  if (req.complete) return;
+  const cut = setTimeout(() => req.destroy(), DRAIN_MS);
+  cut.unref();
+  req.once('end', () => clearTimeout(cut));
+  req.once('close', () => clearTimeout(cut));
+  req.resume();
 }
 
 export function send(res: ServerResponse, statusCode: number, body: unknown): void {
   if (res.headersSent) return;
   const text = JSON.stringify(body);
   const headers: Record<string, string | number> = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(text) };
-  // If we answer before reading the whole request body, the unread bytes would be
-  // parsed as the next request on a kept-alive connection and stall the client.
-  // So discard what is still arriving. Closing the socket instead would reset it
-  // before the client has read this answer. The timer bounds how long a client
-  // can keep sending into the void.
   const req = res.req;
-  if (!req.complete) {
-    const cut = setTimeout(() => req.destroy(), DRAIN_MS);
-    cut.unref();
-    req.once('end', () => clearTimeout(cut));
-    req.once('close', () => clearTimeout(cut));
-    req.resume();
-  }
+  drainBody(res);
   res.writeHead(statusCode, headers);
   res.end(req.method === 'HEAD' ? undefined : text);
 }
@@ -163,16 +172,6 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
 
     if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) return send(res, 200, { status: 'ok' });
 
-    // Someone opening the address in a browser should see that the service is
-    // up, not an error. Says nothing about what is stored.
-    if (path === '/' && (method === 'GET' || method === 'HEAD')) {
-      return send(res, 200, {
-        name: 'context-hub',
-        status: 'ok',
-        message: 'This service is running. It has no web page: it is used through the hub command and by AI assistants over MCP.',
-      });
-    }
-
     if (path === '/api/status' && method === 'GET') {
       authorise(req, res, ['ingest', 'read']);
       return send(res, 200, status(db));
@@ -273,6 +272,19 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       // Saving is an OAuth grant's privilege: a bearer token (read) never gets the tool.
       const canSave = credential.kind === 'oauth' && credential.scopes.includes('hub.save');
       return deps.mcp(req, res, await readJson(req), { canSave, actor: actorFor(credential) });
+    }
+
+    // The dashboard comes last, so a browser session is never even looked at on /mcp or /api/*.
+    if (deps.web) {
+      const handled = await handleWeb(req, res, path, method, {
+        db,
+        cfg: deps.web,
+        limiter,
+        address: clientAddress(req),
+        now: () => now().toISOString(),
+        readBody: () => readBody(req),
+      });
+      if (handled) return;
     }
 
     send(res, 404, { error: 'Not found' });

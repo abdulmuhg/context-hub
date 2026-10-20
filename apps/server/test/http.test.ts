@@ -36,7 +36,13 @@ beforeEach(async () => {
   logs = [];
   ingest = createToken(db, 'collector', 'ingest', NOW.toISOString()).token;
   read = createToken(db, 'assistant', 'read', NOW.toISOString()).token;
-  ({ url, close } = await startServer({ db, now: () => NOW, limiter: new AuthLimiter(), log: (l) => logs.push(l) }));
+  ({ url, close } = await startServer({
+    db,
+    now: () => NOW,
+    limiter: new AuthLimiter(),
+    log: (l) => logs.push(l),
+    web: { imageTag: null, startedAt: NOW.toISOString(), digestsOn: false, backupStatusPath: null, secureCookies: false, publicOrigin: null },
+  }));
 });
 
 afterEach(async () => {
@@ -249,25 +255,27 @@ describe('review fixes', () => {
 });
 
 describe('the bare address', () => {
-  it('answers 200 with a short description instead of an error, without a token', async () => {
-    const res = await call('GET', '/');
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.name).toBe('context-hub');
-    expect(body.status).toBe('ok');
-    expect(body.message).toMatch(/no web page/i);
+  const bare = (method: string) => fetch(url + '/', { method, redirect: 'manual' });
+
+  it('sends a browser without a session to the sign-in page, without a token', async () => {
+    const res = await bare('GET');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/login');
   });
 
   it('gives nothing away: no counts, versions, projects or paths to data', async () => {
     await put();
-    const text = await (await call('GET', '/')).text();
+    const text = await (await bare('GET')).text();
     expect(text).not.toMatch(/alpha|session|sqlite|token|version|\d{2,}/i);
   });
 
   it('answers HEAD too, and other paths are still 404', async () => {
-    expect((await call('HEAD', '/')).status).toBe(200);
+    expect((await bare('HEAD')).status).toBe(302);
     expect((await call('GET', '/index.html')).status).toBe(404);
-    expect((await call('POST', '/')).status).toBe(404);
+  });
+
+  it('refuses a POST without a session instead of 404ing it', async () => {
+    expect((await bare('POST')).status).toBe(403);
   });
 });
 
