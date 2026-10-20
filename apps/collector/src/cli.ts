@@ -34,6 +34,10 @@ export interface Io {
 const USAGE = `Usage: hub <command>
 
   login [--url URL] [--name NAME]      connect this computer with a code from the dashboard
+  sync                                 upload your tracked projects (asks about new ones)
+  auto on | off | status               sync automatically when a Claude Code session ends
+
+Advanced:
   init [--url URL] [--token TOKEN]     save the server address and upload token
   projects                             list projects found on this PC
   track <project> | untrack <project>  choose which projects are uploaded
@@ -122,6 +126,12 @@ function printReport(io: Io, report: SyncReport, dryRun: boolean): void {
   }
   for (const e of report.errors) io.err(`Error: ${e}`);
   if (report.reportError) io.err(`Note: could not report this run to the server (${report.reportError}). The sync itself is unaffected.`);
+  if (dryRun) return;
+  if (report.errors.length > 0) {
+    io.err(`Sync finished with ${report.errors.length} error(s).`);
+  } else {
+    io.out(`Up to date: ${report.uploaded.length} uploaded, ${report.unchanged} unchanged, ${loadConfig(io.hubDir).tracked.length} tracked project(s).`);
+  }
 }
 
 async function personal(io: Io, args: string[]): Promise<void> {

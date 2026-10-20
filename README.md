@@ -120,11 +120,25 @@ computer can be cut off.
 
 ### 3. Choose projects and sync
 
+Day to day, one command is all you need:
+
+```bash
+hub sync
+```
+
+It uploads your tracked projects. When it finds a project on this computer
+that you have not decided on, it asks `Upload it to the hub? [y/N]` and
+remembers the answer. Nothing is uploaded without a `y`. Outside a terminal
+(for example `/hub-sync`) it never asks; it only tells you how many new
+projects it left out.
+
+Advanced, for finer control:
+
 ```bash
 hub projects                 # every project found on this computer
-hub track <project>          # nothing is uploaded until you track it
+hub track <project>          # track one without being asked (also undoes a "no")
+hub untrack <project>        # stop uploading it (it will not be asked about again)
 hub sync --dry-run           # see what would be sent
-hub sync                     # send it
 ```
 
 - A project is named by its git remote (`github.com/you/repo`), or
@@ -155,7 +169,7 @@ hub install-commands
 
 | Command | What it does |
 |---|---|
-| `/hub-sync` | Upload this project's new sessions. `/hub-sync all` uploads every tracked project. |
+| `/hub-sync` | Run `hub sync`: upload every tracked project's new sessions. |
 | `/hub-catchup` | Read this project's briefing, check the live git state, and say where things stand. |
 | `/hub-note <text>` | Save a note to this project. Needs the claude.ai connector with "save notes" allowed. |
 | `/hub-status` | Whether this project is tracked, when it last synced, and the hub's totals. |

@@ -13,4 +13,11 @@ describe('SLASH_COMMANDS', () => {
     expect(Object.keys(SLASH_COMMANDS).sort()).toEqual(files);
     for (const f of files) expect(SLASH_COMMANDS[f]).toBe(readFileSync(join(DIR, f), 'utf8'));
   });
+
+  it('/hub-sync runs plain hub sync with no project argument', () => {
+    const text = SLASH_COMMANDS['hub-sync.md']!;
+    expect(text).toContain('Run `hub sync`.');
+    expect(text).not.toContain('--project');
+    expect(text).not.toContain('$ARGUMENTS');
+  });
 });

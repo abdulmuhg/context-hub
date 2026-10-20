@@ -437,3 +437,39 @@ describe('newProjects', () => {
     expect(newProjects([row('a'), row('b'), row('unfiled'), row('d', 0), row('e')], cfg).map((r) => r.key)).toEqual(['e']);
   });
 });
+
+describe('hub sync: summary and usage', () => {
+  it('ends a successful sync with the summary line', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    await run(['track', 'alpha'], io);
+    out = [];
+    expect(await run(['sync'], io)).toBe(0);
+    expect(out.at(-1)).toBe('Up to date: 1 uploaded, 0 unchanged, 1 tracked project(s).');
+    out = [];
+    await run(['sync'], io);
+    expect(out.at(-1)).toBe('Up to date: 0 uploaded, 1 unchanged, 1 tracked project(s).');
+  });
+
+  it('ends a failed sync with the error count', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    await run(['track', 'alpha'], io);
+    io.fetchImpl = async () => new Response('no', { status: 401 });
+    err = [];
+    expect(await run(['sync'], io)).toBe(1);
+    expect(err.some((l) => l.startsWith('Error: '))).toBe(true);
+    expect(err.at(-1)).toBe('Sync finished with 1 error(s).');
+  });
+
+  it('lists login, sync and auto before Advanced, and every other command after', async () => {
+    await run(['dance'], io);
+    const lines = err.join('\n').split(/\r?\n/);
+    const at = lines.indexOf('Advanced:');
+    expect(at).toBeGreaterThan(0);
+    const starts = (part: string[], c: string) => part.some((l) => l.startsWith(`  ${c} `));
+    for (const c of ['login', 'sync', 'auto']) expect(starts(lines.slice(0, at), c)).toBe(true);
+    for (const c of ['init', 'projects', 'track', 'skip', 'alias', 'assign', 'forget', 'status', 'connect', 'install-commands', 'personal']) {
+      expect(starts(lines.slice(0, at), c)).toBe(false);
+      expect(starts(lines.slice(at), c)).toBe(true);
+    }
+  });
+});

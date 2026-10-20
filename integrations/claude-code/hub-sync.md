@@ -1,13 +1,8 @@
 ---
-description: Upload this project's new AI sessions to context-hub (or every tracked project with "all")
-argument-hint: "[all]"
-allowed-tools: Bash(hub sync:*), Bash(git remote get-url:*), Bash(basename:*)
+description: Upload your new AI sessions to context-hub
+allowed-tools: Bash(hub sync:*)
 ---
 
-If the argument is `all`, run `hub sync`. Otherwise run:
+Run `hub sync`.
 
-`hub sync --project "$(git remote get-url origin 2>/dev/null || basename "$PWD")"`
-
-Argument: $ARGUMENTS
-
-Report the result in two or three lines: how many sessions were uploaded and to which project. Leave out the "Personal data:" and "Warning:" lines unless I ask for them. If it prints an error, show me the error exactly and stop. If the error says the project is not tracked, tell me `/hub-track` tracks it. Do not try to fix anything else.
+Report the result in two or three lines: the summary line it prints, and the "not uploaded" line if there is one (tell me `hub sync` in a terminal lets me choose). Leave out the "Personal data:" and "Warning:" lines. If it prints an error, show me the error exactly and stop. Do not try to fix anything else.
