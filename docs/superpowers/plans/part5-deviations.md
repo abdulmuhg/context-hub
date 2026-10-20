@@ -76,3 +76,14 @@ Applied after the branch was handed back, each with a test:
 - **At most 100 unused DCR clients are kept**, newest first, so unauthenticated registration cannot grow the table without bound. (DCR redirect URIs were already limited to the two allowed values.)
 
 Still deferred, accepted for now: a lost response to the first code exchange makes the retry revoke the grant (sign in again); the grace-window theft caveats; `/mcp/` with a trailing slash; connect codes issued while `PUBLIC_URL` is unset; and the minor items above.
+
+## Manual test results (Task 9 Step 4, 2026-10-20)
+
+Deployed as `828339f` with `PUBLIC_URL=https://hub.abdulmughnialfikri.com`. Live checks passed: both discovery documents, the 401 challenge on `/mcp`, the `hub.hanadul.site` redirect, and Claude Code still connected with its bearer token.
+
+- **Sign-in from claude.ai: pass.** The connector was added with default settings. claude.ai identified itself with a Client ID Metadata Document on `https://claude.ai` (so the origin pin works with the real client), the owner entered a `hub connect` code, and grant 1 was created with `hub.read hub.save offline_access`. A `list_projects` call through the connector returned all projects.
+- **A plain question does not pick the hub.** "Where did we leave off on jsonroom?" made claude.ai use its built-in "Searched past chats" and never call the hub. With "use context-hub" in the prompt it called `get_project` and answered correctly. The tool descriptions do not say that coding projects live in the hub, and claude.ai may not use the server's MCP instructions. Fix planned in Part 6.
+- **Claude desktop chat and Claude mobile: pass** (owner reported), with no extra setup.
+- **Remove and re-add: reported as working, but no fresh sign-in reached the server.** The server shows one connect code, one authorization code and one grant in total. claude.ai most likely reused its stored credentials. A fresh sign-in on a second connection is therefore not proven yet.
+- **Token refresh: not yet observed.** The first access token expires at 07:53 UTC on 2026-10-20; check the token table after that for a rotated pair.
+- **Content gap seen in the answer:** jsonroom's page still lists the dotted-key fix (merged as jsonroom PR #3) as open, because that work happened in a session filed under context-hub. Known cross-project limit.
