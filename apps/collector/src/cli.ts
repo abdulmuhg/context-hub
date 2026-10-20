@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { SLASH_COMMANDS } from './commands.js';
@@ -14,7 +15,7 @@ import {
 } from './config.js';
 import { projectMatches, type GitRunner } from './project.js';
 import { listProjects, runSync, type SyncReport } from './sync.js';
-import { deleteRemote, getStatus, requestConnectCode, type Remote } from './upload.js';
+import { deleteRemote, exchangeDeviceCode, getStatus, requestConnectCode, type Remote } from './upload.js';
 
 export interface Io {
   home: string;
@@ -25,10 +26,12 @@ export interface Io {
   fetchImpl?: typeof fetch;
   git?: GitRunner;
   exists?: (path: string) => boolean;
+  hostname?: () => string;
 }
 
 const USAGE = `Usage: hub <command>
 
+  login [--url URL] [--name NAME]      connect this computer with a code from the dashboard
   init [--url URL] [--token TOKEN]     save the server address and upload token
   projects                             list projects found on this PC
   track <project> | untrack <project>  choose which projects are uploaded
@@ -259,6 +262,31 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const { code } = await requestConnectCode(remote(io));
       io.out(`Sign-in code: ${code}`);
       io.out("Valid for 10 minutes, for one use. Enter it on the hub's sign-in page when claude.ai asks you to sign in.");
+      return 0;
+    }
+    case 'login': {
+      const { values } = parseArgs({ args: rest, options: { url: { type: 'string' }, name: { type: 'string' } } });
+      const saved = loadConfig(io.hubDir).server_url;
+      const trim = (u: string): string => u.trim().replace(/\/+$/, '');
+      const url = trim(values.url || saved || (await io.ask('Hub address (https://...): ')));
+      if (!/^https?:\/\//i.test(url)) throw new Fail('The hub address must start with http:// or https://');
+      if (saved && trim(saved) !== url) {
+        const answer = (await io.ask(`This computer is connected to ${saved}. Replace it with ${url}? (y/N) `)).trim().toLowerCase();
+        if (answer !== 'y') {
+          io.err('Not replaced. Nothing was changed.');
+          return 1;
+        }
+      }
+      const host = (io.hostname ?? hostname)();
+      const name = values.name ?? ((await io.ask(`Name for this computer [${host}]: `)).trim() || host);
+      const code = (await io.ask('Code from the dashboard (Sign-ins > Add a computer): ')).trim();
+      if (code === '') throw new Fail('No code entered. Nothing saved.');
+      const { token, label } = await exchangeDeviceCode(url, code, name, io.fetchImpl);
+      update(io, (cfg) => {
+        cfg.server_url = url;
+      });
+      saveToken(io.hubDir, token);
+      io.out(`Connected as "${label}". Next: hub projects, then hub track <project> and hub sync.`);
       return 0;
     }
     case 'install-commands': {

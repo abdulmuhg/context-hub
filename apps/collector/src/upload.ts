@@ -61,3 +61,37 @@ export async function reportSyncRun(
 ): Promise<void> {
   await send({ ...remote, timeoutMs: 10_000 }, 'POST', '/api/sync-runs', gzipSync(Buffer.from(JSON.stringify(r), 'utf8')));
 }
+
+/** Swaps a one-time device code from the dashboard for an upload token. Needs no credential. */
+export async function exchangeDeviceCode(
+  url: string,
+  code: string,
+  name: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ token: string; label: string }> {
+  const target = url.replace(/\/+$/, '') + '/api/devices';
+  let res: Response;
+  try {
+    res = await fetchImpl(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, name }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    throw new Error(`could not reach ${url.replace(/\/+$/, '')}: ${(e as Error).message}`);
+  }
+  if (!res.ok) {
+    let message = `server answered ${res.status}`;
+    if (res.status === 401 || res.status === 429) {
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (typeof body.error === 'string') message = body.error;
+      } catch {
+        // keep the generic message
+      }
+    }
+    throw new Error(message);
+  }
+  return (await res.json()) as { token: string; label: string };
+}

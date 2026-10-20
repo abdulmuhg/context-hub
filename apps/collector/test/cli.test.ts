@@ -58,6 +58,93 @@ describe('hub init', () => {
   });
 });
 
+describe('hub login', () => {
+  const SECRET = 'chub_test-token-value';
+  let asked: string[];
+  let bodies: unknown[];
+  let status: number;
+
+  beforeEach(() => {
+    asked = [];
+    bodies = [];
+    status = 200;
+    io.hostname = () => 'test-host';
+    io.ask = async (q) => {
+      asked.push(q);
+      return answers.shift() ?? '';
+    };
+    io.fetchImpl = async (input, init) => {
+      requests.push({ method: init?.method ?? 'GET', url: String(input) });
+      bodies.push(JSON.parse(String(init?.body)));
+      return status === 200
+        ? new Response(JSON.stringify({ token: SECRET, label: 'my-mac' }), { status })
+        : new Response(JSON.stringify({ error: 'That code is wrong or has expired.' }), { status });
+    };
+  });
+
+  it('saves the address and token and prints the label, never the token', async () => {
+    answers = ['ABCD-EFGH'];
+    expect(await run(['login', '--url', 'https://hub.example.com/', '--name', 'my-mac'], io)).toBe(0);
+    expect(requests).toEqual([{ method: 'POST', url: 'https://hub.example.com/api/devices' }]);
+    expect(bodies).toEqual([{ code: 'ABCD-EFGH', name: 'my-mac' }]);
+    expect(loadConfig(io.hubDir).server_url).toBe('https://hub.example.com');
+    expect(loadToken(io.hubDir)).toBe(SECRET);
+    expect(out).toContain('Connected as "my-mac". Next: hub projects, then hub track <project> and hub sync.');
+    expect([...out, ...err, ...asked].join('\n')).not.toContain(SECRET);
+  });
+
+  it('asks for the address, offers the host name as the default and keeps it on an empty answer', async () => {
+    answers = ['https://hub.example.com', '', 'ABCD-EFGH'];
+    expect(await run(['login'], io)).toBe(0);
+    expect(asked).toEqual(['Hub address (https://...): ', 'Name for this computer [test-host]: ', 'Code from the dashboard (Sign-ins > Add a computer): ']);
+    expect(bodies).toEqual([{ code: 'ABCD-EFGH', name: 'test-host' }]);
+  });
+
+  it('uses the saved address without asking for it', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'old'], io);
+    answers = ['laptop', 'ABCD-EFGH'];
+    expect(await run(['login'], io)).toBe(0);
+    expect(asked[0]).toBe('Name for this computer [test-host]: ');
+    expect(requests[0]!.url).toBe('https://hub.example.com/api/devices');
+  });
+
+  it('prints the server message on a wrong code and saves nothing', async () => {
+    status = 401;
+    answers = ['WRONG-CODE'];
+    expect(await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io)).toBe(1);
+    expect(err.join('\n')).toContain('That code is wrong or has expired.');
+    expect(loadConfig(io.hubDir).server_url).toBeFalsy();
+    expect(loadToken(io.hubDir)).toBeFalsy();
+  });
+
+  it('asks before replacing a different saved hub and stops on anything but y', async () => {
+    await run(['init', '--url', 'https://old.example.com', '--token', 'old'], io);
+    answers = ['n'];
+    expect(await run(['login', '--url', 'https://new.example.com', '--name', 'x'], io)).toBe(1);
+    expect(asked).toEqual(['This computer is connected to https://old.example.com. Replace it with https://new.example.com? (y/N) ']);
+    expect(requests).toEqual([]);
+    expect(loadConfig(io.hubDir).server_url).toBe('https://old.example.com');
+    expect(loadToken(io.hubDir)).toBe('old');
+  });
+
+  it('replaces the saved hub after y', async () => {
+    await run(['init', '--url', 'https://old.example.com', '--token', 'old'], io);
+    answers = ['y', 'ABCD-EFGH'];
+    expect(await run(['login', '--url', 'https://new.example.com', '--name', 'x'], io)).toBe(0);
+    expect(loadConfig(io.hubDir).server_url).toBe('https://new.example.com');
+    expect(loadToken(io.hubDir)).toBe(SECRET);
+  });
+
+  it('keeps the old hub when the exchange fails after y', async () => {
+    await run(['init', '--url', 'https://old.example.com', '--token', 'old'], io);
+    status = 401;
+    answers = ['y', 'BAD-CODE'];
+    expect(await run(['login', '--url', 'https://new.example.com', '--name', 'x'], io)).toBe(1);
+    expect(loadConfig(io.hubDir).server_url).toBe('https://old.example.com');
+    expect(loadToken(io.hubDir)).toBe('old');
+  });
+});
+
 describe('hub install-commands', () => {
   it('writes the five slash commands and overwrites them on a second run', async () => {
     const dir = join(tempDir(), 'commands');
