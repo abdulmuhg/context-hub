@@ -4,7 +4,7 @@ import type { AuthLimiter } from '../ratelimit.js';
 import { consumeConnectCode } from '../oauth/store.js';
 import { isAsset, serveAsset } from './assets.js';
 import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
-import { overviewPage } from './pages.js';
+import { activityPage, overviewPage, parseActivityQuery, projectNotFoundPage, projectPage, projectsPage } from './pages.js';
 import { checkWebSession, clearedCookie, createWebSession, parseCookies, revokeWebSession, sameCsrf, sessionCookie } from './session.js';
 
 export interface WebConfig {
@@ -34,7 +34,23 @@ export interface WebSession {
 
 /** Pages that need a session. `/projects/<key>` keeps its percent-encoded key, so it is matched by prefix. */
 const PAGES = new Set(['/', '/activity', '/projects', '/sign-ins']);
-const isPage = (path: string): boolean => PAGES.has(path) || path.startsWith('/projects/');
+const PROJECT_PREFIX = '/projects/';
+const isPage = (path: string): boolean => PAGES.has(path) || path.startsWith(PROJECT_PREFIX);
+
+/**
+ * The project key in `/projects/<encodeURIComponent(key)>`. The path is still percent-encoded here,
+ * so a key with slashes is one segment; a segment that is empty, holds a real slash or is malformed
+ * (`%zz`) is no key at all, and the caller answers the 404 page rather than failing.
+ */
+function projectKeyFrom(path: string): string | null {
+  const raw = path.slice(PROJECT_PREFIX.length);
+  if (raw === '' || raw.includes('/')) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
 
 /** The POST forms the dashboard owns. `/sign-ins/disconnect` is Task 8's; it is listed so no POST path is ambiguous. */
 const ACTIONS = new Set(['/logout', '/sign-ins/disconnect']);
@@ -147,6 +163,23 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
   }
   if (path === '/') {
     sendDocument(res, 200, overviewPage(ctx.db, ctx.cfg, ctx.now(), session.csrf));
+    return true;
+  }
+  if (path === '/activity') {
+    // The query string is not part of `path`, so the filter and the page number are read here.
+    const params = new URL(req.url ?? '/', 'http://local').searchParams;
+    sendDocument(res, 200, activityPage(ctx.db, parseActivityQuery(params), session.csrf));
+    return true;
+  }
+  if (path === '/projects') {
+    sendDocument(res, 200, projectsPage(ctx.db, session.csrf));
+    return true;
+  }
+  if (path.startsWith(PROJECT_PREFIX)) {
+    const key = projectKeyFrom(path);
+    const html = key === null ? null : projectPage(ctx.db, key, session.csrf);
+    if (html === null) sendDocument(res, 404, projectNotFoundPage(session.csrf));
+    else sendDocument(res, 200, html);
     return true;
   }
   return false;

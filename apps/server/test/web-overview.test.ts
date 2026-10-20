@@ -161,7 +161,9 @@ describe('the Overview page', () => {
     expect(html).toContain('row 2');
     expect(html).not.toContain('row 1<');
     expect(html).not.toContain('row 0');
-    expect(html.match(/get_project/g)).toHaveLength(10);
+    // The What column names the action in plain words, not the MCP tool name behind it.
+    expect(html).not.toContain('get_project');
+    expect(html.match(/read page/g)).toHaveLength(10);
   });
 
   it('escapes stored text and renders times as UTC time elements', async () => {

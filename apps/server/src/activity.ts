@@ -61,6 +61,13 @@ export function listActivity(db: Db, opts: { direction?: Direction; limit: numbe
     .all(...args, opts.limit, opts.offset) as ActivityRow[];
 }
 
+/** How many rows a listing would have, so the Activity page knows its last page. */
+export function countActivity(db: Db, opts: { direction?: Direction } = {}): number {
+  const where = opts.direction ? 'WHERE direction = ?' : '';
+  const args: string[] = opts.direction ? [opts.direction] : [];
+  return (db.prepare(`SELECT COUNT(*) AS n FROM activity ${where}`).get(...args) as { n: number }).n;
+}
+
 export function forgetActivityForSession(db: Db, sessionRef: string): void {
   db.prepare('DELETE FROM activity WHERE session_ref = ?').run(sessionRef);
 }

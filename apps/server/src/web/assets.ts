@@ -174,6 +174,28 @@ th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .card > h2:first-child { margin-top: 0; }
 .card ul { margin: 0; }
 
+/* Activity: the direction filter and the pager */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.filters a {
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--muted);
+}
+.filters a:hover { color: var(--ink); }
+.filters a[aria-current="page"] { color: var(--ink); background: var(--card); font-weight: 600; }
+.pager { display: flex; align-items: center; gap: 16px; margin: 0 0 16px; }
+th.num, td.num { text-align: right; }
+td.num { font-family: var(--font-mono); }
+
+/* Projects: the state page rendered from its Markdown */
+.state { margin: 0 0 1em; }
+.state > :first-child { margin-top: 0; }
+.state > :last-child { margin-bottom: 0; }
+.state h1, .state h2 { font-size: 1.05rem; }
+.state h3, .state h4 { font-size: 0.95rem; }
+
 /* Sign-in */
 .signin { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
 .signin form { display: flex; flex-direction: column; gap: 10px; }
