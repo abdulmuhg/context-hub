@@ -10,6 +10,7 @@ import { makeSession, startServer } from './helpers.js';
 
 const START = new Date('2026-10-20T00:00:00.000Z');
 const KEY = 'github.com/me/alpha';
+const HUB = 'https://hub.test';
 
 let db: Db;
 let url: string;
@@ -23,7 +24,8 @@ const web = (over: Partial<WebConfig> = {}): WebConfig => ({
   digestsOn: false,
   backupStatusPath: null,
   secureCookies: false,
-  publicOrigin: null,
+  // On by default so every action test also exercises the Origin check; Node's fetch sends no Origin.
+  publicOrigin: HUB,
   ...over,
 });
 
@@ -262,14 +264,21 @@ describe('POST /logout', () => {
   });
 
   it('answers 403 when the Origin is not this hub', async () => {
-    await close();
-    await start({ publicOrigin: 'https://hub.test' });
     const cookie = await signIn();
     const { csrf } = listWebSessions(db)[0]!;
     const foreign = await post('/logout', { csrf }, { cookie, headers: { Origin: 'https://evil.test' } });
     expect(foreign.status).toBe(403);
     expect(listWebSessions(db)[0]!.revokedAt).toBe(null);
-    const own = await post('/logout', { csrf }, { cookie, headers: { Origin: 'https://hub.test' } });
+    const own = await post('/logout', { csrf }, { cookie, headers: { Origin: HUB } });
     expect(own.status).toBe(302);
+  });
+
+  it('still checks the csrf field when no public origin is configured', async () => {
+    await close();
+    await start({ publicOrigin: null });
+    const cookie = await signIn();
+    expect((await post('/logout', {}, { cookie, headers: { Origin: 'https://evil.test' } })).status).toBe(403);
+    const { csrf } = listWebSessions(db)[0]!;
+    expect((await post('/logout', { csrf }, { cookie, headers: { Origin: 'https://evil.test' } })).status).toBe(302);
   });
 });
