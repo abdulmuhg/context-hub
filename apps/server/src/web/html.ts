@@ -1,5 +1,6 @@
 import type { ServerResponse } from 'node:http';
 import { drainBody } from '../http.js';
+import { assetHref } from './assets.js';
 
 /** Escapes text for HTML bodies and quoted attribute values. */
 export function escapeHtml(s: string): string {
@@ -30,10 +31,18 @@ function head(title: string): string {
   return (
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>${escapeHtml(title)}</title>` +
-    `<link rel="stylesheet" href="/assets/app.css">` +
-    `<script src="/assets/app.js"></script>`
+    `<link rel="stylesheet" href="${assetHref('/assets/app.css')}">` +
+    `<script src="${assetHref('/assets/app.js')}"></script>`
   );
 }
+
+// Plain outline icons, drawn with currentColor so they follow the theme. CSS shows the one for
+// where a click goes: the moon in light mode, the sun in dark mode.
+const ICON_ATTRS = `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"`;
+const MOON = `<svg class="icon-moon" ${ICON_ATTRS}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>`;
+const SUN =
+  `<svg class="icon-sun" ${ICON_ATTRS}><circle cx="12" cy="12" r="4"/>` +
+  `<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>`;
 
 /** Writes a finished document with the security headers. */
 export function sendDocument(res: ServerResponse, status: number, html: string): void {
@@ -76,7 +85,7 @@ export function pageShell(o: { title: string; active: NavKey; csrf: string; body
     `<form method="post" action="/logout"><input type="hidden" name="csrf" value="${escapeHtml(o.csrf)}"><button type="submit">Sign out</button></form></aside>` +
     `<div class="main"><header class="topbar"><button type="button" class="menu-button" data-menu-toggle aria-controls="sidebar" aria-expanded="false">Menu</button>` +
     `<span class="topbar-title">${escapeHtml(o.title)}</span>` +
-    `<div class="topbar-actions"><button type="button" data-theme-toggle aria-label="Switch between light and dark theme">Theme</button></div></header>` +
+    `<div class="topbar-actions"><button type="button" class="icon-button" data-theme-toggle aria-label="Switch between light and dark theme" title="Switch theme">${MOON}${SUN}</button></div></header>` +
     `<main class="content">${o.body}</main></div></div></body></html>`
   );
 }

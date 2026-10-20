@@ -42,8 +42,9 @@ describe('page shell', () => {
     expect(res.headers.get('referrer-policy')).toBe('same-origin');
     expect(res.headers.get('cache-control')).toBe('no-store');
     const html = await res.text();
-    expect(html).toContain('href="/assets/app.css"');
-    expect(html).toContain('<script src="/assets/app.js"></script>');
+    // Asset links carry a letters-only fingerprint so a deploy never serves a cached old copy.
+    expect(html).toMatch(/href="\/assets\/app\.css\?v=[a-p]+"/);
+    expect(html).toMatch(/<script src="\/assets\/app\.js\?v=[a-p]+"><\/script>/);
     expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/);
     expect(html).not.toMatch(/<script[^>]*>[^<]+<\/script>/);
     expect(html).not.toMatch(/\sstyle=/);
@@ -69,7 +70,7 @@ describe('page shell', () => {
   it('styles the sign-in page', async () => {
     const res = await fetch(url + '/login');
     const html = await res.text();
-    expect(html).toContain('href="/assets/app.css"');
+    expect(html).toMatch(/href="\/assets\/app\.css\?v=[a-p]+"/);
     expect(html).not.toMatch(/\sstyle=/);
   });
 });
@@ -91,8 +92,9 @@ describe('assets', () => {
     expect(css).toContain('[data-theme="light"]');
     expect(css).toContain('prefers-color-scheme: dark');
     expect(css).toContain('https://fonts.googleapis.com/css2');
-    expect(css).toContain('Plus Jakarta Sans');
-    expect(css).toContain('Space Mono');
+    expect(css).toContain('Inter');
+    expect(css).toContain('JetBrains Mono');
+    expect(css).not.toContain('Space Mono');
     expect(css).toContain('max-width: 767px');
   });
 

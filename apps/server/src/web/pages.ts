@@ -2,7 +2,7 @@ import { countActivity, listActivity, type Action, type ActivityRow, type Direct
 import type { Db } from '../db.js';
 import type { HubScope } from '../oauth/config.js';
 import { listGrants } from '../oauth/store.js';
-import { getProject, listProjects, resolveProject } from '../store.js';
+import { getProject, listProjects, projectName, resolveProject } from '../store.js';
 import { listTokens } from '../tokens.js';
 import { computeHealth, type Health, type Problem } from './health.js';
 import { escapeHtml, pageShell } from './html.js';
@@ -23,42 +23,59 @@ const PROJECT_SESSIONS = 10;
  * A stored time as a `<time>` element with UTC text; app.js rewrites the text to the browser's
  * local time and "x ago". A value we cannot read is shown as plain escaped text.
  */
-export function timeTag(iso: string): string {
+export function timeTag(iso: string, mode: TimeMode = 'stack'): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return `<span class="mono">${escapeHtml(iso)}</span>`;
   const s = d.toISOString();
-  return `<time datetime="${escapeHtml(s)}">${s.slice(0, 10)} ${s.slice(11, 16)} UTC</time>`;
+  const form = mode === 'stack' ? '' : ` data-time="${mode}"`;
+  return `<time datetime="${escapeHtml(s)}"${form}>${s.slice(0, 10)} ${s.slice(11, 16)} UTC</time>`;
 }
 
-const card = (label: string, value: string, tone = ''): string =>
-  `<div class="card stat"><span class="stat-label">${label}</span><span class="stat-value${tone ? ` ${tone}` : ''}">${value}</span></div>`;
+/**
+ * How app.js writes a time: `stack` (table cells: short time with "x ago" below), `inline`
+ * (short time · x ago, inside a sentence), `when` (short time only), `ago` (x ago only).
+ */
+export type TimeMode = 'stack' | 'inline' | 'when' | 'ago';
+
+/** A number card: a small label, one large value, and an optional muted line under it. */
+const card = (label: string, value: string, sub = '', tone = ''): string =>
+  `<div class="card stat"><span class="stat-label">${label}</span>` +
+  `<span class="stat-value${tone ? ` ${tone}` : ''}">${value}</span>` +
+  (sub === '' ? '' : `<span class="stat-sub">${sub}</span>`) +
+  `</div>`;
 
 /** One problem or notice: the escaped text, then its time where the rule has one. */
 const line = (p: Problem, suffix = ''): string =>
-  `<li>${escapeHtml(p.text)}${p.at === undefined ? '' : ` ${timeTag(p.at)}`}${suffix}</li>`;
+  `<li>${escapeHtml(p.text)}${p.at === undefined ? '' : ` <span class="muted">${timeTag(p.at, 'inline')}</span>`}${suffix}</li>`;
 
 function cards(h: Health): string {
-  const sync =
-    h.cards.lastSync === null
-      ? '<span class="muted">No sync reported yet</span>'
-      : `${timeTag(h.cards.lastSync.finishedAt)} <span class="muted">${h.cards.lastSync.uploaded} uploaded</span>`;
-  const backup =
-    h.cards.lastBackup === null
-      ? '<span class="muted">No backup status yet</span>'
-      : `${timeTag(h.cards.lastBackup.finished_at)} <span class="muted">${
-          !h.cards.lastBackup.offsite_configured
-            ? 'no off-site storage'
-            : h.cards.lastBackup.offsite_ok === true
-              ? 'off-site too'
-              : 'not off-site'
-        }</span>`;
+  const sync = h.cards.lastSync;
+  const backup = h.cards.lastBackup;
+  const offsite =
+    backup === null
+      ? ''
+      : !backup.offsite_configured
+        ? 'no off-site storage'
+        : backup.offsite_ok === true
+          ? 'copied off-site'
+          : '<span class="bad">not copied off-site</span>';
+  const count = h.problems.length;
   return (
     `<section class="cards">` +
-    card('Status', h.healthy ? 'Healthy' : 'Needs attention', h.healthy ? 'ok' : 'bad') +
+    card(
+      'Status',
+      h.healthy ? 'Healthy' : 'Needs attention',
+      h.healthy ? 'No problems found' : `${count} problem${count === 1 ? '' : 's'} below`,
+      h.healthy ? 'ok' : 'bad',
+    ) +
     card('Projects', String(h.cards.projects)) +
     card('Sessions', String(h.cards.sessions)) +
-    card('Last sync', sync) +
-    card('Last backup', backup) +
+    (sync === null
+      ? card('Last sync', '—', 'No sync reported yet')
+      : card('Last sync', timeTag(sync.finishedAt, 'ago'), `${timeTag(sync.finishedAt, 'when')} · ${sync.uploaded} uploaded`)) +
+    (backup === null
+      ? card('Last backup', '—', 'No backup status yet')
+      : card('Last backup', timeTag(backup.finished_at, 'ago'), `${timeTag(backup.finished_at, 'when')} · ${offsite}`)) +
     `</section>`
   );
 }
@@ -121,14 +138,31 @@ function collapse(rows: ActivityRow[]): ActivityItem[] {
 }
 
 /** One table row, shared by the Overview and the Activity page so both read alike. */
+/**
+ * One table row, shared by the Overview and the Activity page so both read alike. The action is a
+ * small tag; the text beside it says what happened. Uploads folded together read "3 sessions" with
+ * the newest title under it, since one title would misdescribe the rest.
+ */
 function activityRow(item: ActivityItem): string {
   const r = item.row;
-  const what =
+  // An upload's tag is its count ("3 sessions"); every other action's tag is its plain name.
+  const label =
     r.action === 'upload' ? `${item.sessions} session${item.sessions === 1 ? '' : 's'}` : (WHAT[r.action] ?? r.action);
+  const tag = `<span class="tag">${escapeHtml(label)}</span>`;
+  const text =
+    r.detail === null
+      ? ''
+      : r.action === 'upload' && item.sessions > 1
+        ? `<span class="muted">latest:</span> ${escapeHtml(r.detail)}`
+        : escapeHtml(r.detail);
+  const project =
+    r.projectKey === null
+      ? '<span class="muted">—</span>'
+      : `<a href="/projects/${escapeHtml(encodeURIComponent(r.projectKey))}" title="${escapeHtml(r.projectKey)}">${escapeHtml(projectName(r.projectKey))}</a>`;
   return (
-    `<tr><td>${timeTag(r.at)}</td><td>${DIRECTION[r.direction]}</td>` +
-    `<td><span class="mono">${escapeHtml(what)}</span>${r.detail === null ? '' : ` ${escapeHtml(r.detail)}`}</td>` +
-    `<td>${r.projectKey === null ? '' : escapeHtml(r.projectKey)}</td><td>${escapeHtml(r.actor)}</td></tr>`
+    `<tr><td>${timeTag(r.at)}</td><td class="muted">${DIRECTION[r.direction]}</td>` +
+    `<td class="what">${tag}${text}</td>` +
+    `<td>${project}</td><td>${escapeHtml(r.actor)}</td></tr>`
   );
 }
 
@@ -158,8 +192,8 @@ export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string):
           .join('')}</ul></section>`;
   const version =
     cfg.imageTag === null
-      ? `<p class="muted">Started ${timeTag(cfg.startedAt)}</p>`
-      : `<p class="muted">running <code>${escapeHtml(cfg.imageTag)}</code>, started ${timeTag(cfg.startedAt)}</p>`;
+      ? `<p class="footnote">Server started ${timeTag(cfg.startedAt, 'inline')}</p>`
+      : `<p class="footnote">Running <code>${escapeHtml(cfg.imageTag)}</code> · started ${timeTag(cfg.startedAt, 'inline')}</p>`;
   return pageShell({
     title: 'Overview',
     active: 'overview',
@@ -169,7 +203,7 @@ export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string):
       cards(health) +
       problems +
       notices +
-      `<section class="card"><h2>Recent activity</h2>${activityTable(rows)}<p><a href="/activity">All activity</a></p></section>` +
+      `<section class="card"><h2>Recent activity</h2>${activityTable(rows)}<p class="card-foot"><a href="/activity">All activity</a></p></section>` +
       version,
   });
 }
@@ -226,7 +260,7 @@ export function activityPage(db: Db, q: ActivityQuery, csrf: string): string {
     csrf,
     body:
       `<h1>Activity</h1>` +
-      `<p class="muted">What was saved in and read out, newest first. Kept for 30 days.</p>` +
+      `<p class="intro">What was saved into the hub and read from it, newest first. Kept for 30 days.</p>` +
       `<nav class="filters" aria-label="Filter by direction">${filters}</nav>` +
       `<section class="card">${activityTable(rows)}</section>` +
       pager,
@@ -244,8 +278,8 @@ export function projectsPage(db: Db, csrf: string): string {
         projects
           .map(
             (p) =>
-              `<tr><td><a href="/projects/${escapeHtml(encodeURIComponent(p.key))}">${escapeHtml(p.name)}</a>` +
-              `<div class="muted mono">${escapeHtml(p.key)}</div></td>` +
+              `<tr><td class="name"><a href="/projects/${escapeHtml(encodeURIComponent(p.key))}">${escapeHtml(p.name)}</a>` +
+              `<span class="sub mono">${escapeHtml(p.key)}</span></td>` +
               `<td class="num">${p.session_count}</td>` +
               `<td>${p.last_activity_at === null ? '' : timeTag(p.last_activity_at)}</td>` +
               `<td>${timeTag(p.last_synced_at)}</td>` +
@@ -277,9 +311,9 @@ export function projectPage(db: Db, key: string, csrf: string): string | null {
   const state =
     view.state === null
       ? `<section class="card"><p class="muted">No state page yet. One is written after the first summary.</p></section>`
-      : `<section class="card"><p>${escapeHtml(view.state.summary)}</p>` +
+      : `<section class="card"><p class="lead">${escapeHtml(view.state.summary)}</p>` +
         `<div class="state">${renderMarkdown(view.state.body)}</div>` +
-        `<p class="muted">Written ${timeTag(view.state.updated_at)}${
+        `<p class="footnote card-foot">Written ${timeTag(view.state.updated_at, 'inline')}${
           view.state.stale ? ` &middot; <span class="bad">out of date since a session changed</span>` : ''
         }</p></section>`;
 
@@ -290,10 +324,10 @@ export function projectPage(db: Db, key: string, csrf: string): string | null {
         view.recent
           .map(
             (s) =>
-              `<tr><td>${escapeHtml(s.title)}<div class="muted mono">${escapeHtml(s.session_id)}</div></td>` +
-              `<td><span class="mono">${escapeHtml(s.source)}</span></td>` +
+              `<tr><td class="name">${escapeHtml(s.title)}<span class="sub mono">${escapeHtml(s.session_id)}</span></td>` +
+              `<td><span class="tag">${escapeHtml(s.source)}</span></td>` +
               `<td>${s.last_activity_at === null ? '' : timeTag(s.last_activity_at)}</td>` +
-              `<td><span class="mono">${escapeHtml(DIGEST[s.digest_status] ?? s.digest_status)}</span></td></tr>`,
+              `<td>${escapeHtml(DIGEST[s.digest_status] ?? s.digest_status)}</td></tr>`,
           )
           .join('') +
         `</tbody></table></div>`;
@@ -303,10 +337,10 @@ export function projectPage(db: Db, key: string, csrf: string): string | null {
     active: 'projects',
     csrf,
     body:
-      `<h1>${escapeHtml(view.name)}</h1><p class="muted mono">${escapeHtml(view.key)}</p>` +
+      `<h1>${escapeHtml(view.name)}</h1><p class="intro mono">${escapeHtml(view.key)}</p>` +
       state +
       `<section class="card"><h2>Recent sessions and notes</h2>${recent}</section>` +
-      `<p class="muted">Last synced ${timeTag(view.last_synced_at)}</p>`,
+      `<p class="footnote">Last synced ${timeTag(view.last_synced_at, 'inline')}</p>`,
   });
 }
 
@@ -338,27 +372,37 @@ interface SignInEntry {
  */
 function signInGroup(title: string, headers: string[], entries: SignInEntry[], csrf: string): string {
   if (entries.length === 0) return `<section class="card"><h2>${title}</h2><p class="muted">None.</p></section>`;
-  const rows = entries
-    .map((e) => {
-      const action =
-        e.revokedAt === null
-          ? `<form method="post" action="/sign-ins/disconnect">` +
-            `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
-            `<input type="hidden" name="kind" value="${e.kind}">` +
-            `<input type="hidden" name="id" value="${e.id}">` +
-            `<button type="submit" class="danger">Disconnect</button></form>`
-          : `<span class="muted">Disconnected ${timeTag(e.revokedAt)}</span>`;
-      return (
-        `<tr${e.revokedAt === null ? '' : ' class="revoked"'}>` +
-        e.cells.map((c) => `<td>${c}</td>`).join('') +
-        `<td class="actions">${action}</td></tr>`
-      );
-    })
-    .join('');
-  return (
-    `<section class="card"><h2>${title}</h2><div class="table-wrap"><table><thead><tr>` +
+  const row = (e: SignInEntry): string => {
+    const action =
+      e.revokedAt === null
+        ? `<form method="post" action="/sign-ins/disconnect">` +
+          `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+          `<input type="hidden" name="kind" value="${e.kind}">` +
+          `<input type="hidden" name="id" value="${e.id}">` +
+          `<button type="submit" class="danger">Disconnect</button></form>`
+        : `<span class="muted">Disconnected ${timeTag(e.revokedAt, 'inline')}</span>`;
+    return (
+      `<tr${e.revokedAt === null ? '' : ' class="revoked"'}>` +
+      e.cells.map((c, i) => `<td${i === 0 ? ' class="name"' : ''}>${c}</td>`).join('') +
+      `<td class="actions">${action}</td></tr>`
+    );
+  };
+  const table = (list: SignInEntry[]): string =>
+    `<div class="table-wrap"><table><thead><tr>` +
     headers.map((h) => `<th>${h}</th>`).join('') +
-    `<th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`
+    `<th></th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`;
+  // Active entries are what matter; disconnected ones fold away under a native toggle (no script).
+  const active = entries.filter((e) => e.revokedAt === null);
+  const revoked = entries.filter((e) => e.revokedAt !== null);
+  const folded =
+    revoked.length === 0
+      ? ''
+      : `<details class="revoked-list"><summary>Show ${revoked.length} disconnected</summary>${table(revoked)}</details>`;
+  return (
+    `<section class="card"><h2>${title}</h2>` +
+    (active.length === 0 ? `<p class="muted">Nothing connected.</p>` : table(active)) +
+    folded +
+    `</section>`
   );
 }
 
@@ -387,7 +431,7 @@ export function signInsPage(db: Db, csrf: string, currentSessionId: number): str
       id: t.id,
       cells: [
         escapeHtml(t.label),
-        `<span class="mono">${escapeHtml(TOKEN_KIND[t.scope] ?? t.scope)}</span>`,
+        `<span class="tag">${escapeHtml(TOKEN_KIND[t.scope] ?? t.scope)}</span>`,
         timeTag(t.created_at),
         maybeTime(t.last_used_at),
       ],
@@ -398,7 +442,7 @@ export function signInsPage(db: Db, csrf: string, currentSessionId: number): str
     (b): SignInEntry => ({
       kind: 'browser',
       id: b.id,
-      cells: [timeTag(b.createdAt), timeTag(b.lastUsedAt), b.id === currentSessionId ? `<strong>this browser</strong>` : ''],
+      cells: [timeTag(b.createdAt), timeTag(b.lastUsedAt), b.id === currentSessionId ? `<span class="tag">this browser</span>` : ''],
       revokedAt: b.revokedAt,
     }),
   );
@@ -407,7 +451,7 @@ export function signInsPage(db: Db, csrf: string, currentSessionId: number): str
     active: 'sign-ins',
     csrf,
     body:
-      `<h1>Sign-ins</h1><p class="muted">Every way into the hub. Disconnecting asks once more first.</p>` +
+      `<h1>Sign-ins</h1><p class="intro">Every way into the hub. Disconnecting asks once more first.</p>` +
       signInGroup('Claude apps', ['Client', 'Permissions', 'Signed in', 'Last used'], grants, csrf) +
       signInGroup('Tokens', ['Label', 'Kind', 'Created', 'Last used'], tokens, csrf) +
       signInGroup('Browsers', ['Signed in', 'Last used', 'Which'], browsers, csrf),

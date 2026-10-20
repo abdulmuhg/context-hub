@@ -105,7 +105,7 @@ describe('the Overview page', () => {
 
   it('shows the deployed version and when the server started', async () => {
     const html = await overview();
-    expect(html).toContain('running <code>deadbee</code>');
+    expect(html).toContain('Running <code>deadbee</code>');
     expect(html).toContain(`datetime="${ago(HOUR)}"`);
   });
 
