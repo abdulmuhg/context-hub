@@ -2,6 +2,8 @@ export interface OAuthConfig {
   publicUrl: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  /** Test seam: resolves a host name to addresses (default: dns.promises.lookup with all: true). */
+  lookup?: (host: string) => Promise<{ address: string }[]>;
 }
 
 export const ALLOWED_REDIRECTS: readonly string[] = [
