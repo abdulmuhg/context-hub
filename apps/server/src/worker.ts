@@ -191,11 +191,26 @@ async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Pro
   savePage(c, due.project_id, await reviewPage(c, due.project_id, due.project_key, page), false, sourcesBefore);
 }
 
+/** A note is already a summary: its title is the goal and its text is the digest. The model is not called. */
+function noteDigest(c: Ctx, due: DueDigest): { body: DigestBody; text: string } {
+  const first = loadMessages(c.db, due.session_id)[0];
+  const note = first?.kind === 'text' ? first.text : '';
+  const body: DigestBody = { goal: due.title, done: [], decisions: [], open_items: [], key_refs: [] };
+  return { body, text: `Note saved from a chat: ${due.title}
+${note}` };
+}
+
 async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
   const id = `${due.source}:${due.source_session_id}`;
+  const isNote = due.source === 'note';
   let body: DigestBody;
+  let text: string;
   try {
-    body = await writeDigest(c, due);
+    if (isNote) ({ body, text } = noteDigest(c, due));
+    else {
+      body = await writeDigest(c, due);
+      text = renderDigest(body);
+    }
   } catch (e) {
     if (e instanceof LlmRefusal) {
       refuseDigest(c.db, due.session_id, e.category, c.now());
@@ -207,8 +222,7 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
     return 'error';
   }
 
-  const text = renderDigest(body);
-  const saved = saveDigest(c.db, { sessionRowId: due.session_id, hash: due.content_hash, model: c.llm.model, body, text, now: c.now() });
+  const saved = saveDigest(c.db, { sessionRowId: due.session_id, hash: due.content_hash, model: isNote ? 'note' : c.llm.model, body, text, now: c.now() });
   if (!saved) {
     c.log(`digest ${id}: the session changed while its digest was being written; it stays queued`);
     return 'digest';
