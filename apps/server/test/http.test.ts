@@ -5,6 +5,7 @@ import { MAX_BODY } from '../src/http.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import { createGrant, issueTokens, listGrants } from '../src/oauth/store.js';
 import { createToken, revokeToken } from '../src/tokens.js';
+import { contentHash } from '@context-hub/core';
 import { gz, makeSession, startServer, text } from './helpers.js';
 
 const NOW = new Date('2026-10-11T00:00:00.000Z');
@@ -127,6 +128,14 @@ describe('PUT /api/sessions', () => {
       headers: { 'Content-Type': 'application/json' },
     });
     expect(res.status).toBe(200);
+  });
+
+  it('the ingest API refuses source note', async () => {
+    const base = makeSession({ source_session_id: 'x' });
+    const note = { ...base, source: 'note' as never };
+    const res = await put({ ...note, content_hash: contentHash(note) }, ingest, '/api/sessions/note/x');
+    expect(res.status).toBe(400);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 });
   });
 
   // Review Focus 2
