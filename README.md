@@ -7,9 +7,10 @@ stopped. Design: `docs/superpowers/specs/2026-10-10-context-hub-design.md`.
 ## Status
 
 All four parts are built and deployed at https://hub.abdulmughnialfikri.com.
-Every push to `main` deploys. Not built yet: browser login for chat apps
-(claude.ai, ChatGPT, Gemini), a `save` tool, importers for chat-app exports,
-and a dashboard.
+Every push to `main` deploys. Sign-in for the Claude apps is built on the
+`part5-oauth` branch and switches on when `PUBLIC_URL` is set on the server.
+Not built yet: ChatGPT and Gemini sign-in, a `save` tool, importers for
+chat-app exports, and a dashboard.
 
 ## Run the server locally
 
@@ -62,7 +63,7 @@ To sync from inside Claude Code, copy
 
 ## Connect claude.ai
 
-Add the custom connector in claude.ai (Customize > Connectors > Add custom connector) with URL `https://hub.abdulmughnialfikri.com/mcp`.
+Add the custom connector in claude.ai (Customize > Connectors > Add custom connector) with URL `https://hub.abdulmughnialfikri.com/mcp`. Use the URL exactly as written, with no trailing slash.
 
 When claude.ai asks you to sign in, run:
 
