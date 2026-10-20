@@ -180,7 +180,6 @@ const MIGRATIONS: string[] = [
     errors       INTEGER NOT NULL,
     received_at  TEXT NOT NULL
   );
-  CREATE INDEX sync_runs_finished ON sync_runs(finished_at);
 
   -- Browser sign-ins for the dashboard. The cookie value is stored as a sha256 hex hash only.
   CREATE TABLE web_sessions (

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.js';
+import { createToken } from '../src/tokens.js';
 import {
   forgetActivityForProject,
   forgetActivityForSession,
@@ -72,12 +73,13 @@ describe('activity log', () => {
 describe('sync runs', () => {
   it('stores a run, logs one sync row, and returns the newest run', () => {
     const db = openDb(':memory:');
+    const { id } = createToken(db, 'laptop', 'ingest', '2026-10-01T00:00:00.000Z');
     expect(latestSyncRun(db)).toBeNull();
-    recordSyncRun(db, { tokenId: 1, finishedAt: '2026-10-20T01:00:00.000Z', uploaded: 3, unchanged: 7, errors: 0 }, '2026-10-20T01:00:05.000Z');
-    recordSyncRun(db, { tokenId: 2, finishedAt: '2026-10-20T02:00:00.000Z', uploaded: 1, unchanged: 2, errors: 4 }, '2026-10-20T02:00:05.000Z');
+    recordSyncRun(db, { tokenId: id, finishedAt: '2026-10-20T01:00:00.000Z', uploaded: 3, unchanged: 7, errors: 0 }, '2026-10-20T01:00:05.000Z');
+    recordSyncRun(db, { tokenId: 999, finishedAt: '2026-10-20T02:00:00.000Z', uploaded: 1, unchanged: 2, errors: 4 }, '2026-10-20T02:00:05.000Z');
     expect(latestSyncRun(db)).toEqual({
       id: expect.any(Number),
-      tokenId: 2,
+      tokenId: 999,
       finishedAt: '2026-10-20T02:00:00.000Z',
       uploaded: 1,
       unchanged: 2,
@@ -85,9 +87,9 @@ describe('sync runs', () => {
       receivedAt: '2026-10-20T02:00:05.000Z',
     });
     const rows = listActivity(db, { direction: 'in', limit: 10, offset: 0 });
-    expect(rows.map((r) => [r.action, r.detail])).toEqual([
-      ['sync', '1 uploaded, 2 unchanged, 4 errors'],
-      ['sync', '3 uploaded, 7 unchanged'],
+    expect(rows.map((r) => [r.action, r.actor, r.detail])).toEqual([
+      ['sync', 'your PC', '1 uploaded, 2 unchanged, 4 errors'],
+      ['sync', 'your PC (laptop)', '3 uploaded, 7 unchanged'],
     ]);
   });
 });
