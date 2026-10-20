@@ -4,7 +4,9 @@ import { stripSecrets, type HashedSession } from '@context-hub/core';
 import type { Db } from './db.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProject, deleteSession, status, upsertSession } from './store.js';
-import { verifyToken, type Scope } from './tokens.js';
+import { resourceUrl, type OAuthConfig } from './oauth/config.js';
+import { touchGrant } from './oauth/store.js';
+import { checkCredential, type Scope } from './tokens.js';
 import { HttpError, parseSession } from './validate.js';
 
 export const MAX_BODY = 20 * 1024 * 1024;
@@ -16,6 +18,8 @@ export interface AppDeps {
   now?: () => Date;
   limiter?: AuthLimiter;
   log?: (line: string) => void;
+  /** When set, /mcp 401s carry a WWW-Authenticate challenge and OAuth access tokens are accepted there. */
+  oauth?: OAuthConfig;
   /** Handles POST /mcp once the caller is authorised. Wired in main.ts. */
   mcp?: (req: IncomingMessage, res: ServerResponse, body: unknown) => Promise<void>;
 }
@@ -104,17 +108,35 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
   const limiter = deps.limiter ?? new AuthLimiter();
   const log = deps.log ?? ((line: string) => console.log(line));
 
-  const authorise = (req: IncomingMessage, allowed: Scope[]): void => {
+  const challenge = (res: ServerResponse, presented: boolean): void => {
+    if (!deps.oauth) return;
+    const metadata = `resource_metadata="${resourceUrl(deps.oauth).slice(0, -'/mcp'.length)}/.well-known/oauth-protected-resource"`;
+    res.setHeader('WWW-Authenticate', presented ? `Bearer error="invalid_token", ${metadata}` : `Bearer ${metadata}`);
+  };
+
+  /** `mcp` marks the one route that also accepts OAuth access tokens (with hub.read). */
+  const authorise = (req: IncomingMessage, res: ServerResponse, allowed: Scope[], mcp = false): void => {
+    const unauthorised = (presented: boolean): never => {
+      if (mcp) challenge(res, presented);
+      throw new HttpError(401, 'A valid token is required');
+    };
+    const header = req.headers.authorization ?? '';
+    if (header === '') return unauthorised(false);
+    const token = /^Bearer\s+(\S+)$/i.exec(header)?.[1] ?? '';
+    const found = checkCredential(db, token, now().toISOString());
+    if (found !== null && found !== 'dead') {
+      if (found.kind === 'bearer') {
+        if (!allowed.includes(found.scope)) throw new HttpError(403, `This token's scope is ${found.scope}; this needs ${allowed.join(' or ')}`);
+      } else {
+        if (!mcp || !found.scopes.includes('hub.read')) throw new HttpError(403, 'This token cannot be used here; it needs hub.read on /mcp');
+        touchGrant(db, found.grantId, now().toISOString());
+      }
+      return;
+    }
     const address = clientAddress(req);
     if (limiter.isBlocked(address)) throw new HttpError(429, 'Too many failed attempts. Try again in 15 minutes.');
-    const header = req.headers.authorization ?? '';
-    const token = /^Bearer\s+(\S+)$/i.exec(header)?.[1] ?? '';
-    const found = verifyToken(db, token, now().toISOString());
-    if (!found) {
-      limiter.recordFailure(address);
-      throw new HttpError(401, 'A valid token is required');
-    }
-    if (!allowed.includes(found.scope)) throw new HttpError(403, `This token's scope is ${found.scope}; this needs ${allowed.join(' or ')}`);
+    if (found === null) limiter.recordFailure(address);
+    return unauthorised(true);
   };
 
   const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -134,13 +156,13 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     }
 
     if (path === '/api/status' && method === 'GET') {
-      authorise(req, ['ingest', 'read']);
+      authorise(req, res, ['ingest', 'read']);
       return send(res, 200, status(db));
     }
 
     const sessionPath = /^\/api\/sessions\/([^/]+)\/(.+)$/.exec(path);
     if (sessionPath && (method === 'PUT' || method === 'DELETE')) {
-      authorise(req, ['ingest']);
+      authorise(req, res, ['ingest']);
       const source = decodePart(sessionPath[1]!);
       const id = decodePart(sessionPath[2]!);
       if (method === 'DELETE') return send(res, 200, { deleted: deleteSession(db, source, id) });
@@ -153,12 +175,12 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
 
     const projectPath = /^\/api\/projects\/(.+)$/.exec(path);
     if (projectPath && method === 'DELETE') {
-      authorise(req, ['ingest']);
+      authorise(req, res, ['ingest']);
       return send(res, 200, { deleted: deleteProject(db, decodePart(projectPath[1]!)) });
     }
 
     if (path === '/mcp') {
-      authorise(req, ['read']);
+      authorise(req, res, ['read'], true);
       if (method !== 'POST') {
         res.setHeader('Allow', 'POST');
         return send(res, 405, { error: 'Only POST is supported on /mcp' });

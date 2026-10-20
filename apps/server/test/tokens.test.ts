@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.js';
 import { AuthLimiter } from '../src/ratelimit.js';
-import { createToken, listTokens, revokeToken, verifyToken } from '../src/tokens.js';
+import { createGrant, issueTokens, revokeGrant } from '../src/oauth/store.js';
+import { checkCredential, createToken, listTokens, revokeToken, verifyToken } from '../src/tokens.js';
 
 const T0 = '2026-10-11T00:00:00.000Z';
 const T1 = '2026-10-11T01:00:00.000Z';
@@ -103,5 +104,49 @@ describe('AuthLimiter: memory bound', () => {
     for (let i = 0; i < 9000; i++) limiter.recordFailure(`a${i}`);
     for (let i = 0; i < 10; i++) limiter.recordFailure('9.9.9.9');
     expect(limiter.isBlocked('9.9.9.9')).toBe(true);
+  });
+});
+
+describe('checkCredential', () => {
+  const T2 = '2026-10-11T03:00:00.000Z'; // past the one-hour access lifetime
+
+  it('accepts a live bearer token with its scope', () => {
+    const db = openDb(':memory:');
+    const { token } = createToken(db, 'x', 'read', T0);
+    expect(checkCredential(db, token, T1)).toEqual({ kind: 'bearer', scope: 'read' });
+  });
+
+  it('accepts a live OAuth access token with its grant and scopes', () => {
+    const db = openDb(':memory:');
+    const grantId = createGrant(db, { clientId: 'c', clientName: 'Claude', scopes: ['hub.read'] }, T0);
+    const { access } = issueTokens(db, grantId, false, T0);
+    expect(checkCredential(db, access, '2026-10-11T00:30:00.000Z')).toEqual({
+      kind: 'oauth',
+      grantId,
+      scopes: ['hub.read'],
+    });
+  });
+
+  it("is 'dead' for a revoked bearer, an expired access token, or one whose grant is revoked", () => {
+    const db = openDb(':memory:');
+    const b = createToken(db, 'x', 'read', T0);
+    revokeToken(db, b.id, T0);
+    expect(checkCredential(db, b.token, T1)).toBe('dead');
+    const grantId = createGrant(db, { clientId: 'c', clientName: 'Claude', scopes: ['hub.read'] }, T0);
+    const { access } = issueTokens(db, grantId, false, T0);
+    expect(checkCredential(db, access, T2)).toBe('dead');
+    const g2 = createGrant(db, { clientId: 'c', clientName: 'Claude', scopes: ['hub.read'] }, T0);
+    const live = issueTokens(db, g2, false, T0).access;
+    revokeGrant(db, g2, T0);
+    expect(checkCredential(db, live, T0)).toBe('dead');
+  });
+
+  it('is null for an unknown token, an empty one, or a refresh token', () => {
+    const db = openDb(':memory:');
+    const grantId = createGrant(db, { clientId: 'c', clientName: 'Claude', scopes: ['hub.read'] }, T0);
+    const { refresh } = issueTokens(db, grantId, true, T0);
+    expect(checkCredential(db, 'chub_nope', T1)).toBeNull();
+    expect(checkCredential(db, '', T1)).toBeNull();
+    expect(checkCredential(db, refresh!, T0)).toBeNull();
   });
 });

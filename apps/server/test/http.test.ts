@@ -3,7 +3,8 @@ import { gzipSync } from 'node:zlib';
 import { openDb, type Db } from '../src/db.js';
 import { MAX_BODY } from '../src/http.js';
 import { AuthLimiter } from '../src/ratelimit.js';
-import { createToken } from '../src/tokens.js';
+import { createGrant, issueTokens, listGrants } from '../src/oauth/store.js';
+import { createToken, revokeToken } from '../src/tokens.js';
 import { gz, makeSession, startServer, text } from './helpers.js';
 
 const NOW = new Date('2026-10-11T00:00:00.000Z');
@@ -72,17 +73,18 @@ describe('access control', () => {
     expect((await call('GET', '/api/status', { token: ingest })).status).toBe(200);
   });
 
-  it('429 after 10 failed attempts from one address, even with a valid token afterwards', async () => {
+  it('429 after 10 failed attempts from one address; a valid token still passes', async () => {
     for (let i = 0; i < 10; i++) await call('GET', '/api/status', { token: 'chub_bad', headers: { 'X-Forwarded-For': '9.9.9.9' } });
-    const blocked = await call('GET', '/api/status', { token: read, headers: { 'X-Forwarded-For': '9.9.9.9' } });
+    const blocked = await call('GET', '/api/status', { token: 'chub_bad', headers: { 'X-Forwarded-For': '9.9.9.9' } });
     expect(blocked.status).toBe(429);
+    expect((await call('GET', '/api/status', { token: read, headers: { 'X-Forwarded-For': '9.9.9.9' } })).status).toBe(200);
     const other = await call('GET', '/api/status', { token: read, headers: { 'X-Forwarded-For': '8.8.8.8' } });
     expect(other.status).toBe(200);
   });
 
   it('uses the first address in X-Forwarded-For', async () => {
     for (let i = 0; i < 10; i++) await call('GET', '/api/status', { token: 'chub_bad', headers: { 'X-Forwarded-For': '7.7.7.7, 10.0.0.1' } });
-    expect((await call('GET', '/api/status', { token: read, headers: { 'X-Forwarded-For': '7.7.7.7' } })).status).toBe(429);
+    expect((await call('GET', '/api/status', { token: 'chub_bad', headers: { 'X-Forwarded-For': '7.7.7.7' } })).status).toBe(429);
   });
 });
 
@@ -244,5 +246,93 @@ describe('the bare address', () => {
     expect((await call('HEAD', '/')).status).toBe(200);
     expect((await call('GET', '/index.html')).status).toBe(404);
     expect((await call('POST', '/')).status).toBe(404);
+  });
+});
+
+describe('limiter rules', () => {
+  const OAUTH = { publicUrl: 'https://hub.test' };
+  let oUrl: string;
+  let oClose: () => Promise<void>;
+  let nowIso: string;
+
+  const oauthToken = (scopes: ('hub.read' | 'hub.save')[], issuedAt: string): string => {
+    const grantId = createGrant(db, { clientId: 'client-1', clientName: 'Claude', scopes }, issuedAt);
+    return issueTokens(db, grantId, false, issuedAt).access;
+  };
+  const mcp = (token?: string, headers: Record<string, string> = {}) =>
+    fetch(oUrl + '/mcp', {
+      method: 'POST',
+      body: '{}',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
+    });
+
+  beforeEach(async () => {
+    nowIso = NOW.toISOString();
+    ({ url: oUrl, close: oClose } = await startServer({ db, now: () => NOW, limiter: new AuthLimiter(() => 0), oauth: OAUTH }));
+  });
+  afterEach(async () => {
+    await oClose();
+  });
+
+  it('requests without an Authorization header never count', async () => {
+    for (let i = 0; i < 50; i++) expect((await mcp()).status).toBe(401);
+    expect((await mcp(read)).status).not.toBe(429);
+    expect((await mcp(read)).status).toBe(501);
+  });
+
+  it('a valid token passes even from a blocked address', async () => {
+    const h = { 'X-Forwarded-For': '5.5.5.5' };
+    for (let i = 0; i < 10; i++) expect((await mcp('chub_unknown', h)).status).toBe(401);
+    expect((await mcp('chub_unknown', h)).status).toBe(429);
+    expect((await mcp(read, h)).status).not.toBe(429);
+  });
+
+  it('an expired hub-issued access token does not count', async () => {
+    const expired = oauthToken(['hub.read'], '2026-10-10T00:00:00.000Z');
+    for (let i = 0; i < 20; i++) expect((await mcp(expired)).status).toBe(401);
+    expect((await mcp(read)).status).not.toBe(429);
+  });
+
+  it('a revoked ingest or read token does not count either', async () => {
+    const { id, token } = createToken(db, 'old', 'read', nowIso);
+    revokeToken(db, id, nowIso);
+    for (let i = 0; i < 20; i++) expect((await mcp(token)).status).toBe(401);
+    expect((await mcp(read)).status).not.toBe(429);
+  });
+
+  it('/mcp 401 carries WWW-Authenticate when oauth is configured', async () => {
+    const challenge = 'Bearer resource_metadata="https://hub.test/.well-known/oauth-protected-resource"';
+    expect((await mcp()).headers.get('www-authenticate')).toBe(challenge);
+    const wrong = (await mcp('chub_wrong')).headers.get('www-authenticate') ?? '';
+    expect(wrong).toContain(challenge.slice('Bearer '.length));
+    expect(wrong).toContain('error="invalid_token"');
+    const plain = await call('POST', '/mcp', { body: '{}' });
+    expect(plain.status).toBe(401);
+    expect(plain.headers.get('www-authenticate')).toBeNull();
+  });
+
+  it('an OAuth access token with hub.read can call /mcp; an ingest bearer still cannot (403)', async () => {
+    const at = oauthToken(['hub.read'], nowIso);
+    expect((await mcp(at)).status).toBe(501);
+    expect((await mcp(ingest)).status).toBe(403);
+  });
+
+  it('an OAuth token is not accepted outside /mcp', async () => {
+    const at = oauthToken(['hub.read'], nowIso);
+    expect((await fetch(oUrl + '/api/status', { headers: { Authorization: `Bearer ${at}` } })).status).toBe(403);
+  });
+
+  it('a refresh token presented as a bearer is unknown and counts as a failure', async () => {
+    const grantId = createGrant(db, { clientId: 'client-1', clientName: 'Claude', scopes: ['hub.read'] }, nowIso);
+    const rt = issueTokens(db, grantId, true, nowIso).refresh!;
+    const h = { 'X-Forwarded-For': '6.6.6.6' };
+    for (let i = 0; i < 10; i++) expect((await mcp(rt, h)).status).toBe(401);
+    expect((await mcp(rt, h)).status).toBe(429);
+  });
+
+  it('records the last use on the grant', async () => {
+    const at = oauthToken(['hub.read'], '2026-10-11T00:00:00.000Z');
+    await mcp(at);
+    expect(listGrants(db)[0]!.lastUsedAt).toBe(nowIso);
   });
 });
