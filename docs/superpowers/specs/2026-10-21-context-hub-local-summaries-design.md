@@ -48,10 +48,14 @@ not part of this design.
 - **Spending the hub's API key silently.** No step may call the Anthropic API
   with the server's key except the fallback, and only when the owner has set a
   key on the server.
-- **Billing an API account from the computer.** If `ANTHROPIC_API_KEY` (or
-  `ANTHROPIC_AUTH_TOKEN`) is set in the owner's shell, Claude Code would use it
-  instead of the plan. The collector must remove both from the environment of
-  every `claude` it starts.
+- **Billing an API account from the computer, or borrowing a host's
+  sign-in.** If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set, Claude
+  Code uses it instead of the plan. Auto-sync runs from a Claude Code hook and
+  inherits that session's environment. Inside the Claude desktop app this
+  includes `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and
+  `CLAUDE_CODE_SIMPLE=1`, seen in a spike on 2026-10-21. The collector must
+  start every `claude` with all `ANTHROPIC_*` and `CLAUDE*` variables removed,
+  so it signs in from the owner's stored Claude login and nothing else.
 - **Using up the owner's plan in one go.** A sync that hits the Claude usage
   limit blocks the owner's real Claude Code work for hours. Each sync is capped
   (decision 7).
@@ -83,8 +87,14 @@ not part of this design.
      custom commands and agents.
    - **Not `--bare`**: bare mode authenticates only with `ANTHROPIC_API_KEY`
      and never reads the Claude sign-in, which defeats the purpose.
-   - The builder confirms with a real run that a `--safe-mode` run uses the
-     plan sign-in, and that no session file appears under `~/.claude/projects`.
+   - `--safe-mode`'s help text says "Auth, model selection, built-in tools and
+     plugins, and permissions work normally", so it keeps the plan sign-in.
+   - A spike run from inside the Claude desktop app could not reach the API
+     (the app's sandbox only allows its own proxy), so a real run has not yet
+     been confirmed. Before building, confirm one run from an ordinary
+     terminal: it succeeds with the clean environment above, returns the
+     schema's object in `structured_output`, and leaves no new file under
+     `~/.claude/projects`.
 2. **The model is pinned by full ID**, `claude-sonnet-5-5`, never the `sonnet`
    alias, so a new release never silently changes how digests read or how much
    of the plan they use. Effort `low`. Both are per-computer settings in
@@ -103,18 +113,26 @@ not part of this design.
    fixed "Empty session" digest with no model call, as today. If Claude
    declines to summarize a session (a refusal does not change on retry), the
    session is uploaded marked `refused`, as the server does today, instead of
-   waiting forever. **(my call)**
+   waiting forever. A run counts as a refusal when `claude -p`'s JSON
+   reports `stop_reason: "refusal"`. A session whose same content fails for
+   any other reason on 3 syncs in a row is uploaded marked `failed`, so it
+   shows on the dashboard instead of using the cap on every sync. The count
+   is kept in the collector's state file. **(my call)**
 
 ### What `hub sync` does
 
 5. **Order of a sync:**
    1. Read history, resolve projects, keep tracked sessions, clean them (as
       today, unchanged).
-   2. Upload documents and subagent transcripts as today: they have no digest.
+   2. Upload documents as today: they have no digest.
    3. For each new or changed main session: write its digest, then upload the
-      session **and** its digest in one request. If the digest fails, nothing
-      is uploaded for that session and its local sync state is not updated, so
-      the next sync sees it as new work again. No separate queue is kept.
+      session **and** its digest in one request, then its subagent
+      transcripts. If the digest fails, nothing is uploaded for that session
+      or its subagents, and their local sync state is not updated, so the next
+      sync sees them as new work again. No separate queue is kept. Subagents
+      wait with their parent so nothing of a waiting session is searchable
+      **(my call)**. A subagent whose parent is already on the hub and
+      unchanged uploads at once, as today.
    4. For each project that received new digests in this sync, update its
       state page (decision 10).
 6. **Why it waits.** Owner's decision: the hub only ever holds a main session
@@ -155,10 +173,13 @@ not part of this design.
     page marked as behind.
 12. **A page that falls behind is caught up later.** If the page update fails
     (usage limit, refused version twice), the digests are already safe on the
-    hub. The server records that the project's page is behind its digests, and
-    the next sync of that project from any computer rebuilds it, even when
-    that sync has no new sessions. Page updates count toward the per-sync cap
-    **(builder's call how)**.
+    hub. "Behind" is the existing `dirty` flag on `project_states`. It is
+    already set when a session moves project or is deleted (`store.ts`), and
+    it already reaches assistants as `stale`, which is accurate. The status
+    reply lists dirty projects, and the next sync of a tracked one from any
+    computer rebuilds its page, even when that sync has no new sessions.
+    **(my call to reuse `dirty`)** Page updates count toward the per-sync
+    cap **(builder's call how)**.
 
 ### The server
 
@@ -172,9 +193,9 @@ not part of this design.
     - Reading what a state page update needs, and saving a page with its base
       version (decisions 10–11).
     - Saving a digest alone for a session already stored, with the session hash
-      it was written from (for decision 17). Refused if the hash moved.
-    - Listing sessions in a project with their digest's model and status, and
-      returning a stored session's messages (for decision 17).
+      it was written from (for decision 18). Refused if the hash moved.
+    - Listing sessions in a project with their digest's model, writer and
+      status, and returning a stored session's messages (for decision 18).
 
     Paths and payload shapes are the builder's call. This lets the upload
     token read stored transcripts, which it cannot do today. Accepted: it is
@@ -187,29 +208,45 @@ not part of this design.
     means fallback calls only. Recording token counts from `claude -p` output
     is the builder's call; it is never shown as spend.
 15. **The fallback.** If the server has `ANTHROPIC_API_KEY`, its worker keeps
-    writing digests for main sessions that arrive without one, and their state
-    pages, exactly as today, with the daily limit. Only one case sends such a
-    session: a computer where `claude` is not installed, syncing to a server
-    that has a key. `GET /api/status` tells the collector whether the server
-    has a key. Without a key, that computer's sessions wait like any other and
-    sync says to install Claude Code. **(my call; the owner did not object when
-    it was proposed)**
-16. **No key is normal.** The dashboard's "Summaries are off: the server has no
+    writing digests for main sessions that arrive without one, with the daily
+    limit. Only one case sends such a session: a computer where `claude` is
+    not installed, syncing to a server that has a key. `GET /api/status`
+    tells the collector whether the server has a key. Without a key, that
+    computer's sessions wait like any other and sync says to install Claude
+    Code. **(my call; the owner did not object when it was proposed)**
+
+    The worker rebuilds a state page only right after writing a fallback
+    digest for that project, not for every `dirty` page as it does today.
+    Pages made dirty by computer digests, moves or deletes are left to the
+    next sync, so the key is never spent on them. **(my call)**
+16. **Notes need no model and no key.** A note (`source = 'note'`, created on
+    the server by `save_note`) is its own digest today (`noteDigest` in
+    `worker.ts`, model `note`). After this change the server writes that
+    digest at once when the note is saved, with or without a key, and marks
+    the project's page dirty so the next sync folds the note in. Notes are
+    never resummarized.
+17. **No key is normal.** The dashboard's "Summaries are off: the server has no
     model key" warning goes. A warning remains for pages that are behind and
     for sessions stuck in `pending` with no key to write them.
 
 ### Rewriting the Haiku digests
 
-17. **`hub resummarize [<project>]`** (name is the builder's call) rewrites
-    digests not written by the current model, for tracked projects. The
-    collector asks the server which sessions qualify, downloads each stored
+18. **`hub resummarize [<project>]`** (name is the builder's call) rewrites,
+    for tracked projects, every main-session digest that was not written by a
+    computer: today's Haiku digests, fallback digests, and `pending`,
+    `failed` or `refused` ones. Notes and documents are left out. Digests a
+    computer wrote are rewritten only when asked
+    (`--model-not <id>`, builder's call on the flag), so two computers set to
+    different models never keep rewriting each other's. **(my call; the owner
+    asked whether Haiku's gaps can be recovered, and this is the command that
+    does it)** The collector asks the server which sessions qualify, downloads each stored
     session's messages from the server, writes the digest with the current
     model, uploads the digest alone, and finally fully rebuilds each touched
     project's page. It downloads from the server rather than reading local
     files because Claude Code deletes local transcripts after 30 days by
     default, so for older sessions the server's copy is often the only one.
     It obeys the same cap, `--all` and usage-limit rules as sync.
-18. **What a rewrite can and cannot recover.** It works from the full cleaned
+19. **What a rewrite can and cannot recover.** It works from the full cleaned
     transcript the server stores, so anything Haiku missed or got wrong that is
     in the conversation can be recovered. It cannot recover what was never
     stored: stripped secrets and personal data, text a tool's adapter dropped
@@ -225,7 +262,10 @@ not part of this design.
 - Auto-sync runs as a detached child with a lock that is treated as abandoned
   after 10 minutes (`apps/collector/src/auto.ts`, `LOCK_MAX_AGE_MS`). A sync
   that writes digests can run longer, so the lock must stay fresh while it
-  works, or two auto-syncs would write the same digests twice.
+  works, or two auto-syncs would write the same digests twice. A session
+  that ends while an auto-sync is still running is skipped by that run's
+  lock, as today; it is picked up by the next sync, because its local state
+  was not updated.
 - Existing digests and pages stay valid; a migration adds the new columns
   (writer, page version, page-behind flag) with sensible values for old rows.
 - Older collectors that upload sessions without digests must keep working:
