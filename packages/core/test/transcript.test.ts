@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { DigestBody } from '../src/digest-store.js';
-import { DigestSchema, LlmRefusal, StateSchema } from '../src/llm.js';
-import { renderDigest, renderLines, splitParts, TOOL_FIELD_CAP } from '../src/transcript.js';
-import { FakeLlm, text, tool } from './helpers.js';
+import { DigestSchema, LlmRefusal, StateSchema, type DigestBody } from '../src/index.js';
+import { renderDigest, renderLines, splitParts, TOOL_FIELD_CAP } from '../src/index.js';
+import { FakeLlm, text, tool } from './fake-llm.js';
 
 describe('renderLines', () => {
   it('numbers each message by its seq and labels the speaker', () => {

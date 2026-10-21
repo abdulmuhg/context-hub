@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
 import { getDigest, getProjectState, saveProjectState } from '../src/digest-store.js';
-import { LlmRefusal } from '../src/llm.js';
+import { LlmRefusal } from '@context-hub/core';
 import { saveNote } from '../src/notes.js';
 import { recordUsage } from '../src/usage.js';
 import { search } from '../src/search.js';

@@ -1,20 +1,9 @@
+import type { DigestBody, DigestItem } from '@context-hub/core';
 import type { Db } from './db.js';
 
+export type { DigestBody, DigestItem };
+
 export type DigestStatus = 'pending' | 'ok' | 'failed' | 'refused';
-
-export interface DigestItem {
-  text: string;
-  /** Position of the message that supports this item, when the model gave one. */
-  seq: number | null;
-}
-
-export interface DigestBody {
-  goal: string;
-  done: DigestItem[];
-  decisions: { what: string; why: string; seq: number | null }[];
-  open_items: DigestItem[];
-  key_refs: string[];
-}
 
 export interface DigestRow {
   session_id: number;

@@ -1,6 +1,18 @@
 import * as z from 'zod/v4';
-import type { DigestBody } from './digest-store.js';
-import type { PageReview } from './page-review.js';
+
+export interface DigestItem {
+  text: string;
+  /** Position of the message that supports this item, when the model gave one. */
+  seq: number | null;
+}
+
+export interface DigestBody {
+  goal: string;
+  done: DigestItem[];
+  decisions: { what: string; why: string; seq: number | null }[];
+  open_items: DigestItem[];
+  key_refs: string[];
+}
 
 const Item = z.object({
   text: z.string(),
@@ -24,39 +36,6 @@ export const StateSchema = z.object({
 
 export type StatePage = z.infer<typeof StateSchema>;
 
-/** The model declined the request. Retrying the same input would decline again. */
-export class LlmRefusal extends Error {
-  constructor(public readonly category: string) {
-    super(`the model declined this request (${category})`);
-  }
-}
-
-export interface DigestRequest {
-  project: string;
-  title: string;
-  /** Numbered transcript lines, already within the size limit. */
-  transcript: string;
-  /** Set when the session was too long for one request. */
-  part: { index: number; total: number } | null;
-}
-
-export interface StateRequest {
-  project: string;
-  /** merge: fold one new digest into the previous page. rebuild: write the page from all digests. */
-  mode: 'merge' | 'rebuild';
-  previous: string | null;
-  digests: { session_id: string; title: string; date: string | null; text: string }[];
-}
-
-export interface Llm {
-  readonly model: string;
-  digest(req: DigestRequest): Promise<DigestBody>;
-  mergeDigests(req: { project: string; title: string; parts: DigestBody[] }): Promise<DigestBody>;
-  projectState(req: StateRequest): Promise<StatePage>;
-  /** Names lines on a finished page that the sessions show are settled, and rewrites the summary. */
-  reviewState(req: ReviewRequest): Promise<PageReview>;
-}
-
 const Drop = z.object({
   item: z.number().int().describe('The number of the line, as given'),
   session_id: z.string().describe('The id of the session that shows it, exactly as given'),
@@ -68,9 +47,14 @@ export const ReviewSchema = z.object({
   summary: z.string().describe('One sentence of at most 25 words: where the project stands, written from the page without the dropped lines'),
 });
 
-export interface ReviewRequest {
-  project: string;
-  page: StatePage;
-  /** The page's sources and any newer sessions, newest first. */
-  digests: { session_id: string; title: string; date: string | null; text: string }[];
+/** The JSON Schema form of a zod schema, as `claude --json-schema` takes it. */
+export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
+  return z.toJSONSchema(schema) as Record<string, unknown>;
 }
+
+/** What a computer sends with a session: its digest, or the reason there is none. */
+export type UploadDigest =
+  | { body: DigestBody; model: string }
+  | { refused: string; model: string }
+  | { failed: string }
+  | { summary_to_follow: true };

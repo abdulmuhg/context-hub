@@ -1,6 +1,7 @@
+import type { UsageKind } from '@context-hub/core';
 import type { Db } from './db.js';
 
-export type UsageKind = 'digest' | 'merge' | 'state' | 'shorten' | 'review';
+export type { UsageKind };
 
 export interface UsageRecord {
   model: string;

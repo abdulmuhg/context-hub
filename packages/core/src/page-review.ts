@@ -1,4 +1,4 @@
-import type { StatePage } from './llm.js';
+import type { StatePage } from './summary-schema.js';
 
 /**
  * A second look at a finished state page. The page is written in one pass, and
