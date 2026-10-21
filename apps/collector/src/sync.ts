@@ -1,8 +1,12 @@
 import { existsSync } from 'node:fs';
 import { sep } from 'node:path';
-import { sanitizeSession, type PersonalConfig } from '@context-hub/core';
+import { sanitizeSession, type HashedSession, type Llm, type PersonalConfig, type UploadDigest } from '@context-hub/core';
 import { ALL_ADAPTERS, type Adapter, type RawSession, type SessionFile } from './adapters/index.js';
+import { ClaudeCodeLlm, findClaude } from './claude-llm.js';
 import {
+  DEFAULT_SUMMARY_EFFORT,
+  DEFAULT_SUMMARY_MODEL,
+  SUMMARY_CAP,
   loadConfig,
   loadPersonal,
   loadState,
@@ -11,10 +15,14 @@ import {
   settingsFingerprint,
   type Config,
   type State,
+  type StateEntry,
 } from './config.js';
 import { discoverDocs, docId, readDoc } from './docs.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
-import { deleteRemote, putSession, reportSyncRun, type Remote } from './upload.js';
+import { budgetOpen, catchUpOwed, newBudget, spend, stopReason, summarize, type SessionRef } from './summaries.js';
+import { deleteRemote, getStatus, putSession, reportSyncRun, type HubStatus, type Remote } from './upload.js';
+
+export type { SessionRef };
 
 export interface SyncOptions {
   /** The user's home folder, where the tools keep their history. */
@@ -30,18 +38,24 @@ export interface SyncOptions {
   exists?: (path: string) => boolean;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  /**
+   * Writes the summaries. Left out, Claude Code on this computer is used; null means it is not installed.
+   * Tests pass a fake.
+   */
+  llm?: Llm | null;
+  /** Lifts the cap on summaries written in this run. */
+  all?: boolean;
   /** Called before each session or document that has to be read and possibly uploaded. */
   onProgress?: (p: { done: number; total: number; project: string }) => void;
-}
-
-export interface SessionRef {
-  project: string;
-  session: string;
 }
 
 export interface SyncReport {
   uploaded: SessionRef[];
   wouldUpload: SessionRef[];
+  /** Sessions whose summary was written in this run. */
+  summarized: SessionRef[];
+  /** What a dry run would summarize. No model is called. */
+  wouldSummarize: SessionRef[];
   /** Documents whose file is gone, removed from the server. */
   deleted: SessionRef[];
   wouldDelete: SessionRef[];
@@ -50,6 +64,10 @@ export interface SyncReport {
   personal: { session: string; type: string; count: number }[];
   warnings: { session: string; bad_lines: number; unknown_records: number; dropped_blocks: number }[];
   errors: string[];
+  /** Sessions that did not go up because their summary could not be written, and why. */
+  waiting: { count: number; reason: string | null };
+  /** State pages written in this run, and those left for a later sync. */
+  pages: { updated: string[]; left: string[] };
   /** Set when the run finished but the server could not be told about it. */
   reportError?: string;
 }
@@ -69,6 +87,8 @@ interface Scan {
   cfg: Config;
   state: State;
   fingerprint: string;
+  /** The cleaning settings changed since the last complete sync, so every session is cleaned again. */
+  recleaning: boolean;
   personal: PersonalConfig;
   items: Scanned[];
   errors: string[];
@@ -137,6 +157,7 @@ function scan(opts: Pick<SyncOptions, 'home' | 'hubDir' | 'adapters' | 'git' | '
     cfg,
     state,
     fingerprint,
+    recleaning: force,
     personal: { card: cfg.personal.card, list: cfg.personal.list, entries },
     items,
     errors,
@@ -177,11 +198,31 @@ function isSelected(item: Scanned, cfg: Config, opts: SyncOptions): boolean {
   return projectSelected(item.projectKey, cfg, opts);
 }
 
+/** A changed session or document, read and cleaned, waiting to be uploaded. */
+interface Work {
+  item: Scanned;
+  raw: RawSession;
+  session: HashedSession;
+  ref: SessionRef;
+  prev: StateEntry | undefined;
+  secrets: Record<string, number>;
+  personal: Record<string, number>;
+}
+
+/** Builds the Claude Code writer from this computer's settings, or null when `claude` is not installed. */
+function buildLlm(cfg: Config): Llm | null {
+  const cmd = findClaude();
+  if (cmd === null) return null;
+  return new ClaudeCodeLlm({ model: cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL, effort: cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT, cmd });
+}
+
 export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   const s = scan(opts);
   const report: SyncReport = {
     uploaded: [],
     wouldUpload: [],
+    summarized: [],
+    wouldSummarize: [],
     deleted: [],
     wouldDelete: [],
     unchanged: 0,
@@ -189,6 +230,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     personal: [],
     warnings: [],
     errors: [...s.errors],
+    waiting: { count: 0, reason: null },
+    pages: { updated: [], left: [] },
   };
   const dryRun = opts.dryRun === true;
   const now = opts.now ?? (() => new Date());
@@ -202,30 +245,35 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     }
     remote = { url: s.cfg.server_url, token, fetchImpl: opts.fetchImpl };
   }
+  const llm: Llm | null = dryRun ? null : opts.llm !== undefined ? opts.llm : buildLlm(s.cfg);
+  const budget = newBudget(opts.all);
 
   let stopped = false; // set after the first failed upload
   const total = s.items.filter((i) => isSelected(i, s.cfg, opts) && !(s.state.files[i.file.path]?.hash != null && i.same)).length;
   let done = 0;
 
+  const remember = (w: Pick<Work, 'item'>, hash: string | null, syncedAt: string | null): void => {
+    if (dryRun) return;
+    const { file, projectKey } = w.item;
+    s.state.files[file.path] = { size: file.size, mtimeMs: file.mtimeMs, project_key: projectKey, hash, synced_at: syncedAt };
+  };
+
+  // Read and clean everything that changed. Nothing is uploaded yet: a main session goes up with its summary.
+  const works: Work[] = [];
   for (const item of s.items) {
     const { file, sessionKey, projectKey } = item;
     const prev = s.state.files[file.path];
-    const remember = (hash: string | null, syncedAt: string | null): void => {
-      if (dryRun) return;
-      s.state.files[file.path] = { size: file.size, mtimeMs: file.mtimeMs, project_key: projectKey, hash, synced_at: syncedAt };
-    };
 
     if (!isSelected(item, s.cfg, opts)) {
       if (prev) {
         if (!dryRun) prev.project_key = projectKey; // keep size, mtime and hash paired; only the cached key may move
-      } else remember(null, null);
+      } else remember({ item }, null, null);
       continue;
     }
     if (prev && item.same && prev.hash !== null) {
       report.unchanged++;
       continue;
     }
-    if (stopped) continue;
     opts.onProgress?.({ done: ++done, total, project: projectKey });
 
     let raw: RawSession;
@@ -253,30 +301,172 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
 
     if (prev?.hash === result.session.content_hash) {
       report.unchanged++;
-      remember(prev.hash, prev.synced_at);
+      remember({ item }, prev.hash, prev.synced_at);
+      continue;
+    }
+    works.push({ item, raw, session: result.session, ref: { project: projectKey, session: sessionKey }, prev, secrets: result.secrets, personal: result.personal });
+  }
+
+  /** Adds what cleaning found in a session to the report, once the session is uploaded (or listed in a dry run). */
+  const recordFindings = (w: Work): void => {
+    for (const [type, n] of Object.entries(w.secrets)) report.secrets[type] = (report.secrets[type] ?? 0) + n;
+    for (const [type, count] of Object.entries(w.personal)) report.personal.push({ session: w.ref.session, type, count });
+    const warn = w.raw.warnings;
+    if (warn.bad_lines + warn.unknown_records + warn.dropped_blocks > 0) report.warnings.push({ session: w.ref.session, ...warn });
+  };
+
+  /** Uploads one session, with its summary if it has one. False when the upload failed, after which nothing more is sent. */
+  const upload = async (w: Work, digest?: UploadDigest): Promise<boolean> => {
+    if (dryRun) {
+      report.wouldUpload.push(w.ref);
+      recordFindings(w);
+      return true;
+    }
+    try {
+      await putSession(remote!, w.session, digest);
+    } catch (e) {
+      report.errors.push((e as Error).message);
+      stopped = true;
+      return false;
+    }
+    report.uploaded.push(w.ref);
+    if (digest && 'body' in digest) report.summarized.push(w.ref);
+    remember(w, w.session.content_hash, now().toISOString());
+    recordFindings(w);
+    return true;
+  };
+
+  const isDoc = (w: Work): boolean => w.item.file.source === 'doc';
+  const isMain = (w: Work): boolean => w.item.file.parent === null && !isDoc(w);
+
+  // Documents have no summary: they go up as they are.
+  for (const w of works.filter(isDoc)) {
+    if (stopped) break;
+    await upload(w);
+  }
+
+  // The cleaning settings changed: every session already on the hub goes up again at once, so the old
+  // text (which may hold what was just removed) is replaced. Its summary is written on a later sync.
+  const recleaned = new Set<Work>();
+  if (s.recleaning) {
+    for (const w of works) {
+      if (isDoc(w) || w.prev?.hash == null) continue;
+      recleaned.add(w);
+      if (stopped) continue;
+      await upload(w, isMain(w) ? { summary_to_follow: true } : undefined);
+    }
+  }
+  const fresh = works.filter((w) => !isDoc(w) && !recleaned.has(w));
+
+  // Ask the hub what it needs from this computer.
+  let status: HubStatus | null = null;
+  if (!dryRun && !stopped) {
+    try {
+      status = await getStatus(remote!);
+    } catch {
+      status = null;
+    }
+  }
+
+  let failure: string | null = null;
+  let capHit = false;
+  let notInstalled = false;
+  let waiting = 0;
+
+  // Summaries owed after an earlier re-clean come first.
+  if (llm && status && (status.summaries_owed ?? 0) > 0 && !opts.session && !stopped) {
+    const projects = s.cfg.tracked.filter((key) => !opts.project || projectMatches(opts.project, key));
+    try {
+      const owed = await catchUpOwed(remote!, llm, projects, budget);
+      report.summarized.push(...owed.written);
+      waiting += owed.waiting;
+      failure = owed.failure ?? failure;
+    } catch (e) {
+      report.errors.push((e as Error).message);
+      stopped = true;
+    }
+  }
+
+  // New and changed main sessions, newest first, each with its summary.
+  const mains = fresh.filter(isMain).sort((a, b) => (b.session.last_activity_at ?? '').localeCompare(a.session.last_activity_at ?? ''));
+  const subsOf = (w: Work): Work[] => fresh.filter((x) => x.item.parentKey === w.item.sessionKey);
+  const mainKeys = new Set(mains.map((w) => w.item.sessionKey));
+
+  for (const w of mains) {
+    if (stopped) break;
+    const quiet = w.session.messages.length === 0; // an empty session is summarized without a model call
+    let digest: UploadDigest | undefined;
+
+    if (dryRun) {
+      if (quiet || budgetOpen(budget)) {
+        if (!quiet) spend(budget);
+        report.wouldSummarize.push(w.ref);
+      } else {
+        capHit = true;
+        waiting++;
+      }
+      await upload(w);
+      for (const sub of subsOf(w)) await upload(sub);
       continue;
     }
 
-    const ref: SessionRef = { project: projectKey, session: sessionKey };
-    if (dryRun) {
-      report.wouldUpload.push(ref);
-    } else {
-      try {
-        await putSession(remote!, result.session);
-      } catch (e) {
-        report.errors.push((e as Error).message);
-        stopped = true;
+    if (llm === null) {
+      if (status?.server_summaries !== true) {
+        notInstalled = true;
+        waiting++;
         continue;
       }
-      report.uploaded.push(ref);
-      remember(result.session.content_hash, now().toISOString());
+      // The hub writes this one with its own key.
+    } else {
+      if (!quiet && !budgetOpen(budget)) {
+        if (budget.stopped === null) capHit = true;
+        waiting++;
+        continue;
+      }
+      if (!quiet) spend(budget);
+      try {
+        digest = await summarize(llm, w.session);
+      } catch (e) {
+        const stop = stopReason(e);
+        if (stop !== null) {
+          budget.stopped = stop;
+          waiting++;
+          continue;
+        }
+        const message = (e as Error).message;
+        const hash = w.session.content_hash;
+        const count = (w.prev?.digest_failures?.hash === hash ? w.prev.digest_failures.count : 0) + 1;
+        if (count >= 3) {
+          digest = { failed: message };
+        } else {
+          const { file, projectKey } = w.item;
+          const entry = w.prev ?? { size: file.size, mtimeMs: file.mtimeMs, project_key: projectKey, hash: null, synced_at: null };
+          s.state.files[file.path] = { ...entry, digest_failures: { hash, count } };
+          failure = `summary failed: ${message}`;
+          waiting++;
+          continue;
+        }
+      }
     }
 
-    for (const [type, n] of Object.entries(result.secrets)) report.secrets[type] = (report.secrets[type] ?? 0) + n;
-    for (const [type, count] of Object.entries(result.personal)) report.personal.push({ session: sessionKey, type, count });
-    const w = raw.warnings;
-    if (w.bad_lines + w.unknown_records + w.dropped_blocks > 0) report.warnings.push({ session: sessionKey, ...w });
+    if (!(await upload(w, digest))) break;
+    for (const sub of subsOf(w)) if (!(await upload(sub))) break;
   }
+
+  // A subagent whose parent is already on the hub and unchanged goes up at once.
+  for (const w of fresh.filter((x) => !isMain(x))) {
+    if (stopped) break;
+    if (w.item.parentKey !== null && mainKeys.has(w.item.parentKey)) continue;
+    await upload(w);
+  }
+
+  report.waiting = {
+    count: waiting,
+    reason:
+      waiting === 0
+        ? null
+        : (budget.stopped ?? (notInstalled ? 'Claude Code is not installed' : capHit ? `cap of ${SUMMARY_CAP} reached. Run hub sync --all to catch up` : failure)),
+  };
 
   for (const gone of vanishedDocs(s, opts)) {
     if (dryRun) {
@@ -298,6 +488,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   if (!dryRun) {
     // Keep forcing a full pass until one finishes cleanly.
     if (!opts.project && !opts.session && report.errors.length === 0) s.state.fingerprint = s.fingerprint;
+    if (report.waiting.count > 0) s.state.last_waiting = { ...report.waiting, at: now().toISOString() };
+    else delete s.state.last_waiting;
     saveState(opts.hubDir, s.state);
     try {
       await reportSyncRun(remote!, {

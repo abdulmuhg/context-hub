@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from '../src/auto.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
+import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
 import { tempDir, writeJsonl, writeRaw } from './helpers.js';
 
 const CMD = hookCommand('/usr/bin/node', '/home/me/.local/hub/bin.js');
@@ -131,6 +132,7 @@ describe('runAutoChild', () => {
         return new Response('{}', { status: 200 });
       },
       now: () => T0,
+      llm: new FakeLlm(),
     };
   });
 

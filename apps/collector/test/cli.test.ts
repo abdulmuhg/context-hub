@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { newProjects, run, type Io } from '../src/cli.js';
 import { SLASH_COMMANDS } from '../src/commands.js';
 import { loadConfig, loadPersonal, loadToken, saveConfig } from '../src/config.js';
+import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
 import { tempDir, writeJsonl } from './helpers.js';
 
 const S1 = '11111111-1111-4111-8111-111111111111';
@@ -30,6 +31,7 @@ beforeEach(() => {
     ask: async () => answers.shift() ?? '',
     exists: () => true,
     git: (_cwd, args) => (args[0] === 'remote' ? 'git@github.com:me/alpha.git' : '/work/alpha'),
+    llm: new FakeLlm(),
     fetchImpl: async (input, init) => {
       requests.push({ method: init?.method ?? 'GET', url: String(input) });
       return new Response('{"sessions":1}', { status: 200 });
@@ -229,6 +231,7 @@ describe('hub sync', () => {
     expect(await run(['sync'], io)).toBe(0);
     expect(out.join('\n')).toMatch(/Uploaded 1 session/);
     expect(requests).toEqual([
+      { method: 'GET', url: 'https://hub.example.com/api/status' },
       { method: 'PUT', url: `https://hub.example.com/api/sessions/claude-code/${S1}` },
       { method: 'POST', url: 'https://hub.example.com/api/sync-runs' },
     ]);

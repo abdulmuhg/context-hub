@@ -1,5 +1,5 @@
 import { gzipSync } from 'node:zlib';
-import type { HashedSession } from '@context-hub/core';
+import type { HashedSession, UploadDigest } from '@context-hub/core';
 
 export interface Remote {
   url: string;
@@ -13,7 +13,8 @@ function base(remote: Remote): string {
   return remote.url.replace(/\/+$/, '');
 }
 
-async function send(remote: Remote, method: string, path: string, body?: Uint8Array<ArrayBuffer>): Promise<Response> {
+/** Sends a request and returns the answer whatever its status. Throws only when the server cannot be reached. */
+async function request(remote: Remote, method: string, path: string, body?: Uint8Array<ArrayBuffer>): Promise<Response> {
   const doFetch = remote.fetchImpl ?? fetch;
   const headers: Record<string, string> = { Authorization: `Bearer ${remote.token}` };
   if (body) {
@@ -26,13 +27,52 @@ async function send(remote: Remote, method: string, path: string, body?: Uint8Ar
   } catch (e) {
     throw new Error(`could not reach ${base(remote)}: ${(e as Error).message}`);
   }
+  return res;
+}
+
+async function send(remote: Remote, method: string, path: string, body?: Uint8Array<ArrayBuffer>): Promise<Response> {
+  const res = await request(remote, method, path, body);
   if (!res.ok) throw new Error(`${method} ${path}: server answered ${res.status}`);
   return res;
 }
 
-export async function putSession(remote: Remote, session: HashedSession): Promise<void> {
-  const path = `/api/sessions/${session.source}/${encodeURIComponent(session.source_session_id)}`;
-  await send(remote, 'PUT', path, gzipSync(Buffer.from(JSON.stringify(session), 'utf8')));
+const gz = (value: unknown): Uint8Array<ArrayBuffer> => gzipSync(Buffer.from(JSON.stringify(value), 'utf8'));
+const sessionPath = (ref: { source: string; id: string }): string => `/api/sessions/${ref.source}/${encodeURIComponent(ref.id)}`;
+
+/** Uploads a session, with the summary written for it when there is one. */
+export async function putSession(remote: Remote, session: HashedSession, digest?: UploadDigest): Promise<void> {
+  const path = sessionPath({ source: session.source, id: session.source_session_id });
+  await send(remote, 'PUT', path, gz(digest === undefined ? session : { ...session, digest }));
+}
+
+/** Saves a summary for a session already on the hub. 'moved' means the session changed since the summary was written. */
+export async function putDigest(remote: Remote, ref: { source: string; id: string }, hash: string, digest: UploadDigest): Promise<'saved' | 'moved'> {
+  const path = `${sessionPath(ref)}/digest`;
+  const res = await request(remote, 'PUT', path, gz({ hash, digest }));
+  if (res.status === 409) return 'moved';
+  if (!res.ok) throw new Error(`PUT ${path}: server answered ${res.status}`);
+  return 'saved';
+}
+
+/** A stored session with its cleaned messages, as the hub holds it. */
+export async function getSession(remote: Remote, ref: { source: string; id: string }): Promise<HashedSession> {
+  return ((await (await send(remote, 'GET', sessionPath(ref))).json()) as { session: HashedSession }).session;
+}
+
+export interface ProjectDigestEntry {
+  source: string;
+  id: string;
+  content_hash: string;
+  last_activity_at: string | null;
+  status: 'pending' | 'ok' | 'failed' | 'refused' | null;
+  model: string | null;
+  written_by: string | null;
+  summary_to_follow: boolean;
+}
+
+/** The main sessions of a project with who wrote each summary. */
+export async function listProjectDigests(remote: Remote, key: string): Promise<ProjectDigestEntry[]> {
+  return ((await (await send(remote, 'GET', `/api/projects/${encodeURIComponent(key)}/digests`)).json()) as { sessions: ProjectDigestEntry[] }).sessions;
 }
 
 export async function deleteRemote(
@@ -50,8 +90,20 @@ export async function requestConnectCode(remote: Remote): Promise<{ code: string
   return (await (await send(remote, 'POST', '/api/connect-code')).json()) as { code: string; expires_at: string };
 }
 
-export async function getStatus(remote: Remote): Promise<unknown> {
-  return (await send(remote, 'GET', '/api/status')).json();
+export interface HubStatus {
+  projects?: number;
+  sessions?: number;
+  /** True when the hub has a model key and writes summaries for computers that cannot. */
+  server_summaries?: boolean;
+  /** Projects whose state page is dirty, missing or behind. */
+  pages_needed?: string[];
+  /** Sessions a computer still owes a summary for after re-cleaning. */
+  summaries_owed?: number;
+  [key: string]: unknown;
+}
+
+export async function getStatus(remote: Remote): Promise<HubStatus> {
+  return (await send(remote, 'GET', '/api/status')).json() as Promise<HubStatus>;
 }
 
 /** Tells the server a sync run finished. Gives up after 10 seconds. */
@@ -59,7 +111,7 @@ export async function reportSyncRun(
   remote: Remote,
   r: { finished_at: string; uploaded: number; unchanged: number; errors: number },
 ): Promise<void> {
-  await send({ ...remote, timeoutMs: 10_000 }, 'POST', '/api/sync-runs', gzipSync(Buffer.from(JSON.stringify(r), 'utf8')));
+  await send({ ...remote, timeoutMs: 10_000 }, 'POST', '/api/sync-runs', gz(r));
 }
 
 /** Swaps a one-time device code from the dashboard for an upload token. Needs no credential. */

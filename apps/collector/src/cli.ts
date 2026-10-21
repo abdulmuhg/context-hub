@@ -5,7 +5,7 @@ import { basename, join, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
 import { SLASH_COMMANDS } from './commands.js';
-import type { Level } from '@context-hub/core';
+import type { Level, Llm } from '@context-hub/core';
 import {
   loadConfig,
   loadPersonal,
@@ -27,6 +27,8 @@ export interface Io {
   err: (line: string) => void;
   ask: (question: string) => Promise<string>;
   fetchImpl?: typeof fetch;
+  /** Writes the summaries. Left out, Claude Code on this computer is used. Tests pass a fake. */
+  llm?: Llm | null;
   git?: GitRunner;
   exists?: (path: string) => boolean;
   hostname?: () => string;
@@ -432,7 +434,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         return 0;
       }
       if (values['auto-child']) {
-        await runAutoChild({ ...scanOpts(io), fetchImpl: io.fetchImpl });
+        await runAutoChild({ ...scanOpts(io), fetchImpl: io.fetchImpl, ...(io.llm !== undefined ? { llm: io.llm } : {}) });
         return 0;
       }
       const dryRun = values['dry-run'] === true;
@@ -449,6 +451,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const report = await runSync({
         ...scanOpts(io),
         fetchImpl: io.fetchImpl,
+        ...(io.llm !== undefined ? { llm: io.llm } : {}),
         dryRun,
         project: values.project,
         session: values.session,

@@ -46,6 +46,8 @@ export interface StateEntry {
   /** Content hash last confirmed by the server, or null if never uploaded. */
   hash: string | null;
   synced_at: string | null;
+  /** How many syncs in a row failed to write a summary for this content. At 3 the session is uploaded as failed. */
+  digest_failures?: { hash: string; count: number };
 }
 
 export interface State {
@@ -53,6 +55,8 @@ export interface State {
   fingerprint: string;
   /** Keyed by source file path. */
   files: Record<string, StateEntry>;
+  /** What the last sync left waiting, for `hub status`. */
+  last_waiting?: { count: number; reason: string | null; at: string };
 }
 
 export function hubDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -111,7 +115,7 @@ export function saveConfig(dir: string, cfg: Config): void {
 
 export function loadState(dir: string): State {
   const saved = readJson<Partial<State>>(dir, 'state.json', {});
-  return { fingerprint: saved.fingerprint ?? '', files: saved.files ?? {} };
+  return { fingerprint: saved.fingerprint ?? '', files: saved.files ?? {}, ...(saved.last_waiting ? { last_waiting: saved.last_waiting } : {}) };
 }
 
 export function saveState(dir: string, state: State): void {
