@@ -168,6 +168,7 @@ describe('runSync: change detection', () => {
 
   it('uploads again masked when a personal level is raised', async () => {
     track(KEY_A);
+    saveConfig(hub, { ...loadConfig(hub), personal: { card: 'warn', list: 'warn' } });
     writeJsonl(join(proj(), `${S1}.jsonl`), [cc(S1, '/work/alpha', 'my card 4242424242424242')]);
     const first = await runSync(opts());
     expect(first.personal).toEqual([{ session: `claude-code:${S1}`, type: 'card', count: 1 }]);

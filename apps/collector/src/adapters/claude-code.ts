@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ToolCallMessage } from '@context-hub/core';
-import { emptyRaw, mostUsed, pushText, readLines, recordCwd, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
+import { emptyRaw, isDirEntry, isFileEntry, mostUsed, pushText, readLines, recordCwd, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
 
 /** Record types that carry no conversation content. Anything else unknown is counted. */
 const IGNORED_RECORDS = new Set([
@@ -23,12 +23,12 @@ function discover(home: string): SessionFile[] {
   const out: SessionFile[] = [];
   if (!existsSync(root)) return out;
   for (const project of readdirSync(root, { withFileTypes: true })) {
-    if (!project.isDirectory()) continue;
+    if (!isDirEntry(root, project)) continue;
     const dir = join(root, project.name);
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      if (entry.name.endsWith('.jsonl') && isFileEntry(dir, entry)) {
         out.push(sessionFile('claude-code', join(dir, entry.name), basename(entry.name, '.jsonl'), null));
-      } else if (entry.isDirectory()) {
+      } else if (isDirEntry(dir, entry)) {
         const sub = join(dir, entry.name, 'subagents');
         if (!existsSync(sub)) continue;
         for (const name of readdirSync(sub)) {

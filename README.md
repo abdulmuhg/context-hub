@@ -143,9 +143,15 @@ hub sync --dry-run           # see what would be sent
 
 - A project is named by its git remote (`github.com/you/repo`), or
   `local:<folder>` when it has none. A session is filed under the project
-  where most of its work happened.
+  where most of its work happened. An SSH host alias such as
+  `git@github.com-work:you/repo` counts as `github.com/you/repo`, and a
+  session from a Claude Code worktree that has since been removed is filed
+  under its repo.
 - Secrets (tokens, keys, passwords in URLs) are stripped before anything
   leaves the computer, and again on the server.
+- Card numbers are masked to their last four digits by default
+  (`hub personal level card partial`); `full` removes them, `warn` only
+  reports them.
 - `hub personal add phone` adds one of your own values, such as a phone
   number, to a personal-data list. The default is `warn`: it is reported but
   still uploaded. Raise it with `hub personal level list partial` or `full`.

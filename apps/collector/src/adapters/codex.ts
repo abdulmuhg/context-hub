@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ToolCallMessage } from '@context-hub/core';
-import { emptyRaw, mostUsed, pushText, readLines, recordCwd, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
+import { emptyRaw, isFileEntry, mostUsed, pushText, readLines, recordCwd, sessionFile, type Adapter, type RawSession, type SessionFile } from './types.js';
 
 const UUID_AT_END = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
@@ -9,7 +9,7 @@ function walk(dir: string, out: string[]): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) walk(p, out);
-    else if (entry.isFile() && entry.name.endsWith('.jsonl')) out.push(p);
+    else if (entry.name.endsWith('.jsonl') && isFileEntry(dir, entry)) out.push(p);
   }
 }
 

@@ -26,7 +26,7 @@ describe('hubDir', () => {
 });
 
 describe('config', () => {
-  it('returns defaults when nothing is saved: nothing tracked, warn levels', () => {
+  it('returns defaults when nothing is saved: nothing tracked, card numbers masked', () => {
     expect(loadConfig(tempDir())).toEqual({
       server_url: '',
       tracked: [],
@@ -34,7 +34,16 @@ describe('config', () => {
       declined: [],
       aliases: {},
       assignments: {},
-      personal: { card: 'warn', list: 'warn' },
+      personal: { card: 'partial', list: 'warn' },
+    });
+  });
+
+  it('folds SSH host aliases in saved project keys', () => {
+    const dir = tempDir();
+    writeRaw(join(dir, 'config.json'), JSON.stringify({ tracked: ['github.com-work/acme/app', 'github.com/acme/app', 'local:x'], declined: ['github.com_me/a/b'] }));
+    expect(loadConfig(dir)).toMatchObject({
+      tracked: ['github.com/acme/app', 'local:x'],
+      declined: ['github.com/a/b'],
     });
   });
 
@@ -54,7 +63,7 @@ describe('config', () => {
   it('fills in fields missing from an older file', () => {
     const dir = tempDir();
     writeRaw(join(dir, 'config.json'), JSON.stringify({ server_url: 'https://h', tracked: ['a'] }));
-    expect(loadConfig(dir)).toMatchObject({ tracked: ['a'], skipped: [], personal: { card: 'warn', list: 'warn' } });
+    expect(loadConfig(dir)).toMatchObject({ tracked: ['a'], skipped: [], personal: { card: 'partial', list: 'warn' } });
   });
 
   it('fails with a clear message when the file is not valid JSON', () => {

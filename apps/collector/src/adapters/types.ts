@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, type Dirent } from 'node:fs';
+import { join } from 'node:path';
 import type { Message, Source } from '@context-hub/core';
 
 export interface SessionFile {
@@ -40,6 +41,18 @@ export interface Adapter {
   /** Lists session files under the user's home folder. Reads no content. */
   discover(home: string): SessionFile[];
   read(file: SessionFile): RawSession;
+}
+
+/** A file, or a link to one. */
+export function isFileEntry(dir: string, entry: Dirent): boolean {
+  if (entry.isFile()) return true;
+  return entry.isSymbolicLink() && (statSync(join(dir, entry.name), { throwIfNoEntry: false })?.isFile() ?? false);
+}
+
+/** A folder, or a link to one. Only for walks of fixed depth, where a link cannot loop. */
+export function isDirEntry(dir: string, entry: Dirent): boolean {
+  if (entry.isDirectory()) return true;
+  return entry.isSymbolicLink() && (statSync(join(dir, entry.name), { throwIfNoEntry: false })?.isDirectory() ?? false);
 }
 
 export function sessionFile(source: Source, path: string, id: string, parent: string | null): SessionFile {
