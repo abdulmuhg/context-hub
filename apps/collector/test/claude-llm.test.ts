@@ -121,6 +121,11 @@ describe('ClaudeCodeLlm', () => {
     await expect(llm(run).digest(REQ)).rejects.toBeInstanceOf(LlmRefusal);
   });
 
+  it('throws ClaudeSignInError when the stored login has expired', async () => {
+    const { run } = fakeRunner(fixture('claude-login-expired'), { status: 1 });
+    await expect(llm(run).digest(REQ)).rejects.toBeInstanceOf(ClaudeSignInError);
+  });
+
   it('throws ClaudeSignInError when claude is not signed in', async () => {
     const { run } = fakeRunner(fixture('claude-not-logged-in'), { status: 1 });
     await expect(llm(run).digest(REQ)).rejects.toBeInstanceOf(ClaudeSignInError);

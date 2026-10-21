@@ -1,0 +1,10 @@
+{
+  "_note": "Trimmed from a real claude -p 2.1.296 run whose stored plan login had expired (2026-10-21). api_error_status is null here.",
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": null,
+  "terminal_reason": "api_error",
+  "stop_reason": "stop_sequence",
+  "result": "Failed to authenticate: OAuth session expired and could not be refreshed"
+}

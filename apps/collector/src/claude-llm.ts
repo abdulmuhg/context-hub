@@ -128,7 +128,8 @@ interface ClaudeResult {
   structured_output?: unknown;
 }
 
-const SIGNED_OUT = /not logged in|please run \/login|invalid api key|authentication/i;
+// "Failed to authenticate: OAuth session expired…" comes with api_error_status null, so the text decides.
+const SIGNED_OUT = /not logged in|please run \/login|run \/login|invalid api key|authentication|failed to authenticate|oauth session expired/i;
 const LIMIT = /usage limit|limit reached|rate limit/i;
 
 /** "Claude AI usage limit reached|1792580400" carries the reset time as epoch seconds. */
