@@ -97,8 +97,16 @@ export const spawnRunner: ClaudeRunner = (cmd, args, stdin, env, timeoutMs) =>
 
 /** The usage limit of the Claude plan was reached. Nothing more can be summarized until it resets. */
 export class UsageLimitError extends Error {
-  constructor(readonly resetsAt: string | null) {
-    super(resetsAt === null ? 'the Claude usage limit was reached' : `the Claude usage limit was reached (resets ${resetsAt})`);
+  /**
+   * resetsAt is an ISO time when Claude Code gave a timestamp. resetsText is the
+   * reset time as Claude Code wrote it otherwise, for example "5:20pm (Asia/Jakarta)".
+   */
+  constructor(
+    readonly resetsAt: string | null,
+    readonly resetsText: string | null = null,
+  ) {
+    const when = resetsAt ?? resetsText;
+    super(when === null ? 'the Claude usage limit was reached' : `the Claude usage limit was reached (resets ${when})`);
   }
 }
 
@@ -130,12 +138,19 @@ interface ClaudeResult {
 
 // "Failed to authenticate: OAuth session expired…" comes with api_error_status null, so the text decides.
 const SIGNED_OUT = /not logged in|please run \/login|run \/login|invalid api key|authentication|failed to authenticate|oauth session expired/i;
-const LIMIT = /usage limit|limit reached|rate limit/i;
+// "You've hit your session limit · resets 5:20pm (Asia/Jakarta)" is what a Pro plan shows today.
+const LIMIT = /usage limit|limit reached|rate limit|hit your [a-z ]*limit/i;
 
 /** "Claude AI usage limit reached|1792580400" carries the reset time as epoch seconds. */
 function resetTime(text: string): string | null {
   const m = /\|(\d{9,11})\s*$/.exec(text.trim());
   return m ? new Date(Number(m[1]) * 1000).toISOString() : null;
+}
+
+/** "… · resets 5:20pm (Asia/Jakarta)": the reset time as written, or null. */
+function resetText(text: string): string | null {
+  const m = /resets\s+([^·\n]+?)\s*$/i.exec(text.trim());
+  return m ? m[1]!.slice(0, 60) : null;
 }
 
 function parseResult(stdout: string): ClaudeResult | null {
@@ -203,7 +218,7 @@ export class ClaudeCodeLlm extends PromptedLlm {
     const text = typeof result.result === 'string' ? result.result : '';
     if (result.stop_reason === 'refusal') throw new LlmRefusal(result.stop_details?.category ?? 'unspecified');
     if (result.api_error_status === 401 || (result.is_error === true && SIGNED_OUT.test(text))) throw new ClaudeSignInError();
-    if (result.api_error_status === 429 || (result.is_error === true && LIMIT.test(text))) throw new UsageLimitError(resetTime(text));
+    if (result.api_error_status === 429 || (result.is_error === true && LIMIT.test(text))) throw new UsageLimitError(resetTime(text), resetText(text));
     if (result.is_error === true) throw new Error(`claude reported an error: ${text.slice(0, 300) || `exit status ${out.status}`}`);
     if (result.structured_output === undefined || result.structured_output === null) throw new Error('claude returned no structured output');
     return result.structured_output as T;

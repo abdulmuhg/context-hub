@@ -29,7 +29,10 @@ const clock = (iso: string): string => {
 
 /** The reason a failed model call ends the run's model work, or null for a failure of that one session only. */
 export function stopReason(e: unknown): string | null {
-  if (e instanceof UsageLimitError) return e.resetsAt === null ? 'Claude usage limit reached' : `Claude usage limit reached (resets ${clock(e.resetsAt)})`;
+  if (e instanceof UsageLimitError) {
+    const when = e.resetsAt !== null ? clock(e.resetsAt) : e.resetsText;
+    return when === null ? 'Claude usage limit reached' : `Claude usage limit reached (resets ${when})`;
+  }
   if (e instanceof ClaudeSignInError) return 'Claude Code is not signed in, or its login expired. Run: claude auth login';
   if (e instanceof ClaudeTimeoutError) return `${e.message}, so summaries stopped for this run`;
   return null;

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { StateRequest } from '@context-hub/core';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
 import { UsageLimitError } from '../src/claude-llm.js';
-import { newBudget, updatePages } from '../src/summaries.js';
+import { newBudget, stopReason, updatePages } from '../src/summaries.js';
 import type { Remote } from '../src/upload.js';
 
 const KEY = 'github.com/me/alpha';
@@ -154,5 +154,15 @@ describe('updatePages', () => {
     const budget = newBudget(false);
     await run([KEY], budget);
     expect(budget.left).toBe(20);
+  });
+});
+
+describe('stopReason', () => {
+  it('shows the reset time as Claude Code wrote it when it is not a timestamp', () => {
+    expect(stopReason(new UsageLimitError(null, '5:20pm (Asia/Jakarta)'))).toBe('Claude usage limit reached (resets 5:20pm (Asia/Jakarta))');
+  });
+
+  it('says only that the limit was reached when there is no reset time', () => {
+    expect(stopReason(new UsageLimitError(null))).toBe('Claude usage limit reached');
   });
 });

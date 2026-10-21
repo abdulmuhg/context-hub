@@ -147,6 +147,14 @@ describe('ClaudeCodeLlm', () => {
     expect((err as UsageLimitError).resetsAt).toBe(new Date(1792580400 * 1000).toISOString());
   });
 
+  it('recognizes the session limit from its text, and keeps the reset time as written', async () => {
+    const { run } = fakeRunner(fixture('claude-session-limit'), { status: 1 });
+    const err = await llm(run).digest(REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UsageLimitError);
+    expect((err as UsageLimitError).resetsAt).toBeNull();
+    expect((err as UsageLimitError).resetsText).toBe('5:20pm (Asia/Jakarta)');
+  });
+
   it('throws UsageLimitError without a reset time when the text carries none', async () => {
     const { run } = fakeRunner(JSON.stringify({ is_error: true, result: 'You have hit your usage limit.' }));
     const err = await llm(run)
