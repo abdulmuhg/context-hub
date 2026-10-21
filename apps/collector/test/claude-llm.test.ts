@@ -152,7 +152,7 @@ describe('ClaudeCodeLlm', () => {
     const err = await llm(run).digest(REQ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(UsageLimitError);
     expect((err as UsageLimitError).resetsAt).toBeNull();
-    expect((err as UsageLimitError).resetsText).toBe('5:20pm (Asia/Jakarta)');
+    expect((err as UsageLimitError).resetsText).toBe('5:20pm (Europe/London)');
   });
 
   it('throws UsageLimitError without a reset time when the text carries none', async () => {
