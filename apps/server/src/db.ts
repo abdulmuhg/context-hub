@@ -238,6 +238,21 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (token_id, project_key)
   );
   `,
+  `
+  -- Which computers upload each project's sessions, so the Overview can name who will update its page.
+  CREATE TABLE project_uploaders (
+    project_key     TEXT NOT NULL,
+    token_id        INTEGER NOT NULL,
+    last_upload_at  TEXT NOT NULL,
+    PRIMARY KEY (project_key, token_id)
+  );
+  -- Seeded from the activity log, which names a computer by label: only labels that belong to one upload token.
+  INSERT INTO project_uploaders(project_key, token_id, last_upload_at)
+    SELECT a.project_key, t.id, MAX(a.at) FROM activity a JOIN tokens t ON t.label = a.actor AND t.scope = 'ingest'
+    WHERE a.action = 'upload' AND a.project_key IS NOT NULL
+      AND (SELECT COUNT(*) FROM tokens t2 WHERE t2.label = t.label AND t2.scope = 'ingest') = 1
+    GROUP BY a.project_key, t.id;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

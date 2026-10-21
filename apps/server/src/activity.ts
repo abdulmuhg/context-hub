@@ -112,6 +112,26 @@ export function recordSyncRun(
   })();
 }
 
+/** Remember that this computer uploads sessions for the project. */
+export function recordUploader(db: Db, projectKey: string, tokenId: number, now: string): void {
+  db.prepare(
+    `INSERT INTO project_uploaders(project_key, token_id, last_upload_at) VALUES (?, ?, ?)
+     ON CONFLICT DO UPDATE SET last_upload_at = excluded.last_upload_at`,
+  ).run(projectKey, tokenId, now);
+}
+
+/** The computers, not revoked, that upload this project's sessions, each with its last reported sync. Latest sync first. */
+export function projectUploaders(db: Db, projectKey: string): { label: string; lastSync: string | null }[] {
+  return db
+    .prepare(
+      `SELECT t.label, (SELECT MAX(r.finished_at) FROM sync_runs r WHERE r.token_id = t.id) AS lastSync
+       FROM project_uploaders u JOIN tokens t ON t.id = u.token_id
+       WHERE u.project_key = ? AND t.revoked_at IS NULL
+       ORDER BY lastSync IS NULL, lastSync DESC, t.label`,
+    )
+    .all(projectKey) as { label: string; lastSync: string | null }[];
+}
+
 /** The most recent run across all tokens. */
 export function latestSyncRun(db: Db): SyncRun | null {
   const row = db

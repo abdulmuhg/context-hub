@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { stripSecrets, type DigestBody, type HashedSession, type UploadDigest } from '@context-hub/core';
-import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun, type PageLeft } from './activity.js';
+import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun, recordUploader, type PageLeft } from './activity.js';
 import { installScript } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
@@ -316,7 +316,8 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
 
     const sessionPath = /^\/api\/sessions\/([^/]+)\/(.+)$/.exec(path);
     if (sessionPath && (method === 'PUT' || method === 'DELETE')) {
-      const actor = actorFor(authorise(req, res, ['ingest']));
+      const credential = authorise(req, res, ['ingest']);
+      const actor = actorFor(credential);
       const source = decodePart(sessionPath[1]!);
       const id = decodePart(sessionPath[2]!);
       if (method === 'DELETE') {
@@ -349,6 +350,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       }
       const digest = strippedDigest?.digest;
       const { changed } = storeUpload(db, session, digest, actor, now().toISOString());
+      if (credential.kind === 'bearer') recordUploader(db, session.project_key, credential.id, now().toISOString());
       if (changed) {
         logActivitySafe(
           db,

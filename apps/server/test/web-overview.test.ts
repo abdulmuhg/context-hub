@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { logActivity } from '../src/activity.js';
+import { logActivity, recordUploader } from '../src/activity.js';
 import { openDb, type Db } from '../src/db.js';
 import { failDigest, markDigestPending, refuseDigest } from '../src/digest-store.js';
 import { recordUsage } from '../src/usage.js';
@@ -151,6 +151,17 @@ describe('the Overview page', () => {
     expect(html).toContain('Problems');
     expect(html).toContain('the model timed out');
     expect(html).toContain('claude-code:a');
+  });
+
+  it('lists the computers that upload a project under its page-behind line', async () => {
+    const id = addSession('a', 'local:alpha');
+    markDigestPending(db, id, ago(HOUR));
+    db.prepare("UPDATE digests SET status = 'ok', text = 'x', saved_seq = 1 WHERE session_id = ?").run(id);
+    db.prepare("INSERT INTO tokens(id, label, scope, hash, created_at) VALUES (1, 'collector-pc', 'ingest', 'h', ?)").run(ago(HOUR));
+    recordUploader(db, 'local:alpha', 1, ago(HOUR));
+    const html = await overview();
+    expect(html).toContain('The project page for local:alpha is waiting for the next sync of the computer that uploads its sessions.');
+    expect(html).toMatch(/<ul><li>collector-pc, last synced <span class="muted"><time datetime="[^"]+" data-time="inline">/);
   });
 
   it('marks a refused summary as a notice and stays healthy', async () => {
