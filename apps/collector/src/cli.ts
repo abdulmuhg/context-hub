@@ -4,9 +4,12 @@ import { hostname } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
+import { claudeOnlyAsCmd, cleanEnv, findClaude } from './claude-llm.js';
 import { SLASH_COMMANDS } from './commands.js';
-import type { Level, Llm } from '@context-hub/core';
+import type { Effort, Level, Llm } from '@context-hub/core';
 import {
+  DEFAULT_SUMMARY_EFFORT,
+  DEFAULT_SUMMARY_MODEL,
   loadConfig,
   loadPersonal,
   loadState,
@@ -40,8 +43,8 @@ export interface Io {
   execPath?: string;
   bundlePath?: string;
   spawn?: typeof spawn;
-  /** For `hub doctor`: runs `claude mcp list`. found is false when Claude Code is not installed. */
-  runClaude?: () => { found: boolean; output: string };
+  /** For `hub doctor`: runs `claude` with these arguments (`mcp list`, `auth status --json`). found is false when Claude Code is not installed. */
+  runClaude?: (args: string[]) => { found: boolean; output: string };
 }
 
 const USAGE = `Usage: hub <command>
@@ -58,7 +61,8 @@ Advanced:
   skip <session> | unskip <session>    exclude one session (<source>:<id>)
   alias <from> <to>                    merge or rename a project key
   assign <session> <project>           set the project of one session
-  sync [--project P] [--session S] [--dry-run]   (--project narrows tracked projects)
+  sync [--project P] [--session S] [--dry-run] [--all]   (--project narrows tracked projects; --all lifts the cap on summaries)
+  summaries [model <id> | effort <level>]   show or change how this computer writes summaries
   forget <project> | forget --session <source>:<id>
   status                               ask the server for its status
   connect                              get a one-time code to sign claude.ai in to the hub
@@ -70,6 +74,7 @@ Advanced:
   docs remove <label|folder>           stop uploading a folder (uploaded copies stay)`;
 
 const LEVELS: Level[] = ['off', 'warn', 'partial', 'full'];
+const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const SESSION_KEY = /^(claude-code|codex|antigravity):.+$/;
 
 class Fail extends Error {}
@@ -137,6 +142,10 @@ function printReport(io: Io, report: SyncReport, dryRun: boolean): void {
   const perProject = new Map<string, number>();
   for (const ref of list) perProject.set(ref.project, (perProject.get(ref.project) ?? 0) + 1);
   for (const [project, n] of perProject) io.out(`  ${project}: ${n}`);
+  if (dryRun && report.wouldSummarize.length > 0) io.out(`Would summarize ${plural(report.wouldSummarize.length, 'session')}.`);
+  if (!dryRun && report.summarized.length > 0) io.out(`${report.summarized.length} ${report.summarized.length === 1 ? 'summary' : 'summaries'} written.`);
+  if (report.waiting.count > 0) io.out(`${plural(report.waiting.count, 'session')} waiting${report.waiting.reason ? `: ${report.waiting.reason}` : ''}`);
+  if (report.pages.left.length > 0) io.out(`${plural(report.pages.left.length, 'page')} left for the next sync`);
   const gone = dryRun ? report.wouldDelete : report.deleted;
   if (gone.length > 0) io.out(`${dryRun ? 'Would remove' : 'Removed'} ${plural(gone.length, 'document')} whose file is gone:`);
   for (const ref of gone) io.out(`  ${ref.session}`);
@@ -418,6 +427,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
           project: { type: 'string' },
           session: { type: 'string' },
           'dry-run': { type: 'boolean' },
+          all: { type: 'boolean' },
           auto: { type: 'boolean' },
           'auto-child': { type: 'boolean' },
         },
@@ -453,6 +463,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         fetchImpl: io.fetchImpl,
         ...(io.llm !== undefined ? { llm: io.llm } : {}),
         dryRun,
+        all: values.all === true,
         project: values.project,
         session: values.session,
         onProgress:
@@ -485,8 +496,42 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       return 0;
     }
     case 'status': {
-      io.out(JSON.stringify(await getStatus(remote(io)), null, 2));
+      const status = await getStatus(remote(io));
+      io.out(JSON.stringify(status, null, 2));
+      const waiting = loadState(io.hubDir).last_waiting;
+      if (waiting) io.out(`${plural(waiting.count, 'session')} waiting on this computer${waiting.reason ? `: ${waiting.reason}` : ''}`);
+      const pages = status.pages_needed ?? [];
+      if (pages.length > 0) io.out(`${plural(pages.length, 'project page')} waiting for an update: ${pages.join(', ')}`);
+      const owed = status.summaries_owed ?? 0;
+      if (owed > 0) io.out(`${owed} ${owed === 1 ? 'summary' : 'summaries'} owed after re-cleaning`);
       return 0;
+    }
+    case 'summaries': {
+      const [what, value] = rest;
+      const current = loadConfig(io.hubDir).summaries ?? {};
+      if (what === undefined) {
+        io.out(`model: ${current.model ?? DEFAULT_SUMMARY_MODEL}`);
+        io.out(`effort: ${current.effort ?? DEFAULT_SUMMARY_EFFORT}`);
+        return 0;
+      }
+      if (what === 'model') {
+        const model = need(value, 'model id');
+        update(io, (cfg) => {
+          cfg.summaries = { ...cfg.summaries, model };
+        });
+        io.out(`Summaries on this computer now use ${model}.`);
+        return 0;
+      }
+      if (what === 'effort') {
+        const level = need(value, 'effort level') as Effort;
+        if (!EFFORTS.includes(level)) throw new Fail(`Effort must be one of: ${EFFORTS.join(', ')}.`);
+        update(io, (cfg) => {
+          cfg.summaries = { ...cfg.summaries, effort: level };
+        });
+        io.out(`Summaries on this computer now use effort ${level}.`);
+        return 0;
+      }
+      throw new Fail(USAGE);
     }
     case 'connect': {
       const { code } = await requestConnectCode(remote(io));
@@ -555,9 +600,18 @@ function ago(iso: string, now: number): string {
   return `${Math.round(h / 24)} d ago`;
 }
 
-/** `claude mcp list`, if Claude Code is installed. It checks every server, so it can take a few seconds. */
-function runClaudeMcpList(): { found: boolean; output: string } {
-  const r = spawnSync('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 20_000, shell: process.platform === 'win32', windowsHide: true });
+/**
+ * Runs `claude` for the doctor. `mcp list` checks every server, so it can take a few seconds. `auth status`
+ * is run the way summaries are (no shell, the clean environment), so it reports what a summary run would see.
+ */
+function runClaudeCommand(args: string[]): { found: boolean; output: string } {
+  if (args[0] === 'auth') {
+    const cmd = findClaude();
+    if (cmd === null) return { found: false, output: '' };
+    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 20_000, env: cleanEnv(process.env), windowsHide: true });
+    return { found: r.status === 0, output: `${r.stdout ?? ''}` };
+  }
+  const r = spawnSync('claude', args, { encoding: 'utf8', timeout: 20_000, shell: process.platform === 'win32', windowsHide: true });
   return { found: r.status === 0, output: `${r.stdout ?? ''}` };
 }
 
@@ -575,6 +629,7 @@ async function doctorCase(io: Io): Promise<number> {
   const token = loadToken(io.hubDir);
 
   add('✓', 'hub command', bundleOf(io));
+  let hubWritesSummaries = false;
 
   // Uploading: where to, and whether the hub accepts this computer.
   if (!cfg.server_url) {
@@ -586,7 +641,8 @@ async function doctorCase(io: Io): Promise<number> {
       add('✗', 'Connection', 'no upload token saved. Run: hub login');
     } else {
       try {
-        const s = (await getStatus({ url: cfg.server_url, token, fetchImpl: io.fetchImpl })) as { projects?: number; sessions?: number };
+        const s = await getStatus({ url: cfg.server_url, token, fetchImpl: io.fetchImpl });
+        hubWritesSummaries = s.server_summaries === true;
         add('✓', 'Connection', `hub reachable, token accepted (${s.projects ?? '?'} projects, ${s.sessions ?? '?'} sessions)`);
       } catch (e) {
         const refused = /answered 40[13]/.test((e as Error).message);
@@ -628,12 +684,35 @@ async function doctorCase(io: Io): Promise<number> {
   else add('!', 'Slash commands', `${stale.length} missing or out of date. Run: hub install-commands`);
 
   // Reading: whether Claude Code on this computer can reach the hub.
-  const claude = (io.runClaude ?? runClaudeMcpList)();
+  const runClaude = io.runClaude ?? runClaudeCommand;
+  const claude = runClaude(['mcp', 'list']);
   const hubLines = claude.output.split(/\r?\n/).filter((l) => /context-hub/i.test(l));
   if (!claude.found) add('–', 'Claude Code', 'not installed here, skipped');
   else if (hubLines.some((l) => /✓|✔|connected/i.test(l) && !/failed|✗|needs/i.test(l))) add('✓', 'Claude Code', 'context-hub connected');
   else if (hubLines.length > 0) add('!', 'Claude Code', `context-hub listed but not connected: ${hubLines[0]!.trim()}`);
   else add('!', 'Claude Code', 'no context-hub connection. Add the connector to this Claude account (README: "Read from the hub in the Claude apps").');
+
+  // Summaries: written here by Claude Code, on its sign-in.
+  const auth = runClaude(['auth', 'status', '--json']);
+  if (!auth.found) {
+    if (hubWritesSummaries) add('!', 'Summaries', "Claude Code is not installed; the hub will summarize this computer's sessions");
+    else if (!io.runClaude && claudeOnlyAsCmd()) add('✗', 'Summaries', 'Claude Code is installed only as a .cmd file, which summaries cannot use. Install the native claude.exe, then run: claude');
+    else add('✗', 'Summaries', 'Claude Code is not installed, so sessions wait here. Install it, then run: claude');
+  } else {
+    let loggedIn: boolean | null = null;
+    try {
+      loggedIn = (JSON.parse(auth.output) as { loggedIn?: boolean }).loggedIn === true;
+    } catch {
+      loggedIn = null;
+    }
+    const model = cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL;
+    const effort = cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT;
+    if (loggedIn === true) add('✓', 'Summaries', `Claude Code signed in, model ${model}, effort ${effort}`);
+    else if (loggedIn === false) add('✗', 'Summaries', 'Claude Code is not signed in. Run: claude');
+    else add('!', 'Summaries', 'could not tell whether Claude Code is signed in. Run: claude');
+  }
+  const waiting = loadState(io.hubDir).last_waiting;
+  if (waiting) add('!', 'Waiting summaries', `${plural(waiting.count, 'session')}${waiting.reason ? `: ${waiting.reason}` : ''}`);
 
   const width = Math.max(...rows.map(([, label]) => label.length)) + 2;
   for (const [mark, label, text] of rows) io.out(`${mark} ${label.padEnd(width)}${text}`);

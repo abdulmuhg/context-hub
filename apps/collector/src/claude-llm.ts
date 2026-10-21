@@ -36,6 +36,19 @@ export function findClaude(): string | null {
   }
 }
 
+/** True on Windows when `claude` is on the path only as a .cmd shim, which summaries cannot start. */
+export function claudeOnlyAsCmd(): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    const lines = execFileSync('where', ['claude'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+      .split(/\r?\n/)
+      .filter((l) => l.trim() !== '');
+    return lines.length > 0 && !lines.some((l) => l.trim().toLowerCase().endsWith('.exe'));
+  } catch {
+    return false;
+  }
+}
+
 export interface RunResult {
   status: number | null;
   stdout: string;
