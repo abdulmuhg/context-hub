@@ -238,7 +238,7 @@ the browser stays signed in for 30 days.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Healthy or Needs attention, counts, the last sync, the last backup (and whether it reached off-site storage), anything wrong right now, recent activity, and the running version. |
+| **Overview** | Healthy or Needs attention, counts, the last sync, the last backup (and whether it reached off-site storage), anything wrong right now, recent activity, and the running version. A **Model spend** card shows today's spend (UTC day), the calls made today and the last 30 days, and the daily limit when one is set. `hub-admin usage [--days N]` gives the same per day, by kind and by project. |
 | **Activity** | Everything saved into the hub and read from it over the last 30 days, and by whom. |
 | **Projects** | Every project and its summary; open one for its full briefing, recent sessions and notes, and its documents. |
 | **Sign-ins** | Every way in: Claude apps, tokens and browsers, each with a **Disconnect** that asks once and says what breaks. |
@@ -319,6 +319,7 @@ interface; only the proxy should reach it.
 | `ANTHROPIC_API_KEY` | for summaries | Writes session summaries and project briefings with Claude. Without it, uploads and lookups still work and summaries wait in a queue. Billed separately from a Claude subscription. |
 | `DIGEST_MODEL` | no | Default `claude-haiku-5-5`. |
 | `DIGEST_EFFORT` | no | Default `low`. |
+| `DIGEST_DAILY_BUDGET_USD` | no | A daily limit in US dollars for summaries (UTC day). When it is reached, summaries wait until 00:00 UTC; a job already running finishes, so the limit can be passed by one job. Saved notes wait too, because the page update after one calls the model. |
 | `DIGEST_MAX_INPUT_TOKENS` | no | Default `60000`, counted at 2 characters per token so a prompt stays under the 100K-token price step. Long sessions are summarised in parts of this size. |
 | `IMAGE_TAG` | no | Shown on the dashboard as the running version. The reference deploy sets it. |
 | `BACKUP_STATUS_PATH` | no | A JSON file the backup job writes; the dashboard shows it. Default `/backup-status/context-hub.json` when it exists. |

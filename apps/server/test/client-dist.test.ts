@@ -16,6 +16,7 @@ const web = (publicOrigin: string | null) => ({
   backupStatusPath: null,
   secureCookies: false,
   publicOrigin,
+  dailyBudgetUsd: null,
 });
 
 let close: (() => Promise<void>) | null = null;

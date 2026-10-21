@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
-import { priceMicroUsd, recordUsage, spendBetween, type UsageRecord } from '../src/usage.js';
+import { parseDailyBudgetUsd, priceMicroUsd, recordUsage, spendBetween, type UsageRecord } from '../src/usage.js';
 
 const rec = (over: Partial<UsageRecord> = {}): UsageRecord => ({
   model: 'claude-haiku-5-5',
@@ -72,5 +72,18 @@ describe('spendBetween', () => {
   });
   it('is all zeros when empty', () => {
     expect(spendBetween(openDb(':memory:'), 'a', 'z')).toEqual({ calls: 0, input: 0, output: 0, micro_usd: 0 });
+  });
+});
+
+describe('parseDailyBudgetUsd', () => {
+  it('is no limit when unset or empty', () => {
+    expect(parseDailyBudgetUsd(undefined)).toBeNull();
+    expect(parseDailyBudgetUsd('  ')).toBeNull();
+  });
+  it('accepts a positive number', () => {
+    expect(parseDailyBudgetUsd('2.5')).toBe(2.5);
+  });
+  it.each(['0', '-1', 'abc', 'Infinity', 'NaN'])('rejects %s', (v) => {
+    expect(() => parseDailyBudgetUsd(v)).toThrow('DIGEST_DAILY_BUDGET_USD must be a positive number of US dollars');
   });
 });

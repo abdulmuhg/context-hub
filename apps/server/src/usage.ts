@@ -70,6 +70,20 @@ export function spendBetween(db: Db, fromIso: string, toIso: string): Spend {
     .get(fromIso, toIso) as Spend;
 }
 
+/** The daily limit from the environment: a positive number of US dollars, or null when unset. */
+export function parseDailyBudgetUsd(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) throw new Error('DIGEST_DAILY_BUDGET_USD must be a positive number of US dollars');
+  return n;
+}
+
+/** True when today's (UTC) spend has reached the limit. */
+export function budgetReached(db: Db, limitMicroUsd: number, now: string): boolean {
+  const today = utcDayStart(now);
+  return spendBetween(db, today, addDays(today, 1)).micro_usd >= limitMicroUsd;
+}
+
 /** Money for display: 2 decimals, or 4 when the total is under $0.01 but not zero. */
 export function formatUsd(microUsd: number): string {
   const dollars = microUsd / 1_000_000;

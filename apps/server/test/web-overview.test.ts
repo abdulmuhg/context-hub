@@ -64,6 +64,7 @@ beforeEach(async () => {
     backupStatusPath: statusPath,
     secureCookies: false,
     publicOrigin: null,
+    dailyBudgetUsd: null,
   };
   const s = await startServer({ db, now: () => clock, limiter: new AuthLimiter(() => clock.getTime()), web: cfg });
   url = s.url;
@@ -113,6 +114,11 @@ describe('the Overview page', () => {
     expect(html).toContain('Model spend');
     expect(html).toContain('$0.50');
     expect(html).toContain('1 call today · $1.00 in 30 days');
+  });
+
+  it('names the daily limit on the card when one is set', async () => {
+    cfg.dailyBudgetUsd = 5;
+    expect(await overview()).toContain('No model calls recorded yet · limit $5.00');
   });
 
   it('shows $0.00 and a hint when no call has been recorded', async () => {

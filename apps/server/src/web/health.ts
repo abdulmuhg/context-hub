@@ -1,7 +1,7 @@
 import { latestSyncRun, type SyncRun } from '../activity.js';
 import type { Db } from '../db.js';
 import { readBackupStatus, type BackupStatus } from './backup-status.js';
-import { addDays, spendBetween, utcDayStart, type Spend } from '../usage.js';
+import { addDays, budgetReached, formatUsd, spendBetween, utcDayStart, type Spend } from '../usage.js';
 import type { WebConfig } from './routes.js';
 
 /** One line in the Problems box, or in the notices below it. `at` is a time to show after the text. */
@@ -97,6 +97,13 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
       ref: r.project,
       text: `The project page for ${r.project} could not be rebuilt: ${reason(r.error)}. Next attempt`,
       at: r.next_attempt_at,
+    });
+  }
+
+  if (cfg.dailyBudgetUsd !== null && budgetReached(db, Math.round(cfg.dailyBudgetUsd * 1_000_000), now)) {
+    problems.push({
+      kind: 'budget-reached',
+      text: `Summaries paused: today's model spend reached the ${formatUsd(Math.round(cfg.dailyBudgetUsd * 1_000_000))} daily limit. They resume at 00:00 UTC.`,
     });
   }
 

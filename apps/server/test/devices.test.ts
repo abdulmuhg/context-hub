@@ -28,7 +28,7 @@ beforeEach(async () => {
     db,
     now: () => NOW,
     limiter: new AuthLimiter(() => NOW.getTime()),
-    web: { imageTag: null, startedAt: NOW.toISOString(), digestsOn: false, backupStatusPath: null, secureCookies: false, publicOrigin: null },
+    web: { imageTag: null, startedAt: NOW.toISOString(), digestsOn: false, backupStatusPath: null, secureCookies: false, publicOrigin: null, dailyBudgetUsd: null },
   });
   url = s.url;
   close = s.close;

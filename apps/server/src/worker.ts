@@ -20,6 +20,7 @@ import {
 } from './digest-store.js';
 import { LlmRefusal, type Llm, type StatePage } from './llm.js';
 import { applyReview } from './page-review.js';
+import { budgetReached } from './usage.js';
 import { renderDigest, renderLines, splitParts } from './transcript.js';
 
 export const CHARS_PER_TOKEN = 2;
@@ -31,6 +32,8 @@ export interface WorkerDeps {
   llm: Llm;
   now?: () => Date;
   maxInputTokens?: number;
+  /** Soft daily limit on model spend (UTC day). Work waits for the next day once it is reached. */
+  dailyBudgetMicroUsd?: number;
   log?: (line: string) => void;
 }
 
@@ -251,6 +254,7 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
 /** Does at most one job. */
 export async function runOnce(deps: WorkerDeps): Promise<'digest' | 'state' | 'idle' | 'error'> {
   const c = context(deps);
+  if (deps.dailyBudgetMicroUsd !== undefined && budgetReached(c.db, deps.dailyBudgetMicroUsd, c.now())) return 'idle';
   const due = nextDueDigest(c.db, c.now());
   if (due) return digestOne(c, due);
 

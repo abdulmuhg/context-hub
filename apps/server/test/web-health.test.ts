@@ -61,6 +61,7 @@ const cfg = (over: Partial<WebConfig> = {}): WebConfig => ({
   backupStatusPath: statusPath,
   secureCookies: false,
   publicOrigin: null,
+  dailyBudgetUsd: null,
   ...over,
 });
 
@@ -291,5 +292,27 @@ describe('the model spend card', () => {
     const { spend } = computeHealth(db, cfg(), NOW).cards;
     expect(spend.today.calls).toBe(0);
     expect(spend.month.calls).toBe(0);
+  });
+});
+
+describe('the daily limit', () => {
+  const spendMicro = (at: string, input: number) =>
+    recordUsage(db, { model: 'claude-haiku-5-5', kind: 'digest', project: 'p', input_tokens: input, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }, at);
+
+  it('shows the paused problem only while the spend of today is at the limit', () => {
+    spendMicro('2026-10-20T01:00:00.000Z', 100_000); // $0.01 today
+    spendMicro('2026-10-19T01:00:00.000Z', 10_000_000); // a big day yesterday does not count
+    expect(computeHealth(db, cfg({ dailyBudgetUsd: 0.02 }), NOW).problems.map((p) => p.kind)).not.toContain('budget-reached');
+    const h = computeHealth(db, cfg({ dailyBudgetUsd: 0.01 }), NOW);
+    expect(h.healthy).toBe(false);
+    expect(h.problems.find((p) => p.kind === 'budget-reached')!.text).toBe(
+      "Summaries paused: today's model spend reached the $0.01 daily limit. They resume at 00:00 UTC.",
+    );
+    expect(computeHealth(db, cfg({ dailyBudgetUsd: 0.01 }), '2026-10-21T00:00:00.000Z').problems.map((p) => p.kind)).not.toContain('budget-reached');
+  });
+
+  it('says nothing without a limit', () => {
+    spendMicro('2026-10-20T01:00:00.000Z', 100_000_000);
+    expect(computeHealth(db, cfg(), NOW).problems).toEqual([]);
   });
 });

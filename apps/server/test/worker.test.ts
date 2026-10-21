@@ -3,6 +3,7 @@ import { openDb, type Db } from '../src/db.js';
 import { getDigest, getProjectState, saveProjectState } from '../src/digest-store.js';
 import { LlmRefusal } from '../src/llm.js';
 import { saveNote } from '../src/notes.js';
+import { recordUsage } from '../src/usage.js';
 import { search } from '../src/search.js';
 import { deleteSession, getProject, resolveProject, upsertSession } from '../src/store.js';
 import { CHARS_PER_TOKEN, REBUILD_AFTER_MS, runOnce, startWorker, type WorkerDeps } from '../src/worker.js';
@@ -499,5 +500,36 @@ describe('runOnce: notes', () => {
     const sid = note();
     expect(getDigest(db, noteRow(sid))!.status).toBe('pending');
     expect(search(db, { query: 'Postgres' }).some((h) => h.session_id === sid)).toBe(true);
+  });
+});
+
+describe('runOnce: daily budget', () => {
+  const spend = (micro: number) =>
+    recordUsage(db, { model: 'claude-haiku-5-5', kind: 'digest', project: 'p', input_tokens: micro * 10, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }, iso());
+
+  it('does no model work and returns idle once the spend of today is at the limit', async () => {
+    add('a');
+    spend(1000); // 1000 micro-dollars
+    expect(await runOnce(deps({ dailyBudgetMicroUsd: 1000 }))).toBe('idle');
+    expect(llm.calls).toEqual([]);
+    expect(getDigest(db, rowId('a'))!.status).toBe('pending');
+  });
+
+  it('pauses page work too, and resumes by itself on the next UTC day', async () => {
+    add('a');
+    spend(1000);
+    expect(await runOnce(deps({ dailyBudgetMicroUsd: 1000 }))).toBe('idle');
+    clock = Date.parse('2026-10-12T00:00:00.000Z');
+    expect(await runOnce(deps({ dailyBudgetMicroUsd: 1000 }))).toBe('digest');
+    expect(getDigest(db, rowId('a'))!.status).toBe('ok');
+  });
+
+  it('keeps working while spend is under the limit, and with no limit at all', async () => {
+    add('a');
+    add('b');
+    spend(999);
+    expect(await runOnce(deps({ dailyBudgetMicroUsd: 1000 }))).toBe('digest');
+    spend(5000);
+    expect(await runOnce(deps())).toBe('digest');
   });
 });

@@ -7,7 +7,7 @@ import { createHandler } from './http.js';
 import { AnthropicLlm, DEFAULT_MODEL, type Effort } from './llm-anthropic.js';
 import { handleMcp } from './mcp.js';
 import { parsePublicUrl } from './oauth/config.js';
-import { recordUsage } from './usage.js';
+import { parseDailyBudgetUsd, recordUsage } from './usage.js';
 import { DEFAULT_MAX_INPUT_TOKENS, startWorker } from './worker.js';
 import { secureCookiesFor, type WebConfig } from './web/routes.js';
 
@@ -23,6 +23,7 @@ const publicUrl = rawPublicUrl ? parsePublicUrl(rawPublicUrl) : undefined;
 // simply says there is no status yet.
 const DEFAULT_BACKUP_STATUS = '/backup-status/context-hub.json';
 const backupStatus = process.env.BACKUP_STATUS_PATH?.trim();
+const dailyBudgetUsd = parseDailyBudgetUsd(process.env.DIGEST_DAILY_BUDGET_USD);
 const web: WebConfig = {
   imageTag: process.env.IMAGE_TAG?.trim() || null,
   startedAt: new Date().toISOString(),
@@ -30,6 +31,7 @@ const web: WebConfig = {
   backupStatusPath: backupStatus || (existsSync(DEFAULT_BACKUP_STATUS) ? DEFAULT_BACKUP_STATUS : null),
   secureCookies: secureCookiesFor(publicUrl),
   publicOrigin: publicUrl ?? null,
+  dailyBudgetUsd,
 };
 
 const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };
@@ -51,7 +53,7 @@ if (process.env.ANTHROPIC_API_KEY) {
     console.warn(`DIGEST_MAX_INPUT_TOKENS is ${maxInputTokens}: with 2 characters per token, a full prompt can pass 100K tokens, which some models bill at a higher rate.`);
   }
   const model = process.env.DIGEST_MODEL ?? DEFAULT_MODEL;
-  worker = startWorker({ db, llm: new AnthropicLlm({ model, effort, onUsage: (u) => recordUsage(db, u, new Date().toISOString()) }), maxInputTokens });
+  worker = startWorker({ db, llm: new AnthropicLlm({ model, effort, onUsage: (u) => recordUsage(db, u, new Date().toISOString()) }), maxInputTokens, ...(dailyBudgetUsd === null ? {} : { dailyBudgetMicroUsd: Math.round(dailyBudgetUsd * 1_000_000) }) });
   console.log(`digests: on, model ${model}, effort ${effort}`);
 } else {
   console.log('digests: off, no ANTHROPIC_API_KEY. Uploads and lookups work; digests stay queued until a key is set.');
