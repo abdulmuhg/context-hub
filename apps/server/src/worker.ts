@@ -8,13 +8,15 @@ import {
   getProjectState,
   markStateDirty,
   nextDueDigest,
-  nextProjectNeedingState,
+  nextServerPage,
   okDigestsForProject,
   projectHasDueDigest,
+  queueServerPage,
   refuseDigest,
   saveDigest,
-  saveProjectState,
+  savePageIfVersion,
   stateIsWaiting,
+  unqueueServerPage,
   type DigestBody,
   type DueDigest,
 } from './digest-store.js';
@@ -89,14 +91,16 @@ const pageSources = (db: Db, projectId: number): string =>
     .join('|');
 
 /** Saves a page, and keeps it flagged when its sources changed while the model was working. */
-function savePage(c: Ctx, projectId: number, page: { summary: string; body: string }, fullRebuild: boolean, sourcesBefore: string): void {
-  saveProjectState(c.db, projectId, { ...page, model: c.llm.model }, c.now(), fullRebuild);
+function savePage(c: Ctx, projectId: number, page: { summary: string; body: string }, opts: { baseVersion: number | null; through: number; fullRebuild: boolean }, sourcesBefore: string): void {
+  const saved = savePageIfVersion(c.db, projectId, { ...page, model: c.llm.model }, { ...opts, writtenBy: null, now: c.now() });
+  if (!saved.ok) throw new Error('the page was changed while it was being written');
   clearStateRetry(c.db, projectId);
+  unqueueServerPage(c.db, projectId);
   if (pageSources(c.db, projectId) !== sourcesBefore) markStateDirty(c.db, projectId);
 }
 
-const pageDigests = (db: Db, projectId: number): PageDigest[] =>
-  okDigestsForProject(db, projectId).map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text }));
+const pageDigests = (all: ReturnType<typeof okDigestsForProject>): PageDigest[] =>
+  all.map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text }));
 
 /** Writes a project's page from its ok digests, or removes the page when none are left. */
 async function updatePage(c: Ctx, projectId: number, fresh: PageDigest[], forceRebuild: boolean): Promise<void> {
@@ -104,10 +108,11 @@ async function updatePage(c: Ctx, projectId: number, fresh: PageDigest[], forceR
   if (!project) return;
   const state = getProjectState(c.db, projectId);
   const sourcesBefore = pageSources(c.db, projectId);
+  const all = okDigestsForProject(c.db, projectId);
   const built = await buildStatePage(c.llm, {
     project: project.key,
     page: state,
-    digests: pageDigests(c.db, projectId),
+    digests: pageDigests(all),
     fresh,
     now: c.now(),
     maxChars: c.maxChars,
@@ -117,20 +122,19 @@ async function updatePage(c: Ctx, projectId: number, fresh: PageDigest[], forceR
   if (built === null) {
     deleteProjectState(c.db, projectId);
     clearStateRetry(c.db, projectId);
+    unqueueServerPage(c.db, projectId);
     return;
   }
-  savePage(c, projectId, built.page, built.fullRebuild, sourcesBefore);
+  const through = Math.max(0, ...all.map((d) => d.saved_seq));
+  savePage(c, projectId, built.page, { baseVersion: state?.version ?? null, through, fullRebuild: built.fullRebuild }, sourcesBefore);
 }
 
 const rebuildState = (c: Ctx, projectId: number): Promise<void> => updatePage(c, projectId, [], true);
 
 async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Promise<void> {
   // The page failed recently and is waiting. Do not spend a call per digest on it;
-  // flag it so the state pass rebuilds it with every digest once the wait is over.
-  if (stateIsWaiting(c.db, due.project_id, c.now())) {
-    markStateDirty(c.db, due.project_id);
-    return;
-  }
+  // it stays queued and the state pass rebuilds it with every digest once the wait is over.
+  if (stateIsWaiting(c.db, due.project_id, c.now())) return;
   const session = c.db.prepare('SELECT last_activity_at FROM sessions WHERE id = ?').get(due.session_id) as { last_activity_at: string | null } | undefined;
   const fresh = { session_id: `${due.source}:${due.source_session_id}`, title: due.title, date: session?.last_activity_at ?? null, text };
   await updatePage(c, due.project_id, [fresh], false);
@@ -173,18 +177,15 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
     return 'digest';
   }
 
-  // More of this project's digests are queued: the next one would replace this
-  // page, so flag it and build it once when the queue is empty.
-  if (projectHasDueDigest(c.db, due.project_id, c.now())) {
-    markStateDirty(c.db, due.project_id);
-    return 'digest';
-  }
+  // The page is owed from here on. If more of this project's digests are queued,
+  // the next one would replace this page, so build it once when the queue is empty.
+  queueServerPage(c.db, due.project_id);
+  if (projectHasDueDigest(c.db, due.project_id, c.now())) return 'digest';
 
   try {
     await updateStateAfterDigest(c, due, text);
   } catch (e) {
-    // The digest is safe. Leave the page to the state pass.
-    markStateDirty(c.db, due.project_id);
+    // The digest is safe. The page stays queued for the state pass.
     const r = failState(c.db, due.project_id, message(e), c.now());
     c.log(`state ${due.project_key}: update failed (${message(e)}); attempt ${r.attempts}, next try ${r.next_attempt_at}`);
     return 'error';
@@ -199,7 +200,7 @@ export async function runOnce(deps: WorkerDeps): Promise<'digest' | 'state' | 'i
   const due = nextDueDigest(c.db, c.now());
   if (due) return digestOne(c, due);
 
-  const projectId = nextProjectNeedingState(c.db, c.now());
+  const projectId = nextServerPage(c.db, c.now());
   if (projectId !== null) {
     try {
       await rebuildState(c, projectId);

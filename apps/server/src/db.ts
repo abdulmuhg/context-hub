@@ -217,6 +217,17 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX model_usage_at ON model_usage(at);
   `,
+  `
+  -- Who wrote each summary, the order digests were saved in, and the page version.
+  ALTER TABLE digests ADD COLUMN written_by TEXT;             -- the computer's token label; NULL = the server
+  ALTER TABLE digests ADD COLUMN summary_to_follow INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE digests ADD COLUMN saved_seq INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE project_states ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE project_states ADD COLUMN digests_through INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE project_states ADD COLUMN written_by TEXT;
+  -- Pages the server owes because it wrote a fallback digest for the project.
+  CREATE TABLE server_page_queue (project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -10,11 +10,14 @@ import {
   markDigestPending,
   markStateDirty,
   nextDueDigest,
+  markSummaryToFollow,
   nextProjectNeedingState,
   okDigestsForProject,
+  projectsNeedingPage,
   refuseDigest,
   RETRY_DELAYS_MS,
   saveDigest,
+  savePageIfVersion,
   saveProjectState,
   type DigestBody,
 } from '../src/digest-store.js';
@@ -152,7 +155,7 @@ describe('project state', () => {
     const p = projectId();
     expect(getProjectState(db, p)).toBeNull();
     saveProjectState(db, p, { summary: 'S1', body: 'B1', model: 'm' }, T0, true);
-    expect(getProjectState(db, p)).toEqual({ summary: 'S1', body: 'B1', model: 'm', updated_at: T0, rebuilt_at: T0, dirty: false });
+    expect(getProjectState(db, p)).toEqual({ summary: 'S1', body: 'B1', model: 'm', updated_at: T0, rebuilt_at: T0, dirty: false, version: 1, digests_through: 0, written_by: null });
     saveProjectState(db, p, { summary: 'S2', body: 'B2', model: 'm' }, at(1000), false);
     expect(getProjectState(db, p)).toMatchObject({ summary: 'S2', updated_at: at(1000), rebuilt_at: T0 });
   });
@@ -200,8 +203,8 @@ describe('project state', () => {
     saveDigest(db, { sessionRowId: a, hash: 'h1', model: 'm', body: BODY, text: 'digest a', now: T0 });
     saveDigest(db, { sessionRowId: b, hash: 'h1', model: 'm', body: BODY, text: 'digest b', now: T0 });
     expect(okDigestsForProject(db, projectId())).toEqual([
-      { session_id: 'claude-code:b', title: 'title b', last_activity_at: '2026-10-01T00:00:00.000Z', text: 'digest b' },
-      { session_id: 'claude-code:a', title: 'title a', last_activity_at: '2026-10-03T00:00:00.000Z', text: 'digest a' },
+      { session_id: 'claude-code:b', title: 'title b', last_activity_at: '2026-10-01T00:00:00.000Z', text: 'digest b', saved_seq: 2 },
+      { session_id: 'claude-code:a', title: 'title a', last_activity_at: '2026-10-03T00:00:00.000Z', text: 'digest a', saved_seq: 1 },
     ]);
   });
 
@@ -262,7 +265,7 @@ describe('review fixes: restart and upgrade', () => {
     // Put the file back to how Part 2 left it: no digest tables, version 1.
     db.exec('DROP TABLE IF EXISTS state_retries; DROP TABLE project_states; DROP TABLE digests;');
     db.exec('DROP TABLE oauth_tokens; DROP TABLE oauth_codes; DROP TABLE oauth_grants; DROP TABLE connect_codes; DROP TABLE oauth_clients;');
-    db.exec('DROP TABLE web_sessions; DROP TABLE sync_runs; DROP TABLE activity; DROP TABLE model_usage;');
+    db.exec('DROP TABLE web_sessions; DROP TABLE sync_runs; DROP TABLE activity; DROP TABLE model_usage; DROP TABLE server_page_queue;');
     db.pragma('user_version = 1');
     db.close();
 
@@ -274,5 +277,90 @@ describe('review fixes: restart and upgrade', () => {
     expect(getDigest(db, main)).toMatchObject({ status: 'pending' });
     expect(getDigest(db, sub)).toBeNull();
     db.close();
+  });
+});
+
+describe('computer-written summaries', () => {
+  const okDigest = (id: string, text = 'T', over: { project?: string; writtenBy?: string | null } = {}) => {
+    const sid = addSession(id, { project: over.project });
+    markDigestPending(db, sid, T0);
+    saveDigest(db, { sessionRowId: sid, hash: 'h1', model: 'm', body: BODY, text, now: T0, writtenBy: over.writtenBy ?? null });
+    return sid;
+  };
+  const savedSeq = (sid: number) => (db.prepare('SELECT saved_seq FROM digests WHERE session_id = ?').get(sid) as { saved_seq: number }).saved_seq;
+
+  it('saveDigest numbers saves in order', () => {
+    const a = okDigest('a');
+    const b = okDigest('b');
+    expect([savedSeq(a), savedSeq(b)]).toEqual([1, 2]);
+  });
+
+  it('saveDigest records who wrote the digest', () => {
+    const a = okDigest('a', 'T', { writtenBy: 'my-pc' });
+    expect(getDigest(db, a)).toMatchObject({ status: 'ok' });
+    expect((db.prepare('SELECT written_by FROM digests WHERE session_id = ?').get(a) as { written_by: string }).written_by).toBe('my-pc');
+  });
+
+  it('a new ok digest puts its project in projectsNeedingPage', () => {
+    expect(projectsNeedingPage(db)).toEqual([]);
+    okDigest('a');
+    expect(projectsNeedingPage(db)).toEqual(['local:alpha']);
+    savePageIfVersion(db, projectId(), { summary: 's', body: 'b', model: 'm' }, { baseVersion: null, through: 1, fullRebuild: true, writtenBy: null, now: T0 });
+    expect(projectsNeedingPage(db)).toEqual([]);
+    okDigest('b');
+    expect(projectsNeedingPage(db)).toEqual(['local:alpha']);
+  });
+
+  it('savePageIfVersion refuses a stale base version', () => {
+    okDigest('a');
+    const first = savePageIfVersion(db, projectId(), { summary: 's', body: 'b', model: 'm' }, { baseVersion: null, through: 1, fullRebuild: true, writtenBy: 'pc', now: T0 });
+    expect(first).toEqual({ ok: true, version: 1 });
+    const stale = savePageIfVersion(db, projectId(), { summary: 's2', body: 'b2', model: 'm' }, { baseVersion: null, through: 1, fullRebuild: false, writtenBy: 'pc', now: T0 });
+    expect(stale.ok).toBe(false);
+    const next = savePageIfVersion(db, projectId(), { summary: 's2', body: 'b2', model: 'm' }, { baseVersion: 1, through: 1, fullRebuild: false, writtenBy: 'pc', now: T0 });
+    expect(next).toEqual({ ok: true, version: 2 });
+    const old = savePageIfVersion(db, projectId(), { summary: 's3', body: 'b3', model: 'm' }, { baseVersion: 1, through: 1, fullRebuild: false, writtenBy: 'pc', now: T0 });
+    expect(old).toEqual({ ok: false, version: 2 });
+    expect(getProjectState(db, projectId())).toMatchObject({ summary: 's2', version: 2, written_by: 'pc', digests_through: 1 });
+  });
+
+  it('a merge keeps the dirty flag and a full rebuild clears it', () => {
+    okDigest('a');
+    savePageIfVersion(db, projectId(), { summary: 's', body: 'b', model: 'm' }, { baseVersion: null, through: 1, fullRebuild: true, writtenBy: null, now: T0 });
+    markStateDirty(db, projectId());
+    const v = getProjectState(db, projectId())!.version;
+    savePageIfVersion(db, projectId(), { summary: 's', body: 'b', model: 'm' }, { baseVersion: v, through: 1, fullRebuild: false, writtenBy: null, now: T0 });
+    expect(getProjectState(db, projectId())!.dirty).toBe(true);
+    savePageIfVersion(db, projectId(), { summary: 's', body: 'b', model: 'm' }, { baseVersion: v + 1, through: 1, fullRebuild: true, writtenBy: null, now: T0 });
+    expect(getProjectState(db, projectId())!.dirty).toBe(false);
+  });
+
+  it('markStateDirty bumps the version', () => {
+    okDigest('a');
+    savePageIfVersion(db, projectId(), { summary: 's', body: 'b', model: 'm' }, { baseVersion: null, through: 1, fullRebuild: true, writtenBy: null, now: T0 });
+    const v = getProjectState(db, projectId())!.version;
+    markStateDirty(db, projectId());
+    expect(getProjectState(db, projectId())!.version).toBe(v + 1);
+  });
+
+  it('markSummaryToFollow removes the digest text and its search entry', () => {
+    const sid = okDigest('a', 'zebracrossing summary');
+    savePageIfVersion(db, projectId(), { summary: 's', body: 'b', model: 'm' }, { baseVersion: null, through: 1, fullRebuild: true, writtenBy: null, now: T0 });
+    const hits = () => db.prepare("SELECT 1 FROM search_index WHERE search_index MATCH 'zebracrossing' AND kind = 'digest'").all().length;
+    expect(hits()).toBe(1);
+    markSummaryToFollow(db, sid, T0);
+    expect(hits()).toBe(0);
+    expect(getDigest(db, sid)).toMatchObject({ status: 'pending', body: null, text: null });
+    expect((db.prepare('SELECT summary_to_follow FROM digests WHERE session_id = ?').get(sid) as { summary_to_follow: number }).summary_to_follow).toBe(1);
+    expect(getProjectState(db, projectId())!.dirty).toBe(true);
+  });
+
+  it('nextDueDigest skips summary_to_follow sessions', () => {
+    const sid = okDigest('a');
+    markSummaryToFollow(db, sid, T0);
+    expect(nextDueDigest(db, T0)).toBeNull();
+    const other = addSession('b');
+    markDigestPending(db, other, T0);
+    expect(nextDueDigest(db, T0)?.session_id).toBe(other);
   });
 });

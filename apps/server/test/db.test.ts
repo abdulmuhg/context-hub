@@ -2,7 +2,15 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { openDb, SCHEMA_VERSION } from '../src/db.js';
+import { openDb, SCHEMA_VERSION, type Db } from '../src/db.js';
+import { projectsNeedingPage } from '../src/digest-store.js';
+
+/** Puts a fresh database back to how migration 8 left it, so the later migrations run again. */
+function unmigrate9(db: Db): void {
+  db.exec('DROP TABLE server_page_queue');
+  for (const c of ['written_by', 'summary_to_follow', 'saved_seq']) db.exec(`ALTER TABLE digests DROP COLUMN ${c}`);
+  for (const c of ['version', 'digests_through', 'written_by']) db.exec(`ALTER TABLE project_states DROP COLUMN ${c}`);
+}
 
 const tables = (db: ReturnType<typeof openDb>) =>
   (db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table') ORDER BY name").all() as { name: string }[]).map((r) => r.name);
@@ -71,6 +79,7 @@ describe('migration 7', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
     const old = openDb(path);
     old.exec('DROP TABLE model_usage');
+    unmigrate9(old);
     old.pragma('user_version = 6');
     const add = old.prepare("INSERT INTO activity(at, direction, action, actor) VALUES ('2026-10-21T00:00:00Z', 'in', 'sync', ?)");
     for (const actor of ['your PC (abdulmuhg-macOS)', 'your PC', 'claude.ai']) add.run(actor);
@@ -87,11 +96,31 @@ describe('migration 7', () => {
 
 describe('migration 8', () => {
   it('is schema version 8 and creates model_usage', () => {
-    expect(SCHEMA_VERSION).toBe(8);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(8);
     const db = openDb(':memory:');
     expect(tables(db)).toContain('model_usage');
     const cols = (db.prepare('PRAGMA table_info(model_usage)').all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(['id', 'at', 'model', 'kind', 'project_key', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cost_micro_usd']);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'model_usage_at'").get()).toBeDefined();
+  });
+});
+
+describe('migration 9', () => {
+  it('keeps existing pages up to date', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
+    const old = openDb(path);
+    old.prepare("INSERT INTO projects(key, name, created_at) VALUES ('p', 'p', 'x')").run();
+    old.prepare(
+      "INSERT INTO sessions(source, source_session_id, project_id, title, last_activity_at, content_hash, synced_at) VALUES ('claude-code', 's', 1, 't', 'x', 'h', 'x')",
+    ).run();
+    old.prepare("INSERT INTO digests(session_id, status, source_hash, model, body, text, updated_at) VALUES (1, 'ok', 'h', 'm', '{}', 't', 'x')").run();
+    old.prepare("INSERT INTO project_states(project_id, summary, body, model, updated_at, rebuilt_at, dirty) VALUES (1, 's', 'b', 'm', 'x', 'x', 0)").run();
+    unmigrate9(old);
+    old.pragma('user_version = 8');
+    old.close();
+    const db = openDb(path);
+    expect(projectsNeedingPage(db)).toEqual([]);
+    expect(db.prepare('SELECT version, digests_through FROM project_states').get()).toEqual({ version: 1, digests_through: 0 });
+    db.close();
   });
 });
