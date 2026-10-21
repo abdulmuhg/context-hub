@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LlmRefusal } from '../src/llm.js';
+import type { UsageRecord } from '../src/usage.js';
 import { AnthropicLlm, DEFAULT_MODEL, type ParseClient } from '../src/llm-anthropic.js';
 
 const DIGEST = { goal: 'g', done: [], decisions: [], open_items: [], key_refs: [] };
@@ -260,5 +261,66 @@ describe('the page review', () => {
     expect(sent[0].system).toMatch(/indirectly/);
     expect(sent[1].system).toMatch(/later part settles it/);
     expect(sent[1].system).toMatch(/indirectly/);
+  });
+});
+
+describe('usage reporting', () => {
+  const USAGE = { input_tokens: 1200, output_tokens: 300, cache_read_input_tokens: 5, cache_creation_input_tokens: 7 };
+  const STATE = { summary: 's', body: 'short' };
+  const REVIEW = { drop_open: [], drop_current: [], summary: '' };
+  const longPage = { summary: 's', body: Array.from({ length: 1700 }, (_, i) => `w${i}`).join(' ') };
+
+  function recording(outputs: unknown[], extra: Record<string, unknown> = {}) {
+    const records: UsageRecord[] = [];
+    let i = 0;
+    const client: ParseClient = {
+      messages: { parse: async () => ({ stop_reason: 'end_turn', parsed_output: outputs[Math.min(i++, outputs.length - 1)], usage: USAGE, ...extra }) },
+    };
+    return { records, llm: (onUsage?: (u: UsageRecord) => void) => new AnthropicLlm({ client, onUsage: onUsage ?? ((u) => records.push(u)) }) };
+  }
+
+  const base = { model: 'claude-haiku-5-5', project: 'github.com/me/alpha', input_tokens: 1200, output_tokens: 300, cache_read_tokens: 5, cache_write_tokens: 7 };
+
+  it('reports one record per method with its kind and project', async () => {
+    const { records, llm } = recording([DIGEST, DIGEST, STATE, REVIEW]);
+    const l = llm();
+    await l.digest(digestReq);
+    await l.mergeDigests({ project: 'github.com/me/alpha', title: 't', parts: [DIGEST] });
+    await l.projectState({ project: 'github.com/me/alpha', mode: 'rebuild', previous: null, digests: [] });
+    await l.reviewState({ project: 'github.com/me/alpha', page: { summary: 's', body: '## Open items\n- x' }, digests: [] });
+    expect(records).toEqual(['digest', 'merge', 'state', 'review'].map((kind) => ({ ...base, kind })));
+  });
+
+  it('reports the shorten retry as its own call', async () => {
+    const { records, llm } = recording([longPage, STATE]);
+    await llm().projectState({ project: 'github.com/me/alpha', mode: 'rebuild', previous: null, digests: [] });
+    expect(records.map((r) => r.kind)).toEqual(['state', 'shorten']);
+  });
+
+  it('records a refusal and an incomplete answer, which are billed too', async () => {
+    const refused = recording([null], { stop_reason: 'refusal', stop_details: { category: 'cyber' } });
+    await expect(refused.llm().digest(digestReq)).rejects.toBeInstanceOf(LlmRefusal);
+    expect(refused.records).toHaveLength(1);
+    const cut = recording([null], { stop_reason: 'max_tokens' });
+    await expect(cut.llm().digest(digestReq)).rejects.toThrow(/incomplete/);
+    expect(cut.records).toHaveLength(1);
+  });
+
+  it('does not fail the call when the recorder throws', async () => {
+    const { llm } = recording([DIGEST]);
+    const err = console.error;
+    console.error = () => {};
+    try {
+      await expect(llm(() => { throw new Error('disk full'); }).digest(digestReq)).resolves.toEqual(DIGEST);
+    } finally {
+      console.error = err;
+    }
+  });
+
+  it('reports nothing when the response has no usage', async () => {
+    const records: UsageRecord[] = [];
+    const client: ParseClient = { messages: { parse: async () => ({ stop_reason: 'end_turn', parsed_output: DIGEST }) } };
+    await new AnthropicLlm({ client, onUsage: (u) => records.push(u) }).digest(digestReq);
+    expect(records).toEqual([]);
   });
 });

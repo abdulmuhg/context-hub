@@ -7,6 +7,7 @@ import { createHandler } from './http.js';
 import { AnthropicLlm, DEFAULT_MODEL, type Effort } from './llm-anthropic.js';
 import { handleMcp } from './mcp.js';
 import { parsePublicUrl } from './oauth/config.js';
+import { recordUsage } from './usage.js';
 import { DEFAULT_MAX_INPUT_TOKENS, startWorker } from './worker.js';
 import { secureCookiesFor, type WebConfig } from './web/routes.js';
 
@@ -50,7 +51,7 @@ if (process.env.ANTHROPIC_API_KEY) {
     console.warn(`DIGEST_MAX_INPUT_TOKENS is ${maxInputTokens}: with 2 characters per token, a full prompt can pass 100K tokens, which some models bill at a higher rate.`);
   }
   const model = process.env.DIGEST_MODEL ?? DEFAULT_MODEL;
-  worker = startWorker({ db, llm: new AnthropicLlm({ model, effort }), maxInputTokens });
+  worker = startWorker({ db, llm: new AnthropicLlm({ model, effort, onUsage: (u) => recordUsage(db, u, new Date().toISOString()) }), maxInputTokens });
   console.log(`digests: on, model ${model}, effort ${effort}`);
 } else {
   console.log('digests: off, no ANTHROPIC_API_KEY. Uploads and lookups work; digests stay queued until a key is set.');

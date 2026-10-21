@@ -67,9 +67,10 @@ describe('migration 6', () => {
 
 describe('migration 7', () => {
   it('is schema version 7 and drops "your PC" from saved activity', () => {
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(7);
     const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
     const old = openDb(path);
+    old.exec('DROP TABLE model_usage');
     old.pragma('user_version = 6');
     const add = old.prepare("INSERT INTO activity(at, direction, action, actor) VALUES ('2026-10-21T00:00:00Z', 'in', 'sync', ?)");
     for (const actor of ['your PC (abdulmuhg-macOS)', 'your PC', 'claude.ai']) add.run(actor);
@@ -81,5 +82,16 @@ describe('migration 7', () => {
       'claude.ai',
     ]);
     db.close();
+  });
+});
+
+describe('migration 8', () => {
+  it('is schema version 8 and creates model_usage', () => {
+    expect(SCHEMA_VERSION).toBe(8);
+    const db = openDb(':memory:');
+    expect(tables(db)).toContain('model_usage');
+    const cols = (db.prepare('PRAGMA table_info(model_usage)').all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toEqual(['id', 'at', 'model', 'kind', 'project_key', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cost_micro_usd']);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'model_usage_at'").get()).toBeDefined();
   });
 });
