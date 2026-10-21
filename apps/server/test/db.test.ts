@@ -58,10 +58,28 @@ describe('migration 5', () => {
 });
 
 describe('migration 6', () => {
-  it('is schema version 6 and gives connect_codes a purpose', () => {
+  it('gives connect_codes a purpose', () => {
     const db = openDb(':memory:');
-    expect(SCHEMA_VERSION).toBe(6);
     const cols = (db.prepare('PRAGMA table_info(connect_codes)').all() as { name: string }[]).map((c) => c.name);
     expect(cols).toContain('purpose');
+  });
+});
+
+describe('migration 7', () => {
+  it('is schema version 7 and drops "your PC" from saved activity', () => {
+    expect(SCHEMA_VERSION).toBe(7);
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
+    const old = openDb(path);
+    old.pragma('user_version = 6');
+    const add = old.prepare("INSERT INTO activity(at, direction, action, actor) VALUES ('2026-10-21T00:00:00Z', 'in', 'sync', ?)");
+    for (const actor of ['your PC (abdulmuhg-macOS)', 'your PC', 'claude.ai']) add.run(actor);
+    old.close();
+    const db = openDb(path);
+    expect((db.prepare('SELECT actor FROM activity ORDER BY id').all() as { actor: string }[]).map((r) => r.actor)).toEqual([
+      'abdulmuhg-macOS',
+      'a computer',
+      'claude.ai',
+    ]);
+    db.close();
   });
 });

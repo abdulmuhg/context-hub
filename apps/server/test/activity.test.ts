@@ -88,8 +88,8 @@ describe('sync runs', () => {
     });
     const rows = listActivity(db, { direction: 'in', limit: 10, offset: 0 });
     expect(rows.map((r) => [r.action, r.actor, r.detail])).toEqual([
-      ['sync', 'your PC', '1 uploaded, 2 unchanged, 4 errors'],
-      ['sync', 'your PC (laptop)', '3 uploaded, 7 unchanged'],
+      ['sync', 'a computer', '1 uploaded, 2 unchanged, 4 errors'],
+      ['sync', 'laptop', '3 uploaded, 7 unchanged'],
     ]);
   });
 });

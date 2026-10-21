@@ -54,7 +54,7 @@ export type Credential =
 /** Who the activity log says made a request. */
 export function actorFor(c: Credential): string {
   if (c.kind === 'oauth') return c.clientName;
-  return c.scope === 'ingest' ? `your PC (${c.label})` : `read token: ${c.label}`;
+  return c.scope === 'ingest' ? c.label : `read token: ${c.label}`;
 }
 
 /**

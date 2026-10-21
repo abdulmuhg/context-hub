@@ -303,7 +303,7 @@ describe('the activity log: uploads and deletes', () => {
         action: 'upload',
         projectKey: 'github.com/me/alpha',
         sessionRef: 'claude-code:s1',
-        actor: 'your PC (collector)',
+        actor: 'collector',
         detail: 'Fix the login bug',
       },
     ]);
@@ -330,7 +330,7 @@ describe('the activity log: uploads and deletes', () => {
     expect(after.filter((r) => r.action === 'upload').map((r) => r.sessionRef)).toEqual(['claude-code:s2']);
     const del = after.filter((r) => r.action === 'delete');
     expect(del).toHaveLength(1);
-    expect(del[0]).toMatchObject({ direction: 'in', projectKey: 'github.com/me/alpha', sessionRef: null, actor: 'your PC (collector)' });
+    expect(del[0]).toMatchObject({ direction: 'in', projectKey: 'github.com/me/alpha', sessionRef: null, actor: 'collector' });
   });
 
   it('deleting a project removes all its rows and logs a delete with no project', async () => {

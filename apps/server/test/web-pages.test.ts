@@ -120,8 +120,8 @@ describe('the Activity page', () => {
   it('shows each row with its time, direction, what, project and actor', async () => {
     log(ago(MINUTE), { action: 'search', projectKey: null, actor: 'Claude Code (read token: laptop)', detail: 'redirect loop' });
     log(ago(2 * MINUTE), { direction: 'in', action: 'note', projectKey: JSONROOM, actor: 'claude.ai' });
-    log(ago(3 * MINUTE), { direction: 'in', action: 'delete', projectKey: 'local:alpha', actor: 'your PC (collector)' });
-    log(ago(4 * MINUTE), { direction: 'in', action: 'sync', projectKey: null, actor: 'your PC (laptop)', detail: '2 uploaded, 0 unchanged' });
+    log(ago(3 * MINUTE), { direction: 'in', action: 'delete', projectKey: 'local:alpha', actor: 'collector' });
+    log(ago(4 * MINUTE), { direction: 'in', action: 'sync', projectKey: null, actor: 'laptop', detail: '2 uploaded, 0 unchanged' });
     const html = await page('/activity');
     for (const th of ['Time', 'Direction', 'What', 'Project', 'By']) expect(html).toContain(`<th>${th}</th>`);
     expect(html).toContain(`<time datetime="${ago(MINUTE)}"`);
@@ -131,7 +131,7 @@ describe('the Activity page', () => {
     expect(html).toContain('note');
     expect(html).toContain('github.com/abdulmuhg/jsonroom');
     expect(html).toContain('deleted');
-    expect(html).toContain('your PC (collector)');
+    expect(html).toContain('<td>collector</td>');
     expect(html).toContain('sync');
     // Friendly directions, not the stored codes.
     expect(html).toContain('saved in');
@@ -143,7 +143,7 @@ describe('the Activity page', () => {
 
   it('filters by direction and offers the three filter links', async () => {
     log(ago(MINUTE), { direction: 'out', action: 'get_project', detail: 'a read' });
-    log(ago(2 * MINUTE), { direction: 'in', action: 'upload', actor: 'your PC (collector)', detail: 'a save' });
+    log(ago(2 * MINUTE), { direction: 'in', action: 'upload', actor: 'collector', detail: 'a save' });
     const all = await page('/activity');
     expect(all).toContain('href="/activity"');
     expect(all).toContain('href="/activity?direction=in"');
@@ -161,13 +161,13 @@ describe('the Activity page', () => {
   });
 
   it('collapses consecutive uploads of one project by one actor within two minutes', async () => {
-    const upload = (at: string) => log(at, { direction: 'in', action: 'upload', projectKey: JSONROOM, actor: 'your PC (collector)' });
+    const upload = (at: string) => log(at, { direction: 'in', action: 'upload', projectKey: JSONROOM, actor: 'collector' });
     upload(ago(MINUTE));
     upload(ago(MINUTE + 30_000));
     upload(ago(2 * MINUTE));
     // Ten minutes earlier is its own run; a different project breaks the run too.
     upload(ago(12 * MINUTE));
-    log(ago(13 * MINUTE), { direction: 'in', action: 'upload', projectKey: 'local:alpha', actor: 'your PC (collector)' });
+    log(ago(13 * MINUTE), { direction: 'in', action: 'upload', projectKey: 'local:alpha', actor: 'collector' });
     const html = await page('/activity');
     expect(html).toContain('3 sessions');
     expect(html).toContain('1 session');
@@ -197,7 +197,7 @@ describe('the Activity page', () => {
         direction: 'in',
         action: 'upload',
         projectKey: JSONROOM,
-        actor: 'your PC (collector)',
+        actor: 'collector',
       });
     }
     const html = await page('/activity');
@@ -226,7 +226,7 @@ describe('the Activity page', () => {
         direction: 'in',
         action: 'upload',
         projectKey: JSONROOM,
-        actor: 'your PC (collector)',
+        actor: 'collector',
       });
     }
     // The Overview takes the newest ten rows; being one run, they are one line.

@@ -87,7 +87,7 @@ export function recordSyncRun(
       'INSERT INTO sync_runs(token_id, finished_at, uploaded, unchanged, errors, received_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(r.tokenId, r.finishedAt, r.uploaded, r.unchanged, r.errors, now);
     const token = db.prepare('SELECT label FROM tokens WHERE id = ?').get(r.tokenId) as { label: string } | undefined;
-    const actor = token ? `your PC (${token.label})` : 'your PC';
+    const actor = token ? token.label : 'a computer';
     const detail = `${r.uploaded} uploaded, ${r.unchanged} unchanged${r.errors > 0 ? `, ${r.errors} errors` : ''}`;
     logActivity(
       db,

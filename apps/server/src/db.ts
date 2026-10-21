@@ -196,6 +196,11 @@ const MIGRATIONS: string[] = [
   -- A one-time code is for signing in (Claude apps, browsers) or for adding a computer; never both.
   ALTER TABLE connect_codes ADD COLUMN purpose TEXT NOT NULL DEFAULT 'signin' CHECK (purpose IN ('signin','device'));
   `,
+  `
+  -- The activity log names a computer by its label alone, not "your PC (<label>)".
+  UPDATE activity SET actor = substr(actor, 10, length(actor) - 10) WHERE actor LIKE 'your PC (%)';
+  UPDATE activity SET actor = 'a computer' WHERE actor = 'your PC';
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

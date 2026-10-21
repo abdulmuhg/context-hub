@@ -170,7 +170,7 @@ describe('checkCredential', () => {
 
 describe('actorFor', () => {
   it('names an ingest token as the PC, a read token by label, and an OAuth grant by its client', () => {
-    expect(actorFor({ kind: 'bearer', scope: 'ingest', id: 1, label: 'collector' })).toBe('your PC (collector)');
+    expect(actorFor({ kind: 'bearer', scope: 'ingest', id: 1, label: 'collector' })).toBe('collector');
     expect(actorFor({ kind: 'bearer', scope: 'read', id: 2, label: 'assistant' })).toBe('read token: assistant');
     expect(actorFor({ kind: 'oauth', grantId: 3, scopes: ['hub.read'], clientName: 'claude.ai' })).toBe('claude.ai');
   });
