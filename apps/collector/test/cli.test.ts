@@ -233,6 +233,7 @@ describe('hub sync', () => {
     expect(requests).toEqual([
       { method: 'GET', url: 'https://hub.example.com/api/status' },
       { method: 'PUT', url: `https://hub.example.com/api/sessions/claude-code/${S1}` },
+      { method: 'GET', url: 'https://hub.example.com/api/status' },
       { method: 'POST', url: 'https://hub.example.com/api/sync-runs' },
     ]);
   });

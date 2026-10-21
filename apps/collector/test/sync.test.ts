@@ -39,6 +39,7 @@ let hubStatus: Record<string, unknown>;
 let owedList: Record<string, unknown>[];
 let stored: Record<string, unknown>;
 let digestAnswer: number;
+let pageInputs: Record<string, unknown>;
 
 /** A stand-in for the server: records requests, can start failing. */
 const fakeFetch: typeof fetch = async (input, init) => {
@@ -53,6 +54,7 @@ const fakeFetch: typeof fetch = async (input, init) => {
   const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
   if (method === 'GET' && url.endsWith('/api/status')) return json(hubStatus);
   if (method === 'GET' && url.includes('/api/projects/') && url.endsWith('/digests')) return json({ sessions: owedList });
+  if (method === 'GET' && url.endsWith('/page-inputs')) return json(pageInputs[decodeURIComponent(url.split('/api/projects/')[1]!.split('/')[0]!)]);
   if (method === 'GET' && url.includes('/api/sessions/')) {
     const found = stored[url.split('/api/sessions/')[1]!];
     return found ? json({ session: found }) : new Response('{}', { status: 404 });
@@ -98,6 +100,7 @@ beforeEach(() => {
   owedList = [];
   stored = {};
   digestAnswer = 204;
+  pageInputs = {};
   saveConfig(hub, { ...loadConfig(hub), server_url: 'https://hub.example.com/' });
   saveToken(hub, 'tok-1');
   writeJsonl(join(proj(), `${S1}.jsonl`), [cc(S1, '/work/alpha', 'alpha question')]);
@@ -764,5 +767,65 @@ describe('runSync: summaries', () => {
     llm.failWith = new Error('claude exploded');
     await runSync(opts());
     expect(loadState(hub).last_waiting).toEqual({ count: 1, reason: 'summary failed: claude exploded', at: '2026-10-10T00:00:00.000Z' });
+  });
+});
+
+describe('runSync: state pages', () => {
+  const pageDigest = { session_id: `claude-code:${S1}`, title: 'T', date: '2026-10-01T10:00:00.000Z', text: 'Goal: x', saved_seq: 1 };
+  const pagePuts = () => sent.filter((r) => r.method === 'PUT' && r.url.endsWith('/page'));
+
+  beforeEach(() => {
+    hubStatus = { server_summaries: false, pages_needed: [KEY_A], summaries_owed: 0 };
+    pageInputs = { [KEY_A]: { page: null, digests: [pageDigest], through: 1 } };
+  });
+
+  it('writes the pages the hub says it needs, after the uploads', async () => {
+    track(KEY_A);
+    const report = await runSync(opts());
+    expect(sent.map((r) => (r.url.endsWith('/page') ? 'page' : 'session'))).toEqual(['session', 'page']);
+    expect(pagePuts()[0]!.url).toBe(`https://hub.example.com/api/projects/${encodeURIComponent(KEY_A)}/page`);
+    expect(pagePuts()[0]!.body).toMatchObject({ base_version: null, through: 1, full_rebuild: true, model: 'fake-model' });
+    expect(report.pages).toEqual({ updated: [KEY_A], left: [] });
+  });
+
+  it('leaves the pages of projects it did not sync', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: false, pages_needed: ['github.com/me/other', KEY_A], summaries_owed: 0 };
+    await runSync(opts());
+    expect(pagePuts()).toHaveLength(1);
+  });
+
+  it('makes no page call without a writer', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: true, pages_needed: [KEY_A], summaries_owed: 0 };
+    const report = await runSync(opts({ llm: null }));
+    expect(pagePuts()).toEqual([]);
+    expect(report.pages).toEqual({ updated: [], left: [] });
+  });
+
+  it('skips the pages once the usage limit is hit', async () => {
+    track(KEY_A);
+    llm.digest = async () => {
+      throw new UsageLimitError(null);
+    };
+    const report = await runSync(opts());
+    expect(pagePuts()).toEqual([]);
+    expect(report.waiting.reason).toBe('Claude usage limit reached');
+  });
+
+  it('leaves the page of a re-cleaned project until its summaries are written', async () => {
+    track(KEY_A);
+    await runSync(opts());
+    sent = [];
+    savePersonal(hub, [{ label: 'q', value: 'question', level: 'full' }]);
+    const report = await runSync(opts());
+    expect(pagePuts()).toEqual([]);
+    expect(report.pages).toEqual({ updated: [], left: [KEY_A] });
+  });
+
+  it('does not touch pages in a dry run', async () => {
+    track(KEY_A);
+    await runSync(opts({ dryRun: true }));
+    expect(sent).toEqual([]);
   });
 });

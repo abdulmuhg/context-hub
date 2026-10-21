@@ -147,3 +147,36 @@ export async function exchangeDeviceCode(
   }
   return (await res.json()) as { token: string; label: string };
 }
+
+export interface PageInputsResult {
+  page: { summary: string; body: string; version: number; rebuilt_at: string; dirty: boolean; digests_through: number } | null;
+  /** Every ok digest of the project, oldest first. */
+  digests: { session_id: string; title: string; date: string | null; text: string; saved_seq: number }[];
+  /** The newest saved_seq among the digests. A page saved with it covers all of them. */
+  through: number;
+}
+
+const projectPath = (key: string): string => `/api/projects/${encodeURIComponent(key)}`;
+
+/** What it takes to write a project's state page: the current page and every digest. */
+export async function getPageInputs(remote: Remote, key: string): Promise<PageInputsResult> {
+  return (await (await send(remote, 'GET', `${projectPath(key)}/page-inputs`)).json()) as PageInputsResult;
+}
+
+/** Saves a page. Not ok means someone saved one since it was read: read again and redo it. */
+export async function putPage(
+  remote: Remote,
+  key: string,
+  page: { summary: string; body: string; model: string; base_version: number | null; through: number; full_rebuild: boolean },
+): Promise<{ ok: true; version: number } | { ok: false }> {
+  const path = `${projectPath(key)}/page`;
+  const res = await request(remote, 'PUT', path, gz(page));
+  if (res.status === 409) return { ok: false };
+  if (!res.ok) throw new Error(`PUT ${path}: server answered ${res.status}`);
+  return { ok: true, version: ((await res.json()) as { version: number }).version };
+}
+
+/** Removes the page of a project that has no summaries left. */
+export async function deletePage(remote: Remote, key: string): Promise<void> {
+  await send(remote, 'DELETE', `${projectPath(key)}/page`);
+}

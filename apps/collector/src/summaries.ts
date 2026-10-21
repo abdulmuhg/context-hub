@@ -1,7 +1,7 @@
-import { CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, writeDigest, type HashedSession, type Llm, type UploadDigest } from '@context-hub/core';
+import { buildStatePage, CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, writeDigest, type HashedSession, type Llm, type UploadDigest } from '@context-hub/core';
 import { ClaudeSignInError, UsageLimitError } from './claude-llm.js';
 import { SUMMARY_CAP } from './config.js';
-import { getSession, listProjectDigests, putDigest, type Remote } from './upload.js';
+import { deletePage, getPageInputs, getSession, listProjectDigests, putDigest, putPage, type Remote } from './upload.js';
 
 /** A long session is digested in parts of this many characters, as the server does. */
 export const MAX_CHARS = DEFAULT_MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
@@ -62,8 +62,9 @@ export async function catchUpOwed(
   llm: Llm,
   projects: string[],
   budget: Budget,
-): Promise<{ written: SessionRef[]; waiting: number; failure: string | null }> {
+): Promise<{ written: SessionRef[]; waiting: number; failure: string | null; stillOwed: string[] }> {
   const written: SessionRef[] = [];
+  const stillOwed = new Set<string>();
   let failure: string | null = null;
   let waiting = 0;
   for (const project of projects) {
@@ -73,6 +74,7 @@ export async function catchUpOwed(
     for (const entry of owed) {
       if (!budgetOpen(budget)) {
         waiting++;
+        stillOwed.add(project);
         continue;
       }
       const ref = { source: entry.source, id: entry.id };
@@ -87,8 +89,73 @@ export async function catchUpOwed(
         if (stop !== null) budget.stopped = stop;
         else failure = `summary failed: ${(e as Error).message}`;
         waiting++;
+        stillOwed.add(project);
       }
     }
   }
-  return { written, waiting, failure };
+  return { written, waiting, failure, stillOwed: [...stillOwed] };
+}
+
+/** A refused page save is read, rebuilt and tried again this many times before the page is left for a later sync. */
+const PAGE_RETRIES = 2;
+
+/**
+ * Writes the state page of each project from the hub's digests and uploads it
+ * with the version it started from. A page the hub refuses is rebuilt from fresh
+ * inputs; after the retries it is left for a later sync. Pages do not use up the
+ * summary cap. A usage limit ends the work and leaves every remaining page.
+ */
+export async function updatePages(
+  remote: Remote,
+  llm: Llm,
+  keys: string[],
+  budget: Budget,
+  opts: { now: string; maxChars: number; forceRebuild?: boolean },
+): Promise<{ updated: string[]; left: string[] }> {
+  const updated: string[] = [];
+  const left: string[] = [];
+  for (const key of keys) {
+    if (budget.stopped !== null) {
+      left.push(key);
+      continue;
+    }
+    try {
+      let saved = false;
+      for (let attempt = 0; attempt <= PAGE_RETRIES && !saved; attempt++) {
+        const inputs = await getPageInputs(remote, key);
+        const seen = inputs.page?.digests_through ?? 0;
+        const digests = inputs.digests.map(({ session_id, title, date, text }) => ({ session_id, title, date, text }));
+        const fresh = inputs.digests.filter((d) => d.saved_seq > seen).map(({ session_id, title, date, text }) => ({ session_id, title, date, text }));
+        const built = await buildStatePage(llm, {
+          project: key,
+          page: inputs.page && { summary: inputs.page.summary, body: inputs.page.body, rebuilt_at: inputs.page.rebuilt_at, dirty: inputs.page.dirty },
+          digests,
+          fresh,
+          now: opts.now,
+          maxChars: opts.maxChars,
+          forceRebuild: opts.forceRebuild,
+        });
+        if (built === null) {
+          await deletePage(remote, key);
+          saved = true;
+          break;
+        }
+        const put = await putPage(remote, key, {
+          summary: built.page.summary,
+          body: built.page.body,
+          model: llm.model,
+          base_version: inputs.page?.version ?? null,
+          through: inputs.through,
+          full_rebuild: built.fullRebuild,
+        });
+        saved = put.ok;
+      }
+      (saved ? updated : left).push(key);
+    } catch (e) {
+      const stop = stopReason(e);
+      if (stop !== null) budget.stopped = stop;
+      left.push(key);
+    }
+  }
+  return { updated, left };
 }

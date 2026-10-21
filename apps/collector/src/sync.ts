@@ -19,7 +19,7 @@ import {
 } from './config.js';
 import { discoverDocs, docId, readDoc } from './docs.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
-import { budgetOpen, catchUpOwed, newBudget, spend, stopReason, summarize, type SessionRef } from './summaries.js';
+import { budgetOpen, catchUpOwed, MAX_CHARS, newBudget, spend, stopReason, summarize, updatePages, type SessionRef } from './summaries.js';
 import { deleteRemote, getStatus, putSession, reportSyncRun, type HubStatus, type Remote } from './upload.js';
 
 export type { SessionRef };
@@ -369,6 +369,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   }
 
   let failure: string | null = null;
+  /** Projects whose page waits for summaries still owed after a re-clean, so it is not rebuilt without them. */
+  const deferred = new Set<string>(works.filter((w) => recleaned.has(w) && isMain(w)).map((w) => w.ref.project));
   let capHit = false;
   let notInstalled = false;
   let waiting = 0;
@@ -381,6 +383,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
       report.summarized.push(...owed.written);
       waiting += owed.waiting;
       failure = owed.failure ?? failure;
+      for (const key of owed.stillOwed) deferred.add(key);
     } catch (e) {
       report.errors.push((e as Error).message);
       stopped = true;
@@ -458,6 +461,21 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     if (stopped) break;
     if (w.item.parentKey !== null && mainKeys.has(w.item.parentKey)) continue;
     await upload(w);
+  }
+
+  // State pages come last, once this run's summaries are on the hub.
+  if (llm && remote && !stopped && !opts.session) {
+    const selected = s.cfg.tracked.filter((key) => !opts.project || projectMatches(opts.project, key));
+    let needed: string[] = [];
+    try {
+      needed = ((await getStatus(remote)).pages_needed ?? []).filter((key) => selected.includes(key));
+    } catch {
+      needed = [];
+    }
+    report.pages.left.push(...needed.filter((key) => deferred.has(key)));
+    const pages = await updatePages(remote, llm, needed.filter((key) => !deferred.has(key)), budget, { now: now().toISOString(), maxChars: MAX_CHARS });
+    report.pages.updated.push(...pages.updated);
+    report.pages.left.push(...pages.left);
   }
 
   report.waiting = {
