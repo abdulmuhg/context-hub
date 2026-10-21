@@ -100,7 +100,8 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
     });
   }
 
-  if (cfg.dailyBudgetUsd !== null && budgetReached(db, Math.round(cfg.dailyBudgetUsd * 1_000_000), now)) {
+  const paused = cfg.dailyBudgetUsd !== null && budgetReached(db, Math.round(cfg.dailyBudgetUsd * 1_000_000), now);
+  if (paused && cfg.dailyBudgetUsd !== null) {
     problems.push({
       kind: 'budget-reached',
       text: `Summaries paused: today's model spend reached the ${formatUsd(Math.round(cfg.dailyBudgetUsd * 1_000_000))} daily limit. They resume at 00:00 UTC.`,
@@ -116,7 +117,8 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
         text: 'Summaries are off: the server has no model key, so new sessions are not being summarised.',
       });
     }
-  } else if (pending.some((p) => olderThan(now, p.updated_at, PENDING_SLOW_MS))) {
+  } else if (!paused && pending.some((p) => olderThan(now, p.updated_at, PENDING_SLOW_MS))) {
+    // While the daily limit holds them, waiting summaries are expected and already explained.
     problems.push({
       kind: 'digests-backing-up',
       text: 'Summaries are backing up: a summary has been waiting for more than an hour.',

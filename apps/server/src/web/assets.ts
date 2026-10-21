@@ -213,6 +213,10 @@ td .sub.mono { font-size: 12px; }
   gap: 16px;
   margin: 0 0 16px;
 }
+/* Six cards: one row when they fit, otherwise 3 + 3 rather than 5 + 1. */
+@media (min-width: 768px) and (max-width: 1459px) {
+  .cards { grid-template-columns: repeat(3, 1fr); }
+}
 .cards .card { margin: 0; display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; }
 .stat-label { color: var(--muted); font-size: 12px; font-weight: 500; }
 .stat-value { font-size: 24px; font-weight: 600; line-height: 1.2; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }

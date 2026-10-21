@@ -157,6 +157,12 @@ describe('problem rules', () => {
     expect(h.problems[0]!.text).toMatch(/backing up/i);
   });
 
+  it('does not also say backing up while the daily limit holds summaries', () => {
+    db.prepare("UPDATE digests SET updated_at = ? WHERE status = 'pending'").run(ago(2 * HOUR));
+    recordUsage(db, { model: 'claude-haiku-5-5', kind: 'digest', project: 'p', input_tokens: 100_000, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }, ago(HOUR));
+    expect(kinds(computeHealth(db, cfg({ dailyBudgetUsd: 0.01 }), NOW))).toEqual(['budget-reached']);
+  });
+
   it('says sync is failing when the last reported run ended with errors', () => {
     db.prepare('UPDATE sync_runs SET errors = 3').run();
     const h = computeHealth(db, cfg(), NOW);
