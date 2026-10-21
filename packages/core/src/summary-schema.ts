@@ -49,7 +49,9 @@ export const ReviewSchema = z.object({
 
 /** The JSON Schema form of a zod schema, as `claude --json-schema` takes it. */
 export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
-  return z.toJSONSchema(schema) as Record<string, unknown>;
+  // Claude Code's --json-schema rejects a "$schema" naming draft 2020-12, so it is left out.
+  const { $schema: _draft, ...rest } = z.toJSONSchema(schema) as Record<string, unknown>;
+  return rest;
 }
 
 /** What a computer sends with a session: its digest, or the reason there is none. */
