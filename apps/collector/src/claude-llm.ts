@@ -8,8 +8,9 @@ import { jsonSchemaOf, LlmRefusal, PromptedLlm, type AskCall } from '@context-hu
 export function cleanEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(env)) {
-    // Windows treats variable names without regard to case.
-    if (/^(ANTHROPIC_|CLAUDE)/i.test(name)) continue;
+    // Windows treats variable names without regard to case. CLAUDE_CONFIG_DIR stays:
+    // it says where the owner's own Claude Code keeps its settings and sign-in.
+    if (/^(ANTHROPIC_|CLAUDE)/i.test(name) && name.toUpperCase() !== 'CLAUDE_CONFIG_DIR') continue;
     out[name] = value;
   }
   return out;

@@ -50,6 +50,11 @@ describe('cleanEnv', () => {
     expect(Object.keys(cleanEnv(env)).sort()).toEqual(['APPDATA', 'HOME', 'PATH', 'USERPROFILE']);
   });
 
+  it('keeps CLAUDE_CONFIG_DIR, where a custom Claude Code setup keeps its sign-in', () => {
+    expect(cleanEnv({ CLAUDE_CONFIG_DIR: 'D:\\claude', CLAUDE_CODE_SIMPLE: '1' })).toEqual({ CLAUDE_CONFIG_DIR: 'D:\\claude' });
+    expect(cleanEnv({ claude_config_dir: 'D:\\claude' })).toEqual({ claude_config_dir: 'D:\\claude' });
+  });
+
   it('matches names without regard to case, as Windows does', () => {
     expect(cleanEnv({ anthropic_api_key: 'k', Claude_Config: 'x', Path: 'p' })).toEqual({ Path: 'p' });
   });
