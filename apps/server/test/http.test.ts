@@ -117,6 +117,15 @@ describe('PUT /api/sessions', () => {
     expect((await (await call('GET', '/api/status', { token: read })).json()).sessions).toBe(1);
   });
 
+  it('remembers which computer uploads the project, even when nothing changed', async () => {
+    await put();
+    db.prepare('DELETE FROM project_uploaders').run();
+    await put();
+    expect(db.prepare('SELECT u.project_key, t.label FROM project_uploaders u JOIN tokens t ON t.id = u.token_id').all()).toEqual([
+      { project_key: makeSession().project_key, label: 'collector' },
+    ]);
+  });
+
   it('is idempotent', async () => {
     await put();
     expect(await (await put()).json()).toMatchObject({ changed: false });

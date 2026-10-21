@@ -7,6 +7,7 @@ import { projectsNeedingPage } from '../src/digest-store.js';
 
 /** Puts a fresh database back to how migration 8 left it, so the later migrations run again. */
 function unmigrate9(db: Db): void {
+  db.exec('DROP TABLE project_uploaders');
   db.exec('DROP TABLE page_skips');
   db.exec('DROP TABLE server_page_queue');
   for (const c of ['written_by', 'summary_to_follow', 'saved_seq']) db.exec(`ALTER TABLE digests DROP COLUMN ${c}`);
@@ -122,6 +123,29 @@ describe('migration 9', () => {
     const db = openDb(path);
     expect(projectsNeedingPage(db)).toEqual([]);
     expect(db.prepare('SELECT version, digests_through FROM project_states').get()).toEqual({ version: 1, digests_through: 0 });
+    db.close();
+  });
+});
+
+describe('migration 11', () => {
+  it('seeds who uploads each project from the activity log, skipping labels shared by two tokens', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
+    const old = openDb(path);
+    const token = old.prepare("INSERT INTO tokens(id, label, scope, hash, created_at) VALUES (?, ?, 'ingest', ?, 'x')");
+    token.run(1, 'pc', 'h1');
+    token.run(2, 'twin', 'h2');
+    token.run(3, 'twin', 'h3');
+    const upload = old.prepare("INSERT INTO activity(at, direction, action, project_key, actor) VALUES (?, 'in', 'upload', ?, ?)");
+    upload.run('2026-10-01T00:00:00.000Z', 'p', 'pc');
+    upload.run('2026-10-02T00:00:00.000Z', 'p', 'pc');
+    upload.run('2026-10-02T00:00:00.000Z', 'p', 'twin');
+    old.exec('DROP TABLE project_uploaders');
+    old.pragma('user_version = 10');
+    old.close();
+    const db = openDb(path);
+    expect(db.prepare('SELECT project_key, token_id, last_upload_at FROM project_uploaders').all()).toEqual([
+      { project_key: 'p', token_id: 1, last_upload_at: '2026-10-02T00:00:00.000Z' },
+    ]);
     db.close();
   });
 });

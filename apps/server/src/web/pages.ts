@@ -45,9 +45,13 @@ const card = (label: string, value: string, sub = '', tone = ''): string =>
   (sub === '' ? '' : `<span class="stat-sub">${sub}</span>`) +
   `</div>`;
 
-/** One problem or notice: the escaped text, then its time where the rule has one. */
+/** A line's escaped text, then its time where it has one. */
+const timed = (p: { text: string; at?: string }): string =>
+  `${escapeHtml(p.text)}${p.at === undefined ? '' : ` <span class="muted">${timeTag(p.at, 'inline')}</span>`}`;
+
+/** One problem or notice, with its detail lines nested under it. */
 const line = (p: Problem, suffix = ''): string =>
-  `<li>${escapeHtml(p.text)}${p.at === undefined ? '' : ` <span class="muted">${timeTag(p.at, 'inline')}</span>`}${suffix}</li>`;
+  `<li>${timed(p)}${suffix}${p.details === undefined ? '' : `<ul>${p.details.map((d) => `<li>${timed(d)}</li>`).join('')}</ul>`}</li>`;
 
 function spendCard(h: Health, limitUsd: number | null): string {
   const { today, month } = h.cards.spend;

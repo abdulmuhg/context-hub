@@ -1,4 +1,4 @@
-import { latestSyncRun, type SyncRun } from '../activity.js';
+import { latestSyncRun, projectUploaders, type SyncRun } from '../activity.js';
 import type { Db } from '../db.js';
 import { pagesBehind } from '../digest-store.js';
 import { readBackupStatus, type BackupStatus } from './backup-status.js';
@@ -12,6 +12,8 @@ export interface Problem {
   /** The session id or project key the line is about, where there is one. */
   ref?: string;
   at?: string;
+  /** Lines shown under this one, each with an optional time. */
+  details?: { text: string; at?: string }[];
 }
 
 export interface Health {
@@ -135,14 +137,25 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
   );
   for (const page of pagesBehind(db)) {
     const skip = lastSkip.get(page.key, page.since, page.since) as { actor: string; reason: string } | undefined;
+    // With no report, name the computers that upload this project: one of them writes the page on its next sync.
+    const uploaders = skip === undefined ? projectUploaders(db, page.key) : [];
     const why =
-      skip === undefined
-        ? `The project page for ${page.key} is waiting for the next sync of a computer that tracks it.`
-        : `The project page for ${page.key} is waiting for an update. ${skip.actor} left it at its last sync: ${skip.reason.replace(/\.$/, '')}.`;
+      skip !== undefined
+        ? `The project page for ${page.key} is waiting for an update. ${skip.actor} left it at its last sync: ${skip.reason.replace(/\.$/, '')}.`
+        : uploaders.length === 0
+          ? `The project page for ${page.key} is waiting for the next sync of a computer that tracks it.`
+          : `The project page for ${page.key} is waiting for the next sync of ${uploaders.length === 1 ? 'the computer' : 'one of the computers'} that upload${uploaders.length === 1 ? 's' : ''} its sessions.`;
     problems.push({
       kind: 'pages-behind',
       ref: page.key,
       ...(page.since === null ? { text: why } : { text: `${why} Behind since`, at: page.since }),
+      ...(uploaders.length === 0
+        ? {}
+        : {
+            details: uploaders.map((u) =>
+              u.lastSync === null ? { text: `${u.label}: no sync reported yet` } : { text: `${u.label}, last synced`, at: u.lastSync },
+            ),
+          }),
     });
   }
 

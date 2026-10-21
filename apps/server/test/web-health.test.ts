@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { recordUploader } from '../src/activity.js';
 import { openDb, type Db } from '../src/db.js';
 import { failDigest, failState, markDigestPending, refuseDigest, saveProjectState } from '../src/digest-store.js';
 import { readBackupStatus, type BackupStatus } from '../src/web/backup-status.js';
@@ -187,6 +188,16 @@ describe('problem rules', () => {
       expect(computeHealth(db, cfg(), NOW).problems[0]!.text).toBe(
         'The project page for local:alpha is waiting for an update. collector-pc left it at its last sync: Claude usage limit reached (resets 14:00). Behind since',
       );
+    });
+
+    it('names the computers that upload the project, latest sync first, leaving out revoked ones', () => {
+      db.prepare("INSERT INTO tokens(id, label, scope, hash, created_at) VALUES (8, 'macbook', 'ingest', 'h8', ?)").run(ago(DAY));
+      db.prepare("INSERT INTO tokens(id, label, scope, hash, created_at, revoked_at) VALUES (9, 'old-pc', 'ingest', 'h9', ?, ?)").run(ago(DAY), ago(HOUR));
+      for (const id of [7, 8, 9]) recordUploader(db, 'local:alpha', id, ago(HOUR));
+      db.prepare('INSERT INTO sync_runs(token_id, finished_at, uploaded, unchanged, errors, received_at) VALUES (7, ?, 0, 0, 0, ?)').run(ago(2 * HOUR), ago(2 * HOUR));
+      const p = computeHealth(db, cfg(), NOW).problems[0]!;
+      expect(p.text).toBe('The project page for local:alpha is waiting for the next sync of one of the computers that upload its sessions. Behind since');
+      expect(p.details).toEqual([{ text: 'collector-pc, last synced', at: ago(2 * HOUR) }, { text: 'macbook: no sync reported yet' }]);
     });
 
     it('ignores a report from before the page fell behind', () => {
