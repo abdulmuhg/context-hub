@@ -23,6 +23,7 @@ const USAGE = `Usage: hub-admin <command>
   oauth revoke <id>                                      revoke a Claude app sign-in
   backup <file>                                          write a consistent copy of the database
   redigest <project> | redigest --session <source>:<id>  queue digests again
+  redigest --failed [<project>]                          queue again only the digests that failed
   rebuild-state <project>                                rebuild a project's state page from all digests
   digests                                                show digest counts and problems`;
 
@@ -109,7 +110,24 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
   }
 
   if (command === 'redigest') {
-    const { values, positionals } = parseArgs({ args: argv.slice(1), options: { session: { type: 'string' } }, allowPositionals: true });
+    const { values, positionals } = parseArgs({
+      args: argv.slice(1),
+      options: { session: { type: 'string' }, failed: { type: 'boolean' } },
+      allowPositionals: true,
+    });
+    if (values.failed) {
+      // A digest that already succeeded is not sent to the model again; refusals wait for --session.
+      const project = positionals[0] === undefined ? null : projectOrFail(io, positionals[0]);
+      const rows = io.db
+        .prepare(
+          `SELECT s.id FROM digests d JOIN sessions s ON s.id = d.session_id
+           WHERE d.status = 'failed' AND s.parent IS NULL AND s.source <> 'doc' AND (? IS NULL OR s.project_id = ?)`,
+        )
+        .all(project?.id ?? null, project?.id ?? null) as { id: number }[];
+      for (const r of rows) markDigestPending(io.db, r.id, now);
+      io.out(`Queued ${rows.length} failed session${rows.length === 1 ? '' : 's'}${project ? ` of ${project.key}` : ''}.`);
+      return 0;
+    }
     if (values.session) {
       const parts = splitPublicId(values.session);
       if (!parts) throw new Fail('A session is written <source>:<id>, for example claude-code:1234.');
