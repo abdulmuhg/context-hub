@@ -253,6 +253,13 @@ describe('review fixes', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 });
   });
 
+  it('400 for a seq too large to give its search row an id inside its session', async () => {
+    const res = await put(makeSession({ messages: [text(16_777_214, 'user', 'a')] }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/seq/);
+    expect((await put(makeSession({ messages: [text(16_777_213, 'user', 'a')] }))).status).toBe(200);
+  });
+
   it('answers HEAD /healthz, which container health checks use', async () => {
     const res = await call('HEAD', '/healthz');
     expect(res.status).toBe(200);

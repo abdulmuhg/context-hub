@@ -1,6 +1,7 @@
 import type { HashedSession, Message, UploadDigest } from '@context-hub/core';
 import type { Db } from './db.js';
 import { digestCounts, getDigest, getProjectState, markDigestPending, markStateDirty, saveComputerOutcome, type DigestStatus } from './digest-store.js';
+import { deleteSearchRows, searchRowWriter } from './search-rows.js';
 
 export function publicId(source: string, id: string): string {
   return `${source}:${id}`;
@@ -19,7 +20,7 @@ export function projectName(key: string): string {
 
 function removeContent(db: Db, sessionRowId: number): void {
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionRowId);
-  db.prepare('DELETE FROM search_index WHERE session_id = ?').run(sessionRowId);
+  deleteSearchRows(db, sessionRowId);
 }
 
 function pruneEmptyProjects(db: Db): void {
@@ -66,16 +67,16 @@ export function upsertSession(db: Db, s: HashedSession, now: string): { changed:
       `INSERT INTO messages(session_id, seq, role, kind, ts, text, tool_name, tool_input, tool_result, tool_status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    const index = db.prepare('INSERT INTO search_index(body, kind, session_id, seq) VALUES (?, ?, ?, ?)');
+    const index = searchRowWriter(db);
 
-    index.run(s.title, 'title', rowId, -1);
+    index(rowId, 'title', -1, s.title);
     for (const m of s.messages) {
       if (m.kind === 'text') {
         insertMessage.run(rowId, m.seq, m.role, m.kind, m.ts, m.text, null, null, null, null);
-        index.run(m.text, 'message', rowId, m.seq);
+        index(rowId, 'message', m.seq, m.text);
       } else {
         insertMessage.run(rowId, m.seq, m.role, m.kind, m.ts, null, m.tool_name, m.tool_input, m.tool_result, m.tool_status);
-        index.run(`${m.tool_name} ${m.tool_input}`, 'tool', rowId, m.seq);
+        index(rowId, 'tool', m.seq, `${m.tool_name} ${m.tool_input}`);
       }
     }
 

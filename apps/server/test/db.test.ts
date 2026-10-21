@@ -127,6 +127,38 @@ describe('migration 9', () => {
   });
 });
 
+describe('migration 12', () => {
+  it('gives each search row an id inside its session and drops rows of sessions that are gone', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
+    const old = openDb(path);
+    old.prepare("INSERT INTO projects(key, name, created_at) VALUES ('p', 'p', 'x')").run();
+    const session = old.prepare("INSERT INTO sessions(id, source, source_session_id, project_id, title, content_hash, synced_at) VALUES (?, 'claude-code', ?, 1, 't', 'h', 'x')");
+    session.run(1, 's1');
+    session.run(2, 's2');
+    old.exec('DROP TABLE search_index');
+    old.exec("CREATE VIRTUAL TABLE search_index USING fts5(body, kind UNINDEXED, session_id UNINDEXED, seq UNINDEXED, tokenize = 'unicode61')");
+    const row = old.prepare('INSERT INTO search_index(body, kind, session_id, seq) VALUES (?, ?, ?, ?)');
+    row.run('second title', 'title', 2, -1);
+    row.run('first title', 'title', 1, -1);
+    row.run('hello there', 'message', 1, 0);
+    row.run('Bash ls', 'tool', 1, 3);
+    row.run('the digest', 'digest', 1, -1);
+    row.run('left behind', 'message', 9, 0);
+    old.pragma('user_version = 11');
+    old.close();
+    const db = openDb(path);
+    expect(db.prepare('SELECT rowid, kind, body FROM search_index ORDER BY rowid').all()).toEqual([
+      { rowid: 16777216, kind: 'title', body: 'first title' },
+      { rowid: 16777217, kind: 'digest', body: 'the digest' },
+      { rowid: 16777218, kind: 'message', body: 'hello there' },
+      { rowid: 16777221, kind: 'tool', body: 'Bash ls' },
+      { rowid: 33554432, kind: 'title', body: 'second title' },
+    ]);
+    expect(db.prepare(`SELECT body FROM search_index WHERE search_index MATCH 'kind : "digest"'`).all()).toEqual([{ body: 'the digest' }]);
+    db.close();
+  });
+});
+
 describe('migration 11', () => {
   it('seeds who uploads each project from the activity log, skipping labels shared by two tokens', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');

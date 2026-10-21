@@ -253,6 +253,27 @@ const MIGRATIONS: string[] = [
       AND (SELECT COUNT(*) FROM tokens t2 WHERE t2.label = t.label AND t2.scope = 'ingest') = 1
     GROUP BY a.project_key, t.id;
   `,
+  `
+  -- Each search row's rowid is made from its session (search-rows.ts): session id * 2^24, plus 0 for
+  -- the title, 1 for the digest and 2 + seq for a message, so a session's rows are found without
+  -- reading the whole index. kind is indexed too, so a search can ask for digests and titles first.
+  -- Rows of sessions that are gone are dropped; were two rows to get one id, the newer one stays.
+  CREATE VIRTUAL TABLE search_index_new USING fts5(
+    body,
+    kind,
+    session_id UNINDEXED,
+    seq UNINDEXED,
+    tokenize = 'unicode61'
+  );
+  INSERT OR REPLACE INTO search_index_new(rowid, body, kind, session_id, seq)
+    SELECT CAST(i.session_id AS INTEGER) * 16777216
+             + CASE i.kind WHEN 'title' THEN 0 WHEN 'digest' THEN 1 ELSE CAST(i.seq AS INTEGER) + 2 END,
+           i.body, i.kind, i.session_id, i.seq
+    FROM search_index i JOIN sessions s ON s.id = CAST(i.session_id AS INTEGER)
+    ORDER BY i.rowid;
+  DROP TABLE search_index;
+  ALTER TABLE search_index_new RENAME TO search_index;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
