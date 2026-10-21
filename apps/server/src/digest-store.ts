@@ -56,7 +56,7 @@ export function nextDueDigest(db: Db, now: string): DueDigest | null {
     .prepare(
       `SELECT d.session_id, s.source, s.source_session_id, s.title, s.content_hash, s.project_id, p.key AS project_key
        FROM digests d JOIN sessions s ON s.id = d.session_id JOIN projects p ON p.id = s.project_id
-       WHERE s.parent IS NULL AND (d.status = 'pending' OR (d.status = 'failed' AND d.next_attempt_at <= ?))
+       WHERE s.parent IS NULL AND s.source <> 'doc' AND (d.status = 'pending' OR (d.status = 'failed' AND d.next_attempt_at <= ?))
        ORDER BY s.last_activity_at ASC, s.id ASC
        LIMIT 1`,
     )

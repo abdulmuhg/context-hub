@@ -121,10 +121,12 @@ describe('status', () => {
     upsertSession(db, makeSession({ source_session_id: 'a' }), NOW);
     upsertSession(db, makeSession({ source_session_id: 'b' }), LATER);
     upsertSession(db, makeSession({ source_session_id: 'c', project_key: 'local:beta' }), NOW);
+    upsertSession(db, makeSession({ source: 'doc', source_session_id: 'local:beta#kb/INDEX.md', project_key: 'local:beta' }), NOW);
     expect(status(db)).toEqual({
       projects: 2,
       sessions: 3,
-      messages: 6,
+      documents: 1,
+      messages: 8,
       digests: { pending: 3, ok: 0, failed: 0, refused: 0 },
       last_sync: [
         { project: 'github.com/me/alpha', last_synced_at: LATER },

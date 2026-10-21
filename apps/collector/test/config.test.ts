@@ -35,15 +35,18 @@ describe('config', () => {
       aliases: {},
       assignments: {},
       personal: { card: 'partial', list: 'warn' },
+      docs: [],
     });
   });
 
   it('folds SSH host aliases in saved project keys', () => {
     const dir = tempDir();
-    writeRaw(join(dir, 'config.json'), JSON.stringify({ tracked: ['github.com-work/acme/app', 'github.com/acme/app', 'local:x'], declined: ['github.com_me/a/b'] }));
+    const docs = [{ project: 'github.com-work/acme/app', path: '/notes', label: 'notes', exclude: [] }];
+    writeRaw(join(dir, 'config.json'), JSON.stringify({ tracked: ['github.com-work/acme/app', 'github.com/acme/app', 'local:x'], declined: ['github.com_me/a/b'], docs }));
     expect(loadConfig(dir)).toMatchObject({
       tracked: ['github.com/acme/app', 'local:x'],
       declined: ['github.com/a/b'],
+      docs: [{ project: 'github.com/acme/app', path: '/notes', label: 'notes', exclude: [] }],
     });
   });
 
@@ -63,7 +66,7 @@ describe('config', () => {
   it('fills in fields missing from an older file', () => {
     const dir = tempDir();
     writeRaw(join(dir, 'config.json'), JSON.stringify({ server_url: 'https://h', tracked: ['a'] }));
-    expect(loadConfig(dir)).toMatchObject({ tracked: ['a'], skipped: [], personal: { card: 'partial', list: 'warn' } });
+    expect(loadConfig(dir)).toMatchObject({ tracked: ['a'], skipped: [], personal: { card: 'partial', list: 'warn' }, docs: [] });
   });
 
   it('fails with a clear message when the file is not valid JSON', () => {

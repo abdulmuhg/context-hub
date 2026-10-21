@@ -17,8 +17,8 @@ beforeEach(() => {
 describe('listProjects', () => {
   it('lists projects by latest activity, counting main sessions only', () => {
     expect(listProjects(db)).toEqual([
-      { key: 'github.com/me/alpha', name: 'alpha', session_count: 2, last_activity_at: '2026-10-06T00:00:00.000Z', last_synced_at: NOW, summary: null },
-      { key: 'local:Beta', name: 'Beta', session_count: 1, last_activity_at: '2026-10-03T00:00:00.000Z', last_synced_at: NOW, summary: null },
+      { key: 'github.com/me/alpha', name: 'alpha', session_count: 2, doc_count: 0, last_activity_at: '2026-10-06T00:00:00.000Z', last_synced_at: NOW, summary: null },
+      { key: 'local:Beta', name: 'Beta', session_count: 1, doc_count: 0, last_activity_at: '2026-10-03T00:00:00.000Z', last_synced_at: NOW, summary: null },
     ]);
   });
 
@@ -68,6 +68,47 @@ describe('getProject', () => {
     const resolved = resolveProject(db, 'alpha');
     if (!resolved.ok) throw new Error('expected a match');
     expect(getProject(db, resolved.id, 1).recent).toHaveLength(1);
+  });
+});
+
+describe('documents', () => {
+  const doc = (path: string, title: string, at: string) =>
+    makeSession({
+      source: 'doc',
+      source_session_id: `github.com/me/alpha#${path}`,
+      title,
+      cwd: null,
+      git_branch: null,
+      account_id: null,
+      last_activity_at: at,
+      messages: [text(0, 'user', `# ${title}`)],
+    });
+
+  beforeEach(() => {
+    upsertSession(db, doc('knowledge/INDEX.md', 'Index', '2026-10-07T00:00:00.000Z'), NOW);
+    upsertSession(db, doc('knowledge/tickets/T-1.md', 'T-1 login loop', '2026-10-09T00:00:00.000Z'), NOW);
+  });
+
+  it('are listed apart from sessions, newest first, by their path', () => {
+    const resolved = resolveProject(db, 'alpha');
+    if (!resolved.ok) throw new Error('expected a match');
+    const view = getProject(db, resolved.id, 5);
+    expect(view.recent.map((s) => s.session_id)).toEqual(['claude-code:a2', 'claude-code:a1']);
+    expect(view.document_count).toBe(2);
+    expect(view.documents).toEqual([
+      { session_id: 'doc:github.com/me/alpha#knowledge/tickets/T-1.md', path: 'knowledge/tickets/T-1.md', title: 'T-1 login loop', updated_at: '2026-10-09T00:00:00.000Z' },
+      { session_id: 'doc:github.com/me/alpha#knowledge/INDEX.md', path: 'knowledge/INDEX.md', title: 'Index', updated_at: '2026-10-07T00:00:00.000Z' },
+    ]);
+    expect(getProject(db, resolved.id, 5, 1).documents).toHaveLength(1);
+  });
+
+  it('are counted apart from sessions', () => {
+    expect(listProjects(db)[0]).toMatchObject({ key: 'github.com/me/alpha', session_count: 2, doc_count: 2 });
+  });
+
+  it('are read like a session', () => {
+    const page = getSessionPage(db, 'doc', 'github.com/me/alpha#knowledge/INDEX.md', 0);
+    expect(page?.messages).toEqual([text(0, 'user', '# Index')]);
   });
 });
 

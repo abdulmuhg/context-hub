@@ -173,7 +173,7 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
     notices,
     cards: {
       projects: count(db, 'projects'),
-      sessions: count(db, 'sessions'),
+      sessions: (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE source <> 'doc'").get() as { n: number }).n,
       lastSync,
       lastBackup,
     },

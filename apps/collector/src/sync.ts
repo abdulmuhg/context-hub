@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { sep } from 'node:path';
 import { sanitizeSession, type PersonalConfig } from '@context-hub/core';
 import { ALL_ADAPTERS, type Adapter, type RawSession, type SessionFile } from './adapters/index.js';
 import {
@@ -11,8 +12,9 @@ import {
   type Config,
   type State,
 } from './config.js';
+import { discoverDocs, docId, readDoc } from './docs.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
-import { putSession, reportSyncRun, type Remote } from './upload.js';
+import { deleteRemote, putSession, reportSyncRun, type Remote } from './upload.js';
 
 export interface SyncOptions {
   /** The user's home folder, where the tools keep their history. */
@@ -38,6 +40,9 @@ export interface SessionRef {
 export interface SyncReport {
   uploaded: SessionRef[];
   wouldUpload: SessionRef[];
+  /** Documents whose file is gone, removed from the server. */
+  deleted: SessionRef[];
+  wouldDelete: SessionRef[];
   unchanged: number;
   secrets: Record<string, number>;
   personal: { session: string; type: string; count: number }[];
@@ -87,10 +92,11 @@ function scan(opts: Pick<SyncOptions, 'home' | 'hubDir' | 'adapters' | 'git' | '
       errors.push(`${adapter.source}: ${(e as Error).message}`);
     }
   }
+  files.push(...discoverDocs(cfg.docs, errors));
   files.sort((a, b) => Number(a.parent !== null) - Number(b.parent !== null)); // main sessions first
 
   const bySource = new Map(adapters.map((a) => [a.source, a]));
-  const read = (file: SessionFile): RawSession => bySource.get(file.source)!.read(file);
+  const read = (file: SessionFile): RawSession => (file.source === 'doc' ? readDoc(file) : bySource.get(file.source)!.read(file));
   const keyOf = new Map<string, string>();
   const items: Scanned[] = [];
 
@@ -105,6 +111,8 @@ function scan(opts: Pick<SyncOptions, 'home' | 'hubDir' | 'adapters' | 'git' | '
     try {
       if (parentKey && keyOf.has(parentKey)) {
         projectKey = keyOf.get(parentKey)!;
+      } else if (file.project_key !== undefined) {
+        projectKey = applyOverrides(file.project_key, sessionKey, cfg);
       } else if (same) {
         projectKey = prev.project_key;
       } else {
@@ -134,6 +142,28 @@ function scan(opts: Pick<SyncOptions, 'home' | 'hubDir' | 'adapters' | 'git' | '
   };
 }
 
+/** Whether this run uploads the project's sessions and documents. */
+function projectSelected(projectKey: string, cfg: Config, opts: SyncOptions): boolean {
+  if (opts.project) return cfg.tracked.includes(projectKey) && projectMatches(opts.project, projectKey);
+  return cfg.tracked.includes(projectKey);
+}
+
+/** Uploaded documents whose file is gone from a folder that is still there. */
+function vanishedDocs(s: Scan, opts: SyncOptions): { path: string; ref: SessionRef }[] {
+  if (opts.session) return [];
+  const present = new Set(s.items.map((i) => i.file.path));
+  const out: { path: string; ref: SessionRef }[] = [];
+  for (const [path, entry] of Object.entries(s.state.files)) {
+    if (entry.hash === null || present.has(path)) continue;
+    const folder = s.cfg.docs.find((f) => path.startsWith(f.path + sep));
+    if (!folder || !existsSync(folder.path)) continue;
+    const project = applyOverrides(folder.project, `doc:${docId(folder, path)}`, s.cfg);
+    if (!projectSelected(project, s.cfg, opts)) continue;
+    out.push({ path, ref: { project, session: `doc:${docId(folder, path)}` } });
+  }
+  return out;
+}
+
 function isSelected(item: Scanned, cfg: Config, opts: SyncOptions): boolean {
   if (opts.session) {
     const wanted = opts.session;
@@ -142,8 +172,7 @@ function isSelected(item: Scanned, cfg: Config, opts: SyncOptions): boolean {
   }
   if (cfg.skipped.includes(item.sessionKey)) return false;
   if (item.parentKey && cfg.skipped.includes(item.parentKey)) return false;
-  if (opts.project) return cfg.tracked.includes(item.projectKey) && projectMatches(opts.project, item.projectKey);
-  return cfg.tracked.includes(item.projectKey);
+  return projectSelected(item.projectKey, cfg, opts);
 }
 
 export async function runSync(opts: SyncOptions): Promise<SyncReport> {
@@ -151,6 +180,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   const report: SyncReport = {
     uploaded: [],
     wouldUpload: [],
+    deleted: [],
+    wouldDelete: [],
     unchanged: 0,
     secrets: {},
     personal: [],
@@ -240,6 +271,23 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     for (const [type, count] of Object.entries(result.personal)) report.personal.push({ session: sessionKey, type, count });
     const w = raw.warnings;
     if (w.bad_lines + w.unknown_records + w.dropped_blocks > 0) report.warnings.push({ session: sessionKey, ...w });
+  }
+
+  for (const gone of vanishedDocs(s, opts)) {
+    if (dryRun) {
+      report.wouldDelete.push(gone.ref);
+      continue;
+    }
+    if (stopped) break;
+    try {
+      await deleteRemote(remote!, { source: 'doc', id: gone.ref.session.slice('doc:'.length) });
+    } catch (e) {
+      report.errors.push((e as Error).message);
+      stopped = true;
+      continue;
+    }
+    delete s.state.files[gone.path];
+    report.deleted.push(gone.ref);
   }
 
   if (!dryRun) {

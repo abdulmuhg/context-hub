@@ -4,6 +4,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { canonicalKey, type Level, type PersonalEntry } from '@context-hub/core';
 
+export interface DocFolder {
+  /** The project key the documents belong to. */
+  project: string;
+  /** Absolute path of the folder. */
+  path: string;
+  /** Names the folder in document ids, so the same notes get the same id on every computer. */
+  label: string;
+  /** File and folder names to leave out, at any depth. */
+  exclude: string[];
+}
+
 export interface Config {
   server_url: string;
   /** Project keys that `hub sync` uploads. Empty by default. */
@@ -17,6 +28,8 @@ export interface Config {
   /** Session key -> project key. */
   assignments: Record<string, string>;
   personal: { card: Level; list: Level };
+  /** Folders of Markdown notes uploaded with their project. */
+  docs: DocFolder[];
 }
 
 export interface StateEntry {
@@ -47,6 +60,7 @@ const defaultConfig = (): Config => ({
   aliases: {},
   assignments: {},
   personal: { card: 'partial', list: 'warn' },
+  docs: [],
 });
 
 function readJson<T>(dir: string, name: string, fallback: T): T {
@@ -80,6 +94,7 @@ export function loadConfig(dir: string): Config {
     ...cfg,
     tracked: keys(cfg.tracked),
     declined: keys(cfg.declined),
+    docs: cfg.docs.map((f) => ({ ...f, project: canonicalKey(f.project) })),
   };
 }
 

@@ -1,10 +1,10 @@
-import { existsSync, utimesSync } from 'node:fs';
+import { existsSync, renameSync, rmSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, loadState, saveConfig, savePersonal, saveToken } from '../src/config.js';
 import { listProjects, runSync, type SyncOptions } from '../src/sync.js';
-import { tempDir, writeJsonl } from './helpers.js';
+import { tempDir, writeJsonl, writeRaw } from './helpers.js';
 
 const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '44444444-4444-4444-8444-444444444444';
@@ -417,5 +417,96 @@ describe('runSync: reports the run to the server', () => {
     const report = await runSync(opts({ fetchImpl: async (input, init) => (String(input).endsWith('/api/sync-runs') ? new Response('no', { status: 500 }) : fakeFetch(input, init)) }));
     expect(report.uploaded).toHaveLength(1);
     expect(report.reportError).toMatch(/sync-runs/);
+  });
+});
+
+describe('runSync: documents', () => {
+  let notes: string;
+  const docUrl = (path: string) => `https://hub.example.com/api/sessions/doc/${encodeURIComponent(`${KEY_A}#kb/${path}`)}`;
+  const withDocs = (exclude: string[] = []) =>
+    saveConfig(hub, { ...loadConfig(hub), docs: [{ project: KEY_A, path: notes, label: 'kb', exclude }] });
+
+  beforeEach(() => {
+    notes = tempDir();
+    writeRaw(join(notes, 'INDEX.md'), '# Index\n- T-1');
+    writeRaw(join(notes, 'tickets', 'T-1.md'), '# T-1 login loop\nroot cause: cookie check');
+  });
+
+  it('uploads each Markdown file under its project, titled by its heading', async () => {
+    track(KEY_A);
+    withDocs();
+    const report = await runSync(opts());
+    const docs = sent.filter((r) => r.url.includes('/api/sessions/doc/'));
+    expect(docs.map((r) => r.url).sort()).toEqual([docUrl('INDEX.md'), docUrl('tickets/T-1.md')]);
+    const t1 = docs.find((r) => r.url === docUrl('tickets/T-1.md'))!.body;
+    expect(t1).toMatchObject({ source: 'doc', project_key: KEY_A, title: 'T-1 login loop', parent: null, cwd: null });
+    expect(t1.messages.map((m: any) => m.text)).toEqual(['# T-1 login loop\nroot cause: cookie check']);
+    expect(report.uploaded.filter((r) => r.session.startsWith('doc:'))).toHaveLength(2);
+  });
+
+  it('uploads nothing for a project that is not tracked', async () => {
+    withDocs();
+    await runSync(opts());
+    expect(sent.filter((r) => r.url.includes('/doc/'))).toEqual([]);
+  });
+
+  it('sends an edited document again, and only that one', async () => {
+    track(KEY_A);
+    withDocs();
+    await runSync(opts());
+    sent = [];
+    writeRaw(join(notes, 'tickets', 'T-1.md'), '# T-1 login loop\nfixed in PR 12');
+    utimesSync(join(notes, 'tickets', 'T-1.md'), new Date('2026-10-12T00:00:00Z'), new Date('2026-10-12T00:00:00Z'));
+    await runSync(opts());
+    expect(sent.map((r) => [r.method, r.url])).toEqual([['PUT', docUrl('tickets/T-1.md')]]);
+  });
+
+  it('removes a document from the server when its file is deleted or renamed', async () => {
+    track(KEY_A);
+    withDocs();
+    await runSync(opts());
+    sent = [];
+    renameSync(join(notes, 'tickets', 'T-1.md'), join(notes, 'tickets', 'T-1-login.md'));
+    const report = await runSync(opts());
+    expect(sent.map((r) => [r.method, r.url])).toEqual([
+      ['PUT', docUrl('tickets/T-1-login.md')],
+      ['DELETE', docUrl('tickets/T-1.md')],
+    ]);
+    expect(report.deleted).toEqual([{ project: KEY_A, session: `doc:${KEY_A}#kb/tickets/T-1.md` }]);
+    sent = [];
+    await runSync(opts());
+    expect(sent).toEqual([]);
+  });
+
+  it('removes nothing when the whole folder is missing, and says so', async () => {
+    track(KEY_A);
+    withDocs();
+    await runSync(opts());
+    sent = [];
+    rmSync(notes, { recursive: true });
+    const report = await runSync(opts());
+    expect(sent).toEqual([]);
+    expect(report.errors).toEqual([`doc folder ${notes} is missing`]);
+  });
+
+  it('only reports what a dry run would remove', async () => {
+    track(KEY_A);
+    withDocs();
+    await runSync(opts());
+    sent = [];
+    rmSync(join(notes, 'INDEX.md'));
+    const report = await runSync(opts({ dryRun: true }));
+    expect(sent).toEqual([]);
+    expect(report.wouldDelete).toEqual([{ project: KEY_A, session: `doc:${KEY_A}#kb/INDEX.md` }]);
+  });
+
+  it('treats a newly excluded file like a deleted one', async () => {
+    track(KEY_A);
+    withDocs();
+    await runSync(opts());
+    sent = [];
+    withDocs(['tickets']);
+    await runSync(opts());
+    expect(sent.filter((r) => r.method === 'DELETE').map((r) => r.url)).toEqual([docUrl('tickets/T-1.md')]);
   });
 });

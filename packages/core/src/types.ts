@@ -1,4 +1,4 @@
-export type Source = 'claude-code' | 'codex' | 'antigravity' | 'note';
+export type Source = 'claude-code' | 'codex' | 'antigravity' | 'note' | 'doc';
 export type ToolStatus = 'ok' | 'error';
 
 export interface TextMessage {

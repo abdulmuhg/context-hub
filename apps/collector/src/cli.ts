@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
 import { SLASH_COMMANDS } from './commands.js';
@@ -15,7 +15,7 @@ import {
   saveToken,
   type Config,
 } from './config.js';
-import { projectMatches, type GitRunner } from './project.js';
+import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
 import { listProjects, runSync, type ProjectRow, type SyncReport } from './sync.js';
 import { deleteRemote, exchangeDeviceCode, getStatus, requestConnectCode, type Remote } from './upload.js';
 
@@ -55,7 +55,11 @@ Advanced:
   status                               ask the server for its status
   connect                              get a one-time code to sign claude.ai in to the hub
   install-commands [--dir PATH]        write the Claude Code slash commands (default ~/.claude/commands)
-  personal add <label> | list | remove <label> | level <card|list|label> <level>`;
+  personal add <label> | list | remove <label> | level <card|list|label> <level>
+  docs [list]                          list the folders of notes uploaded as documents
+  docs add <folder> [--project P] [--as LABEL] [--exclude a,b]
+                                       upload a folder's Markdown files with its tracked project
+  docs remove <label|folder>           stop uploading a folder (uploaded copies stay)`;
 
 const LEVELS: Level[] = ['off', 'warn', 'partial', 'full'];
 const SESSION_KEY = /^(claude-code|codex|antigravity):.+$/;
@@ -67,10 +71,10 @@ function need(value: string | undefined, what: string): string {
   return value;
 }
 
-// A saved note has no local file, so only `forget` may name one.
+// Only `forget` may name a saved note, which has no local file, or a document.
 function sessionKey(value: string | undefined, allowNote = false): string {
   const v = need(value, 'session');
-  if (!SESSION_KEY.test(v) && !(allowNote && /^note:.+$/.test(v))) throw new Fail(`A session is written as <source>:<id>, for example claude-code:1234. Got "${v}".`);
+  if (!SESSION_KEY.test(v) && !(allowNote && /^(note|doc):.+$/.test(v))) throw new Fail(`A session is written as <source>:<id>, for example claude-code:1234. Got "${v}".`);
   return v;
 }
 
@@ -119,10 +123,15 @@ function plural(n: number, word: string): string {
 
 function printReport(io: Io, report: SyncReport, dryRun: boolean): void {
   const list = dryRun ? report.wouldUpload : report.uploaded;
-  io.out(`${dryRun ? 'Would upload' : 'Uploaded'} ${plural(list.length, 'session')}. Unchanged: ${report.unchanged}.`);
+  const docs = list.filter((ref) => ref.session.startsWith('doc:')).length;
+  const what = docs === 0 ? plural(list.length, 'session') : `${plural(list.length - docs, 'session')} and ${plural(docs, 'document')}`;
+  io.out(`${dryRun ? 'Would upload' : 'Uploaded'} ${what}. Unchanged: ${report.unchanged}.`);
   const perProject = new Map<string, number>();
   for (const ref of list) perProject.set(ref.project, (perProject.get(ref.project) ?? 0) + 1);
   for (const [project, n] of perProject) io.out(`  ${project}: ${n}`);
+  const gone = dryRun ? report.wouldDelete : report.deleted;
+  if (gone.length > 0) io.out(`${dryRun ? 'Would remove' : 'Removed'} ${plural(gone.length, 'document')} whose file is gone:`);
+  for (const ref of gone) io.out(`  ${ref.session}`);
 
   const secrets = Object.entries(report.secrets);
   if (secrets.length > 0) io.out(`Secrets stripped: ${secrets.map(([t, n]) => `${t} ${n}`).join(', ')}`);
@@ -185,6 +194,78 @@ async function personal(io: Io, args: string[]): Promise<void> {
     default:
       throw new Fail(USAGE);
   }
+}
+
+/** The project a folder of notes belongs to: the one named, or the git repo the folder is in. */
+function docsProject(io: Io, folder: string, named: string | undefined): string {
+  const cfg = loadConfig(io.hubDir);
+  if (named !== undefined) {
+    const keys = [...new Set([...listProjects(scanOpts(io)).map((r) => r.key), ...cfg.tracked])];
+    const matches = keys.filter((k) => projectMatches(named, k));
+    if (matches.length === 1) return matches[0]!;
+    if (matches.length === 0 && (named.includes('/') || named.startsWith('local:'))) return named;
+    const why = matches.length === 0 ? `No project matches "${named}".` : `"${named}" matches more than one project.`;
+    throw new Fail(`${why} Pass a full key, one of:\n${(matches.length ? matches : keys).map((k) => `  ${k}`).join('\n')}`);
+  }
+  const git = io.git ?? realGit;
+  if (git(folder, ['rev-parse', '--show-toplevel']) === null) {
+    throw new Fail(`${folder} is not inside a git repo, so its project is unknown. Name it with --project.`);
+  }
+  const key = resolveProjectKey({ cwd: folder, remoteHint: null, pathHints: [] }, { git, exists: io.exists ?? existsSync });
+  return applyOverrides(key, '', cfg);
+}
+
+function docsCase(io: Io, args: string[]): number {
+  const [sub, ...rest] = args;
+  if (sub === undefined || sub === 'list') {
+    const { docs } = loadConfig(io.hubDir);
+    if (docs.length === 0) io.out('No document folders. Add one with: hub docs add <folder>');
+    for (const f of docs) {
+      io.out(`${f.label}  ${f.path}  -> ${f.project}${f.exclude.length ? `  (leaving out ${f.exclude.join(', ')})` : ''}`);
+    }
+    return 0;
+  }
+  if (sub === 'add') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { project: { type: 'string' }, as: { type: 'string' }, exclude: { type: 'string' } },
+      allowPositionals: true,
+    });
+    const path = resolve(need(positionals[0], 'folder'));
+    if (!existsSync(path) || !statSync(path).isDirectory()) throw new Fail(`${path} is not a folder.`);
+    const project = docsProject(io, path, values.project);
+    const label = (values.as ?? basename(path)).trim();
+    if (label === '' || /[#/\\]/.test(label)) throw new Fail(`"${label}" cannot name a folder: leave out #, / and \\.`);
+    const exclude = (values.exclude ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const cfg = loadConfig(io.hubDir);
+    // Tracking uploads every session of the project, so adding notes must never switch it on.
+    if (!cfg.tracked.includes(project)) {
+      throw new Fail(`${project} is not tracked. Documents upload only with a tracked project, and tracking also uploads its sessions. Run \`hub track ${project}\` first if you want both.`);
+    }
+    if (cfg.docs.some((f) => f.path === path)) throw new Fail(`${path} is already added. Remove it first to change it.`);
+    // A file under two folders would get two ids and swap between them on every sync.
+    const overlap = cfg.docs.find((f) => path.startsWith(f.path + sep) || f.path.startsWith(path + sep));
+    if (overlap) throw new Fail(`${path} overlaps ${overlap.path}, which is already added. Remove one, or leave the inner folder out with --exclude.`);
+    if (cfg.docs.some((f) => f.project === project && f.label === label)) {
+      throw new Fail(`${project} already has a folder called "${label}". Choose another with --as.`);
+    }
+    cfg.docs.push({ project, path, label, exclude });
+    saveConfig(io.hubDir, cfg);
+    io.out(`Added ${path} as "${label}" for ${project}. Its Markdown files upload with the next hub sync.`);
+    return 0;
+  }
+  if (sub === 'remove') {
+    const wanted = need(rest[0], 'folder or label');
+    const cfg = loadConfig(io.hubDir);
+    const keep = cfg.docs.filter((f) => f.label !== wanted && f.path !== resolve(wanted));
+    if (keep.length === cfg.docs.length) throw new Fail(`No document folder called "${wanted}". See hub docs list.`);
+    if (cfg.docs.length - keep.length > 1) throw new Fail(`"${wanted}" names more than one folder. Pass the folder path instead.`);
+    cfg.docs = keep;
+    saveConfig(io.hubDir, cfg);
+    io.out(`No longer uploading ${wanted}. Documents already uploaded stay on the server; remove one with hub forget --session doc:<id>.`);
+    return 0;
+  }
+  throw new Fail(USAGE);
 }
 
 function bundleOf(io: Io): string {
@@ -417,6 +498,8 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
     case 'personal':
       await personal(io, rest);
       return 0;
+    case 'docs':
+      return docsCase(io, rest);
     default:
       throw new Fail(USAGE);
   }

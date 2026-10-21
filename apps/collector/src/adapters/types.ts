@@ -10,6 +10,8 @@ export interface SessionFile {
   parent: string | null;
   size: number;
   mtimeMs: number;
+  /** Set when the project is known without reading the file, as for a document. */
+  project_key?: string;
 }
 
 export interface Warnings {

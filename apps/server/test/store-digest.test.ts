@@ -36,6 +36,16 @@ describe('queueing', () => {
     expect(getDigest(db, rowId('a/agent-1'))).toBeNull();
   });
 
+  it('does not queue a document, new or changed', () => {
+    const doc = (body: string) =>
+      makeSession({ source: 'doc', source_session_id: 'github.com/me/alpha#knowledge/INDEX.md', messages: [text(0, 'user', body)] });
+    upsertSession(db, doc('first'), NOW);
+    upsertSession(db, doc('second'), LATER);
+    expect(nextDueDigest(db, LATER)).toBeNull();
+    expect(getDigest(db, rowId('github.com/me/alpha#knowledge/INDEX.md'))).toBeNull();
+    expect(getSessionPage(db, 'doc', 'github.com/me/alpha#knowledge/INDEX.md', 0)?.messages[0]).toMatchObject({ text: 'second' });
+  });
+
   it('queues again when the session changes, but not when the same content is sent twice', () => {
     upsertSession(db, makeSession({ source_session_id: 'a' }), NOW);
     digestIt('a');
@@ -69,6 +79,16 @@ describe('state pages follow sessions', () => {
   it('marks the project dirty when one of its sessions is deleted', () => {
     deleteSession(db, 'claude-code', 'a');
     expect(getProjectState(db, projectId('alpha'))!.dirty).toBe(true);
+  });
+
+  it('leaves the page alone when a document is deleted or moves away', () => {
+    const doc = (key: string, id: string) =>
+      makeSession({ source: 'doc', source_session_id: `github.com/me/alpha#kb/${id}.md`, project_key: key });
+    upsertSession(db, doc('github.com/me/alpha', 'one'), NOW);
+    upsertSession(db, doc('github.com/me/alpha', 'two'), NOW);
+    deleteSession(db, 'doc', 'github.com/me/alpha#kb/one.md');
+    upsertSession(db, doc('local:other', 'two'), LATER);
+    expect(getProjectState(db, projectId('alpha'))!.dirty).toBe(false);
   });
 
   it('removes the page with the project when its last session is deleted', () => {
