@@ -140,6 +140,25 @@ not part of this design.
    that arrived with a digest written by the owner's Claude. The cost, accepted:
    a session that could not be summarized is invisible to search, lookups and
    other computers until a later sync succeeds.
+
+   **One exception, privacy first (owner's decision): re-cleaned sessions
+   upload at once.** When the cleaning settings change (the settings
+   fingerprint or `COLLECTOR_REVISION` in `config.ts`, for example a new
+   personal-data entry), sessions already on the hub are cleaned again.
+   A re-cleaned session whose session file has not changed since its last
+   upload goes up straight away, without waiting for a digest and outside the
+   cap:
+   - The server removes its old digest, including its search entry, because
+     the old summary may hold the data that was just removed. It marks the
+     project's page dirty, since the page may hold it too.
+   - The upload is marked "summary to follow", so the server's fallback
+     worker leaves it alone and never spends the key on it.
+   - The collector records locally that the digest is owed. Following syncs
+     write it and upload it on its own (decision 13), within the cap, before
+     new work. Dirty pages from re-cleaning are rebuilt in the same order.
+   - A session that both changed and needs re-cleaning follows the normal
+     rule: it waits for its digest. The hub's old copy, cleaned under the old
+     settings, stays until then. **(my call)**
 7. **A cap per sync.** By default one sync writes at most **20** new digests
    **(my call on the number)**; a long session split into parts counts as one.
    Sessions over the cap wait for the next sync, newest first, so recent work
