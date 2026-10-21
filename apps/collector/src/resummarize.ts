@@ -1,7 +1,7 @@
 import type { Llm } from '@context-hub/core';
 import { SUMMARY_CAP, loadConfig, loadToken } from './config.js';
 import { projectMatches } from './project.js';
-import { budgetOpen, MAX_CHARS, newBudget, spend, stopReason, summarize, updatePages, type SessionRef } from './summaries.js';
+import { budgetOpen, MAX_CHARS, newBudget, spend, stopReason, summarize, updatePages, type PageLeft, type SessionRef } from './summaries.js';
 import { buildLlm } from './sync.js';
 import { getSession, listProjectDigests, putDigest, type ProjectDigestEntry, type Remote } from './upload.js';
 
@@ -22,7 +22,7 @@ export interface ResummarizeOptions {
 export interface ResummarizeReport {
   rewritten: SessionRef[];
   waiting: { count: number; reason: string | null };
-  pages: { updated: string[]; left: string[] };
+  pages: { updated: string[]; left: PageLeft[] };
 }
 
 /**

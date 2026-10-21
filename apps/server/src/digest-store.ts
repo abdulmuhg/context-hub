@@ -309,6 +309,27 @@ export function projectsNeedingPage(db: Db): string[] {
   return rows.map((r) => r.key);
 }
 
+/**
+ * The projects of projectsNeedingPage, each with when its page fell behind: the save time of the
+ * oldest summary it has not taken in. Null for a page that is only flagged dirty.
+ */
+export function pagesBehind(db: Db): { key: string; since: string | null }[] {
+  return db
+    .prepare(
+      `SELECT p.key,
+              (SELECT MIN(d.updated_at) FROM digests d JOIN sessions s ON s.id = d.session_id
+               WHERE s.project_id = p.id AND s.parent IS NULL AND d.status = 'ok' AND d.text IS NOT NULL
+                 AND (ps.project_id IS NULL OR d.saved_seq > ps.digests_through)) AS since
+       FROM projects p LEFT JOIN project_states ps ON ps.project_id = p.id
+       WHERE ps.dirty = 1
+          OR EXISTS (SELECT 1 FROM digests d JOIN sessions s ON s.id = d.session_id
+                     WHERE s.project_id = p.id AND s.parent IS NULL AND d.status = 'ok' AND d.text IS NOT NULL
+                       AND (ps.project_id IS NULL OR d.saved_seq > ps.digests_through))
+       ORDER BY p.key`,
+    )
+    .all() as { key: string; since: string | null }[];
+}
+
 /** Pages the server owes: it wrote a fallback digest for these projects. */
 export function queueServerPage(db: Db, projectId: number): void {
   db.prepare('INSERT INTO server_page_queue(project_id) VALUES (?) ON CONFLICT DO NOTHING').run(projectId);

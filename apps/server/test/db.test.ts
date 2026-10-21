@@ -7,6 +7,7 @@ import { projectsNeedingPage } from '../src/digest-store.js';
 
 /** Puts a fresh database back to how migration 8 left it, so the later migrations run again. */
 function unmigrate9(db: Db): void {
+  db.exec('DROP TABLE page_skips');
   db.exec('DROP TABLE server_page_queue');
   for (const c of ['written_by', 'summary_to_follow', 'saved_seq']) db.exec(`ALTER TABLE digests DROP COLUMN ${c}`);
   for (const c of ['version', 'digests_through', 'written_by']) db.exec(`ALTER TABLE project_states DROP COLUMN ${c}`);

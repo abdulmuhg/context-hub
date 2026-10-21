@@ -538,6 +538,31 @@ describe('POST /api/sync-runs', () => {
     expect(res.status).toBe(204);
     expect(latestSyncRun(db)).toMatchObject({ finishedAt: good.finished_at, uploaded: 2, unchanged: 5, errors: 0 });
   });
+
+  const skips = () => db.prepare('SELECT project_key, reason, at FROM page_skips ORDER BY project_key').all();
+
+  it('replaces the pages this computer last left when the report lists them', async () => {
+    await report(ingest, { ...good, pages_left: [{ project: 'p1', reason: 'Claude usage limit reached' }, { project: 'p2', reason: 'r2' }] });
+    expect(skips()).toEqual([
+      { project_key: 'p1', reason: 'Claude usage limit reached', at: good.finished_at },
+      { project_key: 'p2', reason: 'r2', at: good.finished_at },
+    ]);
+    await report(ingest, { ...good, pages_left: [] });
+    expect(skips()).toEqual([]);
+  });
+
+  it('keeps what it last heard when a report has no pages_left', async () => {
+    await report(ingest, { ...good, pages_left: [{ project: 'p1', reason: 'r1' }] });
+    await report(ingest, good);
+    expect(skips()).toHaveLength(1);
+  });
+
+  it('rejects a malformed pages_left with 400', async () => {
+    for (const bad of ['p1', [{ project: 'p1' }], [{ project: '', reason: 'r' }]]) {
+      expect((await report(ingest, { ...good, pages_left: bad })).status).toBe(400);
+    }
+    expect(latestSyncRun(db)).toBeNull();
+  });
 });
 
 describe('summaries written on the computer', () => {

@@ -114,10 +114,13 @@ export async function getStatus(remote: Remote): Promise<HubStatus> {
   return (await send(remote, 'GET', '/api/status')).json() as Promise<HubStatus>;
 }
 
-/** Tells the server a sync run finished. Gives up after 10 seconds. */
+/**
+ * Tells the server a sync run finished. Gives up after 10 seconds. `pages_left` is sent only when
+ * the run checked every tracked project's page: it replaces what the hub last heard from this computer.
+ */
 export async function reportSyncRun(
   remote: Remote,
-  r: { finished_at: string; uploaded: number; unchanged: number; errors: number },
+  r: { finished_at: string; uploaded: number; unchanged: number; errors: number; pages_left?: { project: string; reason: string }[] },
 ): Promise<void> {
   await send({ ...remote, timeoutMs: 10_000 }, 'POST', '/api/sync-runs', gz(r));
 }

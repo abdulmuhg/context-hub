@@ -76,16 +76,31 @@ export function forgetActivityForProject(db: Db, projectKey: string): void {
   db.prepare('DELETE FROM activity WHERE project_key = ?').run(projectKey);
 }
 
-/** Store a run the collector reported, and show it in the activity log. */
+export interface PageLeft {
+  project: string;
+  reason: string;
+}
+
+/**
+ * Store a run the collector reported, and show it in the activity log. `pagesLeft`, when the run
+ * sent it, replaces the pages this computer last said it left.
+ */
 export function recordSyncRun(
   db: Db,
-  r: { tokenId: number; finishedAt: string; uploaded: number; unchanged: number; errors: number },
+  r: { tokenId: number; finishedAt: string; uploaded: number; unchanged: number; errors: number; pagesLeft?: PageLeft[] },
   now: string,
 ): void {
   db.transaction(() => {
     db.prepare(
       'INSERT INTO sync_runs(token_id, finished_at, uploaded, unchanged, errors, received_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(r.tokenId, r.finishedAt, r.uploaded, r.unchanged, r.errors, now);
+    if (r.pagesLeft !== undefined) {
+      db.prepare('DELETE FROM page_skips WHERE token_id = ?').run(r.tokenId);
+      const insert = db.prepare(
+        'INSERT INTO page_skips(token_id, project_key, reason, at) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET reason = excluded.reason',
+      );
+      for (const p of r.pagesLeft) insert.run(r.tokenId, p.project, p.reason, r.finishedAt);
+    }
     const token = db.prepare('SELECT label FROM tokens WHERE id = ?').get(r.tokenId) as { label: string } | undefined;
     const actor = token ? token.label : 'a computer';
     const detail = `${r.uploaded} uploaded, ${r.unchanged} unchanged${r.errors > 0 ? `, ${r.errors} errors` : ''}`;
