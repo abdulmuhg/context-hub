@@ -483,31 +483,41 @@ describe('runOnce: notes', () => {
   };
   const noteRow = (sid: string) => rowId(sid.replace(/^note:/, ''));
 
-  it("stores a note's digest without calling the model", async () => {
+  it('a note has its digest when it is saved, so the worker has nothing to do for it', async () => {
     add('a');
     await drain();
+    llm.calls = [];
     const sid = note();
+    expect(getDigest(db, noteRow(sid))).toMatchObject({ status: 'ok', model: 'note' });
+    expect(await runOnce(deps())).toBe('idle');
+    expect(llm.calls).toEqual([]);
+  });
+
+  it("the note reaches the page on a computer's next sync, not through the server", async () => {
+    add('a');
+    await drain();
+    note();
+    expect(getProjectState(db, pid('alpha'))!.dirty).toBe(true);
+    expect(await runOnce(deps())).toBe('idle');
+  });
+
+  it('writes the digest of a note saved before digests moved to save time, without a model call', async () => {
+    add('a');
+    await drain();
+    llm.calls = [];
+    const sid = note();
+    // As an older version left it: a pending digest with no text.
+    db.prepare("UPDATE digests SET status = 'pending', body = NULL, text = NULL, model = NULL WHERE session_id = ?").run(noteRow(sid));
     expect(await runOnce(deps())).toBe('digest');
     const d = getDigest(db, noteRow(sid))!;
     expect(d).toMatchObject({ status: 'ok', model: 'note' });
     expect(d.text!.startsWith('Note saved from a chat: Pick Postgres\n')).toBe(true);
-    expect(d.text).toContain('We chose Postgres for the queue.');
-    expect(llm.calls.filter((c) => c.kind === 'digest').map((c) => (c.req as { title: string }).title)).toEqual(['T-a']);
+    expect(llm.calls).toEqual([]);
   });
 
-  it('the note then reaches the state page', async () => {
-    add('a');
-    await drain();
-    const sid = note();
-    await drain();
-    const req = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { digests: { session_id: string }[] };
-    expect(req.digests.map((d) => d.session_id)).toContain(sid);
-  });
-
-  it('a note waits like any other when digests are off', () => {
+  it('is searchable at once', () => {
     add('a');
     const sid = note();
-    expect(getDigest(db, noteRow(sid))!.status).toBe('pending');
     expect(search(db, { query: 'Postgres' }).some((h) => h.session_id === sid)).toBe(true);
   });
 });

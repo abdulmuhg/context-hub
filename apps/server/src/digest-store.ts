@@ -16,6 +16,9 @@ export interface DigestRow {
   next_attempt_at: string | null;
   error: string | null;
   updated_at: string;
+  written_by: string | null;
+  summary_to_follow: number;
+  saved_seq: number;
 }
 
 export interface DueDigest {

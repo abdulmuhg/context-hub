@@ -56,7 +56,7 @@ if (process.env.ANTHROPIC_API_KEY) {
   worker = startWorker({ db, llm: new AnthropicLlm({ model, effort, onUsage: (u) => recordUsage(db, u, new Date().toISOString()) }), maxInputTokens, ...(dailyBudgetUsd === null ? {} : { dailyBudgetMicroUsd: Math.round(dailyBudgetUsd * 1_000_000) }) });
   console.log(`digests: on, model ${model}, effort ${effort}`);
 } else {
-  console.log('digests: off, no ANTHROPIC_API_KEY. Uploads and lookups work; digests stay queued until a key is set.');
+  console.log('fallback summaries: off, no ANTHROPIC_API_KEY. Computers with Claude Code write their own summaries.');
 }
 
 server.listen(port, () => console.log(`context-hub listening on :${port}, database ${path}`));

@@ -1,5 +1,6 @@
 import { latestSyncRun, type SyncRun } from '../activity.js';
 import type { Db } from '../db.js';
+import { projectsNeedingPage } from '../digest-store.js';
 import { readBackupStatus, type BackupStatus } from './backup-status.js';
 import { addDays, budgetReached, formatUsd, spendBetween, utcDayStart, type Spend } from '../usage.js';
 import type { WebConfig } from './routes.js';
@@ -108,13 +109,14 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
     });
   }
 
-  const pending = db.prepare("SELECT updated_at FROM digests WHERE status = 'pending' ORDER BY updated_at").all() as { updated_at: string }[];
+  // A session a computer still owes a summary for (after re-cleaning) is expected to wait, with or without a key.
+  const pending = db.prepare("SELECT updated_at FROM digests WHERE status = 'pending' AND summary_to_follow = 0 ORDER BY updated_at").all() as { updated_at: string }[];
   if (!cfg.digestsOn) {
-    // Only worth saying while something is waiting: with nothing queued, no key costs nothing.
+    // No key is normal: computers write the summaries. Only sessions that arrived without one are worth naming.
     if (pending.length > 0) {
       problems.push({
-        kind: 'digests-off',
-        text: 'Summaries are off: the server has no model key, so new sessions are not being summarised.',
+        kind: 'summaries-waiting',
+        text: `${pending.length} ${pending.length === 1 ? 'session' : 'sessions'} arrived without a summary and the server has no model key. Run hub resummarize on a computer with Claude Code.`,
       });
     }
   } else if (!paused && pending.some((p) => olderThan(now, p.updated_at, PENDING_SLOW_MS))) {
@@ -122,6 +124,14 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
     problems.push({
       kind: 'digests-backing-up',
       text: 'Summaries are backing up: a summary has been waiting for more than an hour.',
+    });
+  }
+
+  const behind = projectsNeedingPage(db).length;
+  if (behind > 0) {
+    problems.push({
+      kind: 'pages-behind',
+      text: `${behind} project ${behind === 1 ? 'page is' : 'pages are'} waiting to be updated by a computer's next sync`,
     });
   }
 

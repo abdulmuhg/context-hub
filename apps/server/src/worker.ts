@@ -20,6 +20,7 @@ import {
   type DueDigest,
 } from './digest-store.js';
 import { buildStatePage, CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, renderDigest, writeDigest, type Llm, type PageDigest } from '@context-hub/core';
+import { writeNoteDigest } from './notes.js';
 import { loadMessages } from './store.js';
 import { budgetReached } from './usage.js';
 
@@ -112,26 +113,18 @@ async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Pro
   await updatePage(c, due.project_id, [fresh], false);
 }
 
-/** A note is already a summary: its title is the goal and its text is the digest. The model is not called. */
-function noteDigest(c: Ctx, due: DueDigest): { body: DigestBody; text: string } {
-  const first = loadMessages(c.db, due.session_id)[0];
-  const note = first?.kind === 'text' ? first.text : '';
-  const body: DigestBody = { goal: due.title, done: [], decisions: [], open_items: [], key_refs: [] };
-  return { body, text: `Note saved from a chat: ${due.title}
-${note}` };
-}
-
 async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
   const id = `${due.source}:${due.source_session_id}`;
-  const isNote = due.source === 'note';
+  // A note saved before notes were digested at save time. Its digest needs no model.
+  if (due.source === 'note') {
+    writeNoteDigest(c.db, due.session_id, c.now());
+    return 'digest';
+  }
   let body: DigestBody;
   let text: string;
   try {
-    if (isNote) ({ body, text } = noteDigest(c, due));
-    else {
-      body = await writeDigest(c.llm, { project: due.project_key, title: due.title, messages: loadMessages(c.db, due.session_id) }, c.maxChars);
-      text = renderDigest(body);
-    }
+    body = await writeDigest(c.llm, { project: due.project_key, title: due.title, messages: loadMessages(c.db, due.session_id) }, c.maxChars);
+    text = renderDigest(body);
   } catch (e) {
     if (e instanceof LlmRefusal) {
       refuseDigest(c.db, due.session_id, e.category, c.now());
@@ -143,7 +136,7 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
     return 'error';
   }
 
-  const saved = saveDigest(c.db, { sessionRowId: due.session_id, hash: due.content_hash, model: isNote ? 'note' : c.llm.model, body, text, now: c.now() });
+  const saved = saveDigest(c.db, { sessionRowId: due.session_id, hash: due.content_hash, model: c.llm.model, body, text, now: c.now() });
   if (!saved) {
     c.log(`digest ${id}: the session changed while its digest was being written; it stays queued`);
     return 'digest';

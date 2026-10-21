@@ -17,7 +17,7 @@ On a Linux server with Docker, with your hub's DNS name pointing at it:
 ```bash
 mkdir -p ~/context-hub && cd ~/context-hub
 # copy the four files from this folder here, then:
-cp .env.example .env              # fill in HUB_IMAGE, PUBLIC_URL, ANTHROPIC_API_KEY
+cp .env.example .env              # fill in HUB_IMAGE and PUBLIC_URL (ANTHROPIC_API_KEY is optional)
 mkdir -p backups/status           # before the first start, so it is not owned by root
 nano Caddyfile                    # replace hub.example.com
 docker compose up -d

@@ -208,6 +208,10 @@ export interface SessionSummary {
   digest: SessionDigest | null;
   /** 'none' for subagent transcripts, which are covered by their parent's digest. */
   digest_status: DigestStatus | 'none';
+  /** The computer's token label, or null when the server wrote it (or there is no digest). */
+  digest_written_by: string | null;
+  /** The model named on the digest, whether or not it has text. */
+  digest_model: string | null;
 }
 
 interface SessionRow {
@@ -241,6 +245,8 @@ function summarise(db: Db, r: SessionRow): SessionSummary {
     is_subagent: r.parent !== null,
     digest: d && d.text !== null ? { text: d.text, model: d.model ?? '', written_at: d.updated_at, stale: d.status !== 'ok' } : null,
     digest_status: d?.status ?? 'none',
+    digest_written_by: d?.written_by ?? null,
+    digest_model: d?.model ?? null,
   };
 }
 

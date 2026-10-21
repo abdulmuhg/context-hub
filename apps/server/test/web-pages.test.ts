@@ -368,3 +368,20 @@ describe('a project page', () => {
     expect(html).toContain('&lt;img');
   });
 });
+
+describe('who wrote a summary', () => {
+  it('shows the computer, or the server, next to the summary status', async () => {
+    const body = { goal: 'g', done: [], decisions: [], open_items: [], key_refs: [] };
+    const mine = addSession('mine', JSONROOM);
+    const theirs = addSession('theirs', JSONROOM);
+    const note = addSession('n1', JSONROOM, { source: 'note' });
+    for (const [id, writtenBy, model] of [[mine, 'my-pc', 'claude-sonnet-5-5'], [theirs, null, 'claude-haiku-5-5'], [note, null, 'note']] as const) {
+      markDigestPending(db, id, ago(HOUR));
+      saveDigest(db, { sessionRowId: id, hash: 'h1', model, body, text: 'x', now: ago(HOUR), writtenBy });
+    }
+    const html = await page('/projects/' + encodeURIComponent(JSONROOM));
+    expect(html).toContain('<td>ok &middot; by my-pc</td>');
+    expect(html).toContain('<td>ok &middot; by the server</td>');
+    expect(html.match(/<td>ok<\/td>/g)).toHaveLength(1);
+  });
+});

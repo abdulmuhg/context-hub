@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
-import { failDigest, failState, markDigestPending, refuseDigest } from '../src/digest-store.js';
+import { failDigest, failState, markDigestPending, refuseDigest, saveProjectState } from '../src/digest-store.js';
 import { readBackupStatus, type BackupStatus } from '../src/web/backup-status.js';
 import { recordUsage } from '../src/usage.js';
 import { computeHealth } from '../src/web/health.js';
@@ -77,6 +77,7 @@ beforeEach(() => {
   markDigestPending(db, done, ago(DAY));
   db.prepare("UPDATE digests SET status = 'ok', text = 'x' WHERE session_id = ?").run(done);
   markDigestPending(db, addSession('pend'), ago(10 * 60_000));
+  saveProjectState(db, projectId(), { summary: 's', body: 'b', model: 'm' }, ago(DAY), true);
   addSyncRun();
   writeStatus();
 });
@@ -142,11 +143,31 @@ describe('problem rules', () => {
     expect(h.problems[0]!.at).toBe(next_attempt_at);
   });
 
-  it('says summaries are off when they are off and a summary is queued', () => {
+  it('has no summaries-off notice when the server has no key and nothing is waiting', () => {
+    db.prepare("UPDATE digests SET status = 'ok', text = 'x'").run();
     const h = computeHealth(db, cfg({ digestsOn: false }), NOW);
-    expect(h.healthy).toBe(false);
-    expect(kinds(h)).toEqual(['digests-off']);
-    expect(h.problems[0]!.text).toMatch(/summaries are off/i);
+    expect(h.problems).toEqual([]);
+    expect(h.healthy).toBe(true);
+  });
+
+  it('names sessions that arrived without a summary when the server has no key to write one', () => {
+    const h = computeHealth(db, cfg({ digestsOn: false }), NOW);
+    expect(kinds(h)).toEqual(['summaries-waiting']);
+    expect(h.problems[0]!.text).toBe('1 session arrived without a summary and the server has no model key. Run hub resummarize on a computer with Claude Code.');
+  });
+
+  it('does not count a summary a computer still owes after re-cleaning', () => {
+    db.prepare("UPDATE digests SET summary_to_follow = 1 WHERE status = 'pending'").run();
+    expect(computeHealth(db, cfg({ digestsOn: false }), NOW).problems).toEqual([]);
+  });
+
+  it('lists project pages that wait for a computer to update them', () => {
+    db.prepare("UPDATE digests SET saved_seq = 5 WHERE status = 'ok'").run();
+    saveProjectState(db, projectId(), { summary: 's', body: 'b', model: 'm' }, NOW, true);
+    db.prepare('UPDATE project_states SET digests_through = 1').run();
+    const h = computeHealth(db, cfg(), NOW);
+    expect(kinds(h)).toEqual(['pages-behind']);
+    expect(h.problems[0]!.text).toBe("1 project page is waiting to be updated by a computer's next sync");
   });
 
   it('says summaries are backing up when one has been pending for more than an hour', () => {
