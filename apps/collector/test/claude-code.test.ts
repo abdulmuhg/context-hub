@@ -39,7 +39,8 @@ describe('claudeCode.discover', () => {
     expect(claudeCode.discover(tempDir())).toEqual([]);
   });
 
-  it('follows links to transcripts kept elsewhere, such as an archive', () => {
+  // Windows lets only administrators and Developer Mode create links.
+  it.skipIf(process.platform === 'win32')('follows links to transcripts kept elsewhere, such as an archive', () => {
     const archive = tempDir();
     writeJsonl(join(archive, 'p', `${SID}.jsonl`), [rec('user', 'archived')]);
     writeJsonl(join(archive, 'p', SID, 'subagents', 'agent-a1.jsonl'), [rec('user', 'sub')]);

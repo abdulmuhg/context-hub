@@ -24,7 +24,8 @@ describe('discoverDocs', () => {
     expect(errors).toEqual([]);
   });
 
-  it('follows a link to a file but not to a folder', () => {
+  // Windows lets only administrators and Developer Mode create links.
+  it.skipIf(process.platform === 'win32')('follows a link to a file but not to a folder', () => {
     const dir = tempDir();
     const elsewhere = tempDir();
     writeRaw(join(elsewhere, 'shared.md'), '# Shared');
