@@ -91,10 +91,11 @@ not part of this design.
      plugins, and permissions work normally", so it keeps the plan sign-in.
    - A spike run from inside the Claude desktop app could not reach the API
      (the app's sandbox only allows its own proxy), so a real run has not yet
-     been confirmed. Before building, confirm one run from an ordinary
-     terminal: it succeeds with the clean environment above, returns the
-     schema's object in `structured_output`, and leaves no new file under
-     `~/.claude/projects`.
+     been confirmed. **The plan's first task is that check**, run from an
+     ordinary terminal or the first real collector call: it succeeds with the
+     clean environment above, returns the schema's object in
+     `structured_output`, and leaves no new file under `~/.claude/projects`.
+     If it fails, stop and bring the result back before building the rest.
 2. **The model is pinned by full ID**, `claude-sonnet-5-5`, never the `sonnet`
    alias, so a new release never silently changes how digests read or how much
    of the plan they use. Effort `low`. Both are per-computer settings in
