@@ -10,6 +10,7 @@ import {
   nextDueDigest,
   nextProjectNeedingState,
   okDigestsForProject,
+  projectHasDueDigest,
   refuseDigest,
   saveDigest,
   saveProjectState,
@@ -225,6 +226,13 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
   const saved = saveDigest(c.db, { sessionRowId: due.session_id, hash: due.content_hash, model: isNote ? 'note' : c.llm.model, body, text, now: c.now() });
   if (!saved) {
     c.log(`digest ${id}: the session changed while its digest was being written; it stays queued`);
+    return 'digest';
+  }
+
+  // More of this project's digests are queued: the next one would replace this
+  // page, so flag it and build it once when the queue is empty.
+  if (projectHasDueDigest(c.db, due.project_id, c.now())) {
+    markStateDirty(c.db, due.project_id);
     return 'digest';
   }
 

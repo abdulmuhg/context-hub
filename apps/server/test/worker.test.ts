@@ -245,6 +245,85 @@ describe('runOnce: project state', () => {
   });
 });
 
+describe('runOnce: one page build per batch', () => {
+  const count = (kind: 'digest' | 'merge' | 'state') => llm.calls.filter((c) => c.kind === kind).length;
+  const addMany = (n: number, over: Parameters<typeof makeSession>[0] = {}, prefix = 's') =>
+    Array.from({ length: n }, (_, i) => add(`${prefix}${i + 1}`, { last_activity_at: `2026-10-0${i + 1}T00:00:00.000Z`, ...over }));
+
+  // Review Focus 1
+  it('with a page and five pending digests: 5 digests, 0 merges, 1 rebuild, 1 review', async () => {
+    add('first', { last_activity_at: '2026-09-01T00:00:00.000Z' });
+    await drain();
+    llm.calls = [];
+    llm.reviews = [];
+    addMany(5);
+    await drain();
+    expect(count('digest')).toBe(5);
+    expect(count('merge')).toBe(0);
+    expect(count('state')).toBe(1);
+    expect(llm.reviews).toHaveLength(1);
+    expect(getProjectState(db, pid('alpha'))!.dirty).toBe(false);
+  });
+
+  it('with no page and five pending digests: 5 digests, 1 page build, 1 review', async () => {
+    addMany(5);
+    await drain();
+    expect(count('digest')).toBe(5);
+    expect(count('state')).toBe(1);
+    expect(llm.reviews).toHaveLength(1);
+    expect(getProjectState(db, pid('alpha'))).not.toBeNull();
+  });
+
+  it('one new session with a page: 1 digest, 1 merge, 1 review, as before', async () => {
+    add('first', { last_activity_at: '2026-09-01T00:00:00.000Z' });
+    await drain();
+    llm.calls = [];
+    llm.reviews = [];
+    add('b');
+    await drain();
+    expect(llm.calls.map((c) => `${c.kind}:${(c.req as { mode?: string }).mode ?? ''}`)).toEqual(['digest:', 'state:merge']);
+    expect(llm.reviews).toHaveLength(1);
+  });
+
+  // Review Focus 2
+  it('rebuilds each page once when two projects are interleaved, and leaves neither dirty', async () => {
+    add('a0', { last_activity_at: '2026-09-01T00:00:00.000Z' });
+    add('b0', { project_key: 'local:beta', last_activity_at: '2026-09-01T00:00:01.000Z' });
+    await drain();
+    llm.calls = [];
+    llm.reviews = [];
+    add('a1', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    add('b1', { project_key: 'local:beta', last_activity_at: '2026-10-02T00:00:00.000Z' });
+    add('a2', { last_activity_at: '2026-10-03T00:00:00.000Z' });
+    add('b2', { project_key: 'local:beta', last_activity_at: '2026-10-04T00:00:00.000Z' });
+    await drain();
+    expect(count('digest')).toBe(4);
+    expect(count('merge')).toBe(0);
+    expect(count('state')).toBe(2);
+    expect(llm.reviews).toHaveLength(2);
+    expect(getProjectState(db, pid('alpha'))!.dirty).toBe(false);
+    expect(getProjectState(db, pid('beta'))!.dirty).toBe(false);
+  });
+
+  it('does not hold a project page back for the digests of another project', async () => {
+    add('a1', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    add('b1', { project_key: 'local:beta', last_activity_at: '2026-10-02T00:00:00.000Z' });
+    add('b2', { project_key: 'local:beta', last_activity_at: '2026-10-03T00:00:00.000Z' });
+    await runOnce(deps()); // a1: no other alpha digest is due, so its page is built now
+    expect(getProjectState(db, pid('alpha'))).not.toBeNull();
+  });
+
+  it('a failed digest waiting out its backoff does not count as still due', async () => {
+    add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    add('b', { last_activity_at: '2026-10-02T00:00:00.000Z' });
+    llm.failWith = new Error('529 overloaded');
+    expect(await runOnce(deps())).toBe('error'); // a fails, backs off
+    expect(await runOnce(deps())).toBe('digest'); // b: a is not due, so the page is built now
+    expect(count('state')).toBe(1);
+    expect(getProjectState(db, pid('alpha'))).not.toBeNull();
+  });
+});
+
 describe('startWorker', () => {
   it('drains the queue in the background and stops cleanly', async () => {
     add('a');

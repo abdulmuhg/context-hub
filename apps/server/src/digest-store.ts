@@ -64,6 +64,19 @@ export function nextDueDigest(db: Db, now: string): DueDigest | null {
   return row ?? null;
 }
 
+/** True when another main session of this project is still due for a digest. */
+export function projectHasDueDigest(db: Db, projectId: number, now: string): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM digests d JOIN sessions s ON s.id = d.session_id
+         WHERE s.project_id = ? AND s.parent IS NULL AND s.source <> 'doc' AND (d.status = 'pending' OR (d.status = 'failed' AND d.next_attempt_at <= ?))
+         LIMIT 1`,
+      )
+      .get(projectId, now) !== undefined
+  );
+}
+
 export function saveDigest(
   db: Db,
   args: { sessionRowId: number; hash: string; model: string; body: DigestBody; text: string; now: string },
