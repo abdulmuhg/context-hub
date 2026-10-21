@@ -383,10 +383,19 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         const through = o.through;
         if (typeof through !== 'number' || !Number.isInteger(through) || through < 0) throw new HttpError(400, 'Invalid page: through must be a whole number');
         if (typeof o.full_rebuild !== 'boolean') throw new HttpError(400, 'Invalid page: full_rebuild must be true or false');
+        // The same safety net as for sessions and summaries: a page is built from them, so strip again.
+        let redactions = 0;
+        const clean = (s: string): string => {
+          const out = stripSecrets(s);
+          for (const n of Object.values(out.counts)) redactions += n;
+          return out.text;
+        };
+        const page = { summary: clean(text('summary')), body: clean(text('body')), model: text('model') };
+        if (redactions > 0) log(`${decodePart(projectPage[1]!)}: server stripped ${redactions} secret(s) from its page; the collector may be out of date`);
         const saved = savePageIfVersion(
           db,
           row.id,
-          { summary: text('summary'), body: text('body'), model: text('model') },
+          page,
           { baseVersion: base as number | null, through, fullRebuild: o.full_rebuild, writtenBy: actor, now: now().toISOString() },
         );
         if (!saved.ok) return send(res, 409, { error: 'The page changed; fetch it again' });
