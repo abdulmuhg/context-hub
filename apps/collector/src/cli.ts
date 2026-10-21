@@ -19,6 +19,7 @@ import {
   saveToken,
   type Config,
 } from './config.js';
+import { runResummarize } from './resummarize.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
 import { listProjects, runSync, type ProjectRow, type SyncReport } from './sync.js';
 import { deleteRemote, exchangeDeviceCode, getStatus, requestConnectCode, type Remote } from './upload.js';
@@ -63,6 +64,7 @@ Advanced:
   assign <session> <project>           set the project of one session
   sync [--project P] [--session S] [--dry-run] [--all]   (--project narrows tracked projects; --all lifts the cap on summaries)
   summaries [model <id> | effort <level>]   show or change how this computer writes summaries
+  resummarize [<project>] [--all] [--model-not ID]   rewrite older summaries with this computer's model
   forget <project> | forget --session <source>:<id>
   status                               ask the server for its status
   connect                              get a one-time code to sign claude.ai in to the hub
@@ -504,6 +506,26 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       if (pages.length > 0) io.out(`${plural(pages.length, 'project page')} waiting for an update: ${pages.join(', ')}`);
       const owed = status.summaries_owed ?? 0;
       if (owed > 0) io.out(`${owed} ${owed === 1 ? 'summary' : 'summaries'} owed after re-cleaning`);
+      return 0;
+    }
+    case 'resummarize': {
+      const { values, positionals } = parseArgs({
+        args: rest,
+        options: { all: { type: 'boolean' }, 'model-not': { type: 'string' } },
+        allowPositionals: true,
+      });
+      const report = await runResummarize({
+        hubDir: io.hubDir,
+        project: positionals[0],
+        all: values.all === true,
+        modelNot: values['model-not'],
+        fetchImpl: io.fetchImpl,
+        ...(io.llm !== undefined ? { llm: io.llm } : {}),
+      });
+      io.out(`Rewrote ${report.rewritten.length} ${report.rewritten.length === 1 ? 'summary' : 'summaries'}.`);
+      if (report.waiting.count > 0) io.out(`${plural(report.waiting.count, 'session')} waiting${report.waiting.reason ? `: ${report.waiting.reason}` : ''}`);
+      if (report.pages.updated.length > 0) io.out(`Rebuilt ${plural(report.pages.updated.length, 'project page')}.`);
+      if (report.pages.left.length > 0) io.out(`${plural(report.pages.left.length, 'page')} left for the next run`);
       return 0;
     }
     case 'summaries': {

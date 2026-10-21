@@ -210,7 +210,7 @@ interface Work {
 }
 
 /** Builds the Claude Code writer from this computer's settings, or null when `claude` is not installed. */
-function buildLlm(cfg: Config): Llm | null {
+export function buildLlm(cfg: Config): Llm | null {
   const cmd = findClaude();
   if (cmd === null) return null;
   return new ClaudeCodeLlm({ model: cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL, effort: cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT, cmd });

@@ -852,3 +852,70 @@ describe('hub doctor: summaries', () => {
     expect(out.join('\n')).toMatch(/! Waiting summaries\s+2 sessions: cap of 20 reached/);
   });
 });
+
+describe('hub resummarize', () => {
+  const login = () => run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+  const owed = {
+    source: 'claude-code',
+    id: 'old1',
+    content_hash: 'a'.repeat(64),
+    last_activity_at: '2026-10-01T10:00:00.000Z',
+    status: 'ok',
+    model: 'claude-haiku-5-5',
+    written_by: null,
+    summary_to_follow: false,
+  };
+
+  beforeEach(async () => {
+    await login();
+    await run(['track', KEY], io);
+    out = [];
+    io.fetchImpl = async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      requests.push({ method, url });
+      if (url.endsWith('/digests')) return new Response(JSON.stringify({ sessions: [owed] }), { status: 200 });
+      if (method === 'GET' && url.includes('/api/sessions/')) {
+        return new Response(
+          JSON.stringify({ session: { source: 'claude-code', source_session_id: 'old1', project_key: KEY, parent: null, title: 'Old', content_hash: 'a'.repeat(64), messages: [{ seq: 0, role: 'user', kind: 'text', ts: null, text: 'hi' }] } }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith('/page-inputs')) return new Response(JSON.stringify({ page: null, digests: [{ session_id: 'x', title: 't', date: null, text: 'g', saved_seq: 1 }], through: 1 }), { status: 200 });
+      if (method === 'PUT' && url.endsWith('/digest')) return new Response(null, { status: 204 });
+      return new Response('{"version":1}', { status: 200 });
+    };
+  });
+
+  it('prints how many summaries it rewrote and rebuilt pages', async () => {
+    expect(await run(['resummarize'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/Rewrote 1 summary\./);
+    expect(text).toMatch(/Rebuilt 1 project page\./);
+    expect(requests.some((r) => r.method === 'PUT' && r.url.endsWith('/api/sessions/claude-code/old1/digest'))).toBe(true);
+  });
+
+  it('takes a project, --all and --model-not', async () => {
+    expect(await run(['resummarize', 'alpha', '--all', '--model-not', 'claude-sonnet-5-5'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/Rewrote 1 summary\./);
+  });
+
+  it('fails with the install message when Claude Code is missing', async () => {
+    io.llm = null;
+    expect(await run(['resummarize'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/Claude Code is not installed, so sessions wait here/);
+  });
+
+  it('prints the waiting reason', async () => {
+    const limited = new FakeLlm();
+    limited.failWith = new UsageLimitError(null);
+    io.llm = limited;
+    expect(await run(['resummarize'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/1 session waiting: Claude usage limit reached/);
+  });
+
+  it('is in the help text', async () => {
+    await run([], io);
+    expect(err.join('\n')).toMatch(/resummarize \[<project>\] \[--all\] \[--model-not ID\]/);
+  });
+});
