@@ -228,6 +228,16 @@ const MIGRATIONS: string[] = [
   -- Pages the server owes because it wrote a fallback digest for the project.
   CREATE TABLE server_page_queue (project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE);
   `,
+  `
+  -- The state pages a computer's last full sync left unwritten, and why. Replaced on each report.
+  CREATE TABLE page_skips (
+    token_id     INTEGER NOT NULL,
+    project_key  TEXT NOT NULL,
+    reason       TEXT NOT NULL,
+    at           TEXT NOT NULL,
+    PRIMARY KEY (token_id, project_key)
+  );
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

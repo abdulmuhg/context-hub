@@ -161,13 +161,38 @@ describe('problem rules', () => {
     expect(computeHealth(db, cfg({ digestsOn: false }), NOW).problems).toEqual([]);
   });
 
-  it('lists project pages that wait for a computer to update them', () => {
-    db.prepare("UPDATE digests SET saved_seq = 5 WHERE status = 'ok'").run();
-    saveProjectState(db, projectId(), { summary: 's', body: 'b', model: 'm' }, NOW, true);
-    db.prepare('UPDATE project_states SET digests_through = 1').run();
-    const h = computeHealth(db, cfg(), NOW);
-    expect(kinds(h)).toEqual(['pages-behind']);
-    expect(h.problems[0]!.text).toBe("1 project page is waiting to be updated by a computer's next sync");
+  describe('project pages behind', () => {
+    beforeEach(() => {
+      db.prepare("UPDATE digests SET saved_seq = 5 WHERE status = 'ok'").run();
+      saveProjectState(db, projectId(), { summary: 's', body: 'b', model: 'm' }, NOW, true);
+      db.prepare('UPDATE project_states SET digests_through = 1').run();
+      db.prepare("INSERT INTO tokens(id, label, scope, hash, created_at) VALUES (7, 'collector-pc', 'ingest', 'h', ?)").run(ago(DAY));
+    });
+    const skip = (reason: string, at: string) =>
+      db.prepare('INSERT INTO page_skips(token_id, project_key, reason, at) VALUES (7, ?, ?, ?)').run('local:alpha', reason, at);
+
+    it('names the project and when it fell behind', () => {
+      const h = computeHealth(db, cfg(), NOW);
+      expect(kinds(h)).toEqual(['pages-behind']);
+      expect(h.problems[0]).toEqual({
+        kind: 'pages-behind',
+        ref: 'local:alpha',
+        text: 'The project page for local:alpha is waiting for the next sync of a computer that tracks it. Behind since',
+        at: ago(DAY),
+      });
+    });
+
+    it('says which computer left it, and why', () => {
+      skip('Claude usage limit reached (resets 14:00)', ago(HOUR));
+      expect(computeHealth(db, cfg(), NOW).problems[0]!.text).toBe(
+        'The project page for local:alpha is waiting for an update. collector-pc left it at its last sync: Claude usage limit reached (resets 14:00). Behind since',
+      );
+    });
+
+    it('ignores a report from before the page fell behind', () => {
+      skip('Claude usage limit reached', ago(2 * DAY));
+      expect(computeHealth(db, cfg(), NOW).problems[0]!.text).toMatch(/waiting for the next sync of a computer that tracks it/);
+    });
   });
 
   it('says summaries are backing up when one has been pending for more than an hour', () => {

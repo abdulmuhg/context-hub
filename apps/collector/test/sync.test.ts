@@ -417,8 +417,22 @@ describe('runSync: reports the run to the server', () => {
       uploaded: report.uploaded.length,
       unchanged: report.unchanged,
       errors: report.errors.length,
+      pages_left: [],
     });
     expect(report.uploaded).toHaveLength(1);
+  });
+
+  it('sends the pages it left, and why', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: true, pages_needed: [KEY_A, 'github.com/me/other'], summaries_owed: 0 };
+    await runSync(opts({ llm: null }));
+    expect(reports[0]!.body.pages_left).toEqual([{ project: KEY_A, reason: 'Claude Code is not installed on this computer' }]);
+  });
+
+  it('a scoped sync does not send pages_left, so it cannot clear what other projects reported', async () => {
+    track(KEY_A);
+    await runSync(opts({ project: 'alpha' }));
+    expect(reports[0]!.body).not.toHaveProperty('pages_left');
   });
 
   it('counts errors when an upload fails', async () => {
@@ -853,7 +867,7 @@ describe('runSync: state pages', () => {
     hubStatus = { server_summaries: true, pages_needed: [KEY_A], summaries_owed: 0 };
     const report = await runSync(opts({ llm: null }));
     expect(pagePuts()).toEqual([]);
-    expect(report.pages).toEqual({ updated: [], left: [] });
+    expect(report.pages).toEqual({ updated: [], left: [{ project: KEY_A, reason: 'Claude Code is not installed on this computer' }] });
   });
 
   it('skips the pages once the usage limit is hit', async () => {
@@ -873,7 +887,7 @@ describe('runSync: state pages', () => {
     savePersonal(hub, [{ label: 'q', value: 'question', level: 'full' }]);
     const report = await runSync(opts());
     expect(pagePuts()).toEqual([]);
-    expect(report.pages).toEqual({ updated: [], left: [KEY_A] });
+    expect(report.pages).toEqual({ updated: [], left: [{ project: KEY_A, reason: 'it waits for summaries still owed after re-cleaning' }] });
   });
 
   it('does not touch pages in a dry run', async () => {

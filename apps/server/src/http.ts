@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { stripSecrets, type DigestBody, type HashedSession, type UploadDigest } from '@context-hub/core';
-import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun } from './activity.js';
+import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun, type PageLeft } from './activity.js';
 import { installScript } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
@@ -70,6 +70,18 @@ function decodePart(value: string): string {
   } catch {
     throw new HttpError(400, 'The address contains an invalid percent-encoding');
   }
+}
+
+/** The `pages_left` of a sync run report: each page a computer left unwritten, and why. */
+function pagesLeft(value: unknown): PageLeft[] {
+  if (!Array.isArray(value) || value.length > 1000) throw new HttpError(400, 'pages_left must be a list of at most 1000 pages');
+  return value.map((p) => {
+    const o = (typeof p === 'object' && p !== null ? p : {}) as Record<string, unknown>;
+    if (typeof o.project !== 'string' || o.project === '' || typeof o.reason !== 'string' || o.reason === '') {
+      throw new HttpError(400, 'each of pages_left needs a project and a reason');
+    }
+    return { project: o.project.slice(0, 500), reason: o.reason.slice(0, 500) };
+  });
 }
 
 function clientAddress(req: IncomingMessage): string {
@@ -257,7 +269,13 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       };
       const finishedAt = r.finished_at;
       if (typeof finishedAt !== 'string' || Number.isNaN(Date.parse(finishedAt))) throw new HttpError(400, 'finished_at must be an ISO time');
-      const run = { finishedAt: new Date(finishedAt).toISOString(), uploaded: count('uploaded'), unchanged: count('unchanged'), errors: count('errors') };
+      const run = {
+        finishedAt: new Date(finishedAt).toISOString(),
+        uploaded: count('uploaded'),
+        unchanged: count('unchanged'),
+        errors: count('errors'),
+        ...(r.pages_left === undefined ? {} : { pagesLeft: pagesLeft(r.pages_left) }),
+      };
       // Only a bearer credential reaches here (ingest scope), so it always carries a token id.
       recordSyncRun(db, { tokenId: (credential as Extract<Credential, { kind: 'bearer' }>).id, ...run }, now().toISOString());
       res.writeHead(204);

@@ -93,7 +93,7 @@ describe('updatePages', () => {
     putAnswer = 409;
     const out = await run([KEY]);
     expect(puts).toHaveLength(3);
-    expect(out).toEqual({ updated: [], left: [KEY] });
+    expect(out).toEqual({ updated: [], left: [{ project: KEY, reason: 'another computer changed the page while this one was saving it' }] });
   });
 
   it('starts again from fresh inputs after a refused save', async () => {
@@ -130,8 +130,9 @@ describe('updatePages', () => {
     };
     const budget = newBudget(false);
     const out = await run([KEY, 'github.com/me/beta'], budget);
-    expect(out).toEqual({ updated: [], left: [KEY, 'github.com/me/beta'] });
     expect(budget.stopped).toMatch(/usage limit/);
+    const reason = budget.stopped!;
+    expect(out).toEqual({ updated: [], left: [{ project: KEY, reason }, { project: 'github.com/me/beta', reason }] });
     expect(puts).toEqual([]);
   });
 
@@ -139,7 +140,7 @@ describe('updatePages', () => {
     const budget = newBudget(false);
     budget.stopped = 'Claude usage limit reached';
     const out = await run([KEY], budget);
-    expect(out).toEqual({ updated: [], left: [KEY] });
+    expect(out).toEqual({ updated: [], left: [{ project: KEY, reason: 'Claude usage limit reached' }] });
     expect(llm.calls).toEqual([]);
   });
 
@@ -147,7 +148,8 @@ describe('updatePages', () => {
     inputs['github.com/me/beta'] = { page: page(), digests: [digest('c', 2)], through: 2 };
     delete inputs[KEY];
     const out = await run([KEY, 'github.com/me/beta']);
-    expect(out).toEqual({ updated: ['github.com/me/beta'], left: [KEY] });
+    expect(out.updated).toEqual(['github.com/me/beta']);
+    expect(out.left).toEqual([{ project: KEY, reason: expect.stringMatching(/^page failed: /) }]);
   });
 
   it('does not count toward the summary cap', async () => {

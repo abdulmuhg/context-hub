@@ -19,7 +19,7 @@ import {
 } from './config.js';
 import { discoverDocs, docId, readDoc } from './docs.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
-import { budgetOpen, catchUpOwed, MAX_CHARS, newBudget, spend, stopReason, summarize, updatePages, type SessionRef } from './summaries.js';
+import { budgetOpen, catchUpOwed, MAX_CHARS, newBudget, spend, stopReason, summarize, updatePages, type PageLeft, type SessionRef } from './summaries.js';
 import { deleteRemote, getStatus, putSession, reportSyncRun, type HubStatus, type Remote } from './upload.js';
 
 export type { SessionRef };
@@ -67,7 +67,7 @@ export interface SyncReport {
   /** Sessions that did not go up because their summary could not be written, and why. */
   waiting: { count: number; reason: string | null };
   /** State pages written in this run, and those left for a later sync. */
-  pages: { updated: string[]; left: string[] };
+  pages: { updated: string[]; left: PageLeft[] };
   /** Set when the run finished but the server could not be told about it. */
   reportError?: string;
 }
@@ -489,22 +489,33 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   }
 
   // State pages come last, once this run's summaries are on the hub.
-  if (llm && remote && !stopped && !opts.session) {
+  /** Set once the pages step ran over every tracked project, so the hub may replace what it last heard from this computer. */
+  let pagesChecked = false;
+  if (remote && !stopped && !opts.session) {
     const selected = s.cfg.tracked.filter((key) => !opts.project || projectMatches(opts.project, key));
-    let needed: string[] = [];
+    let needed: string[] | null = null;
     try {
       needed = ((await getStatus(remote)).pages_needed ?? []).filter((key) => selected.includes(key));
     } catch {
-      needed = [];
+      needed = null;
     }
-    report.pages.left.push(...needed.filter((key) => deferred.has(key)));
-    const pages = await updatePages(remote, llm, needed.filter((key) => !deferred.has(key)), budget, {
-      now: now().toISOString(),
-      maxChars: MAX_CHARS,
-      onPage: (done, total, key) => opts.onProgress?.({ step: 'page', done, total, project: key }),
-    });
-    report.pages.updated.push(...pages.updated);
-    report.pages.left.push(...pages.left);
+    if (needed !== null) {
+      pagesChecked = !opts.project;
+      if (llm === null) {
+        report.pages.left.push(...needed.map((project) => ({ project, reason: 'Claude Code is not installed on this computer' })));
+      } else {
+        report.pages.left.push(
+          ...needed.filter((key) => deferred.has(key)).map((project) => ({ project, reason: 'it waits for summaries still owed after re-cleaning' })),
+        );
+        const pages = await updatePages(remote, llm, needed.filter((key) => !deferred.has(key)), budget, {
+          now: now().toISOString(),
+          maxChars: MAX_CHARS,
+          onPage: (done, total, key) => opts.onProgress?.({ step: 'page', done, total, project: key }),
+        });
+        report.pages.updated.push(...pages.updated);
+        report.pages.left.push(...pages.left);
+      }
+    }
   }
 
   report.waiting = {
@@ -544,6 +555,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
         uploaded: report.uploaded.length,
         unchanged: report.unchanged,
         errors: report.errors.length,
+        ...(pagesChecked ? { pages_left: report.pages.left } : {}),
       });
     } catch (e) {
       report.reportError = (e as Error).message;

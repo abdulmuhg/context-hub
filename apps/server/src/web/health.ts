@@ -1,6 +1,6 @@
 import { latestSyncRun, type SyncRun } from '../activity.js';
 import type { Db } from '../db.js';
-import { projectsNeedingPage } from '../digest-store.js';
+import { pagesBehind } from '../digest-store.js';
 import { readBackupStatus, type BackupStatus } from './backup-status.js';
 import { addDays, budgetReached, formatUsd, spendBetween, utcDayStart, type Spend } from '../usage.js';
 import type { WebConfig } from './routes.js';
@@ -127,11 +127,22 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
     });
   }
 
-  const behind = projectsNeedingPage(db).length;
-  if (behind > 0) {
+  // Each project page that is behind, with what the computers last said about it. A computer's
+  // report from before the page fell behind is about an earlier gap, so it is not used.
+  const lastSkip = db.prepare(
+    `SELECT COALESCE(t.label, 'a computer') AS actor, k.reason FROM page_skips k LEFT JOIN tokens t ON t.id = k.token_id
+     WHERE k.project_key = ? AND (? IS NULL OR k.at >= ?) ORDER BY k.at DESC LIMIT 1`,
+  );
+  for (const page of pagesBehind(db)) {
+    const skip = lastSkip.get(page.key, page.since, page.since) as { actor: string; reason: string } | undefined;
+    const why =
+      skip === undefined
+        ? `The project page for ${page.key} is waiting for the next sync of a computer that tracks it.`
+        : `The project page for ${page.key} is waiting for an update. ${skip.actor} left it at its last sync: ${skip.reason.replace(/\.$/, '')}.`;
     problems.push({
       kind: 'pages-behind',
-      text: `${behind} project ${behind === 1 ? 'page is' : 'pages are'} waiting to be updated by a computer's next sync`,
+      ref: page.key,
+      ...(page.since === null ? { text: why } : { text: `${why} Behind since`, at: page.since }),
     });
   }
 

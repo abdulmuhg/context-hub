@@ -62,6 +62,12 @@ export interface SessionRef {
   session: string;
 }
 
+/** A state page this run did not write, and why. The hub shows the reason on its Overview. */
+export interface PageLeft {
+  project: string;
+  reason: string;
+}
+
 /**
  * Writes the summaries the hub still owes after a re-clean: the old summary was
  * taken away, so the session waits for a new one. Each is uploaded on its own.
@@ -125,13 +131,13 @@ export async function updatePages(
   keys: string[],
   budget: Budget,
   opts: { now: string; maxChars: number; forceRebuild?: boolean; onPage?: (done: number, total: number, key: string) => void },
-): Promise<{ updated: string[]; left: string[] }> {
+): Promise<{ updated: string[]; left: PageLeft[] }> {
   const updated: string[] = [];
-  const left: string[] = [];
+  const left: PageLeft[] = [];
   let done = 0;
   for (const key of keys) {
     if (budget.stopped !== null) {
-      left.push(key);
+      left.push({ project: key, reason: budget.stopped });
       continue;
     }
     opts.onPage?.(++done, keys.length, key);
@@ -166,11 +172,12 @@ export async function updatePages(
         });
         saved = put.ok;
       }
-      (saved ? updated : left).push(key);
+      if (saved) updated.push(key);
+      else left.push({ project: key, reason: 'another computer changed the page while this one was saving it' });
     } catch (e) {
       const stop = stopReason(e);
       if (stop !== null) budget.stopped = stop;
-      left.push(key);
+      left.push({ project: key, reason: stop ?? `page failed: ${(e as Error).message}` });
     }
   }
   return { updated, left };
