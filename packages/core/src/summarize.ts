@@ -10,13 +10,19 @@ export const REBUILD_AFTER_MS = 7 * 24 * 60 * 60_000;
 
 export const EMPTY_DIGEST: DigestBody = { goal: 'Empty session: no conversation content.', done: [], decisions: [], open_items: [], key_refs: [] };
 
-/** Digests a session, in parts when it is longer than maxChars, and merges the parts. */
-export async function writeDigest(llm: Llm, s: { project: string; title: string; messages: Message[] }, maxChars: number): Promise<DigestBody> {
+/** Digests a session, in parts when it is longer than maxChars, and merges the parts. onPart is called before each part of a long one. */
+export async function writeDigest(
+  llm: Llm,
+  s: { project: string; title: string; messages: Message[] },
+  maxChars: number,
+  onPart?: (index: number, total: number) => void,
+): Promise<DigestBody> {
   const parts = splitParts(renderLines(s.messages), maxChars);
   if (parts.length === 0) return EMPTY_DIGEST;
   if (parts.length === 1) return llm.digest({ project: s.project, title: s.title, transcript: parts[0]!, part: null });
   const bodies: DigestBody[] = [];
   for (let i = 0; i < parts.length; i++) {
+    onPart?.(i + 1, parts.length);
     bodies.push(await llm.digest({ project: s.project, title: s.title, transcript: parts[i]!, part: { index: i + 1, total: parts.length } }));
   }
   return llm.mergeDigests({ project: s.project, title: s.title, parts: bodies });
