@@ -362,6 +362,7 @@ node /app/dist/admin-bin.js oauth list | oauth revoke <id>
 node /app/dist/admin-bin.js device-code | connect-code
 node /app/dist/admin-bin.js digests
 node /app/dist/admin-bin.js redigest <project>
+node /app/dist/admin-bin.js redigest --failed [<project>]   # only the failed ones, e.g. after topping up API credit
 node /app/dist/admin-bin.js rebuild-state <project>
 node /app/dist/admin-bin.js backup <file>
 ```

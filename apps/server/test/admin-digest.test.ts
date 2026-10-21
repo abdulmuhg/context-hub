@@ -42,6 +42,20 @@ describe('hub-admin redigest', () => {
     expect(getDigest(io.db, rowId('b'))!.status).toBe('ok');
   });
 
+  it('queues only failed digests with --failed, across projects or in one', async () => {
+    failDigest(io.db, rowId('a'), 'credit balance is too low', NOW.toISOString());
+    failDigest(io.db, rowId('c'), 'credit balance is too low', NOW.toISOString());
+    refuseDigest(io.db, rowId('b'), 'cyber', NOW.toISOString());
+    expect(await runAdmin(['redigest', '--failed', 'alpha'], io)).toBe(0);
+    expect(out.at(-1)).toBe('Queued 1 failed session of github.com/me/alpha.');
+    expect(getDigest(io.db, rowId('a'))).toMatchObject({ status: 'pending', attempts: 0, error: null });
+    expect(getDigest(io.db, rowId('c'))!.status).toBe('failed');
+    expect(await runAdmin(['redigest', '--failed'], io)).toBe(0);
+    expect(out.at(-1)).toBe('Queued 1 failed session.');
+    expect(getDigest(io.db, rowId('c'))!.status).toBe('pending');
+    expect(getDigest(io.db, rowId('b'))!.status).toBe('refused');
+  });
+
   it('gives a refused session another chance', async () => {
     refuseDigest(io.db, rowId('a'), 'cyber', NOW.toISOString());
     await runAdmin(['redigest', '--session', 'claude-code:a'], io);
