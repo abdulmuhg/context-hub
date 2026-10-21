@@ -114,15 +114,17 @@ export async function updatePages(
   llm: Llm,
   keys: string[],
   budget: Budget,
-  opts: { now: string; maxChars: number; forceRebuild?: boolean },
+  opts: { now: string; maxChars: number; forceRebuild?: boolean; onPage?: (done: number, total: number, key: string) => void },
 ): Promise<{ updated: string[]; left: string[] }> {
   const updated: string[] = [];
   const left: string[] = [];
+  let done = 0;
   for (const key of keys) {
     if (budget.stopped !== null) {
       left.push(key);
       continue;
     }
+    opts.onPage?.(++done, keys.length, key);
     try {
       let saved = false;
       for (let attempt = 0; attempt <= PAGE_RETRIES && !saved; attempt++) {

@@ -53,6 +53,8 @@ const fakeFetch: typeof fetch = async (input, init) => {
   const url = String(input);
   const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
   if (method === 'GET' && url.endsWith('/api/status')) return json(hubStatus);
+  // A tracked project the hub has nothing of, such as one emptied when its sessions moved to another project.
+  if (method === 'GET' && url.endsWith(`/api/projects/${encodeURIComponent('local:gone')}/digests`)) return new Response('{"error":"No such project"}', { status: 404 });
   if (method === 'GET' && url.includes('/api/projects/') && url.endsWith('/digests')) return json({ sessions: owedList });
   if (method === 'GET' && url.endsWith('/page-inputs')) return json(pageInputs[decodeURIComponent(url.split('/api/projects/')[1]!.split('/')[0]!)]);
   if (method === 'GET' && url.includes('/api/sessions/')) {
@@ -742,6 +744,32 @@ describe('runSync: summaries', () => {
     const digestPut = sent[0]!;
     expect(digestPut.url).toBe(`https://hub.example.com/api/sessions/claude-code/${S3}/digest`);
     expect(digestPut.body).toMatchObject({ hash: 'a'.repeat(64), digest: { model: 'fake-model', body: { goal: expect.stringContaining('digest of Owed') } } });
+  });
+
+  it('a tracked project the hub does not have does not stop the catch-up or the sync', async () => {
+    track('local:gone', KEY_A);
+    hubStatus = { server_summaries: false, pages_needed: [], summaries_owed: 1 };
+    owedList = [];
+    const report = await runSync(opts());
+    expect(report.errors).toEqual([]);
+    expect(puts()).toHaveLength(1);
+  });
+
+  it('reports each step for the progress line: reading, summarizing, then pages', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: true, pages_needed: [KEY_A], summaries_owed: 0 };
+    pageInputs[KEY_A] = { page: null, digests: [], through: 0 };
+    const steps: string[] = [];
+    await runSync(opts({ onProgress: (p) => steps.push(`${p.step} ${p.done}/${p.total} ${p.project}`) }));
+    expect(steps).toEqual([`read 1/1 ${KEY_A}`, `summarize 1/1 ${KEY_A}`, `page 1/1 ${KEY_A}`]);
+  });
+
+  it('reports uploading, not summarizing, when the hub writes the summaries', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: true, pages_needed: [], summaries_owed: 0 };
+    const steps: string[] = [];
+    await runSync(opts({ llm: null, onProgress: (p) => steps.push(`${p.step} ${p.done}/${p.total}`) }));
+    expect(steps).toEqual(['read 1/1', 'upload 1/1']);
   });
 
   it('counts a catch-up digest toward the cap', async () => {

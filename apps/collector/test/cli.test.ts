@@ -433,7 +433,7 @@ describe('hub sync: new projects', () => {
     answers = ['y'];
     expect(await run(['sync'], io)).toBe(0);
     expect(out.slice(0, 2)).toEqual(['Will upload: alpha.', 'Syncing 1 tracked project…']);
-    expect(shown).toEqual(['Uploading 1/1  alpha', '']);
+    expect(shown).toEqual(['Reading 1/1  alpha', 'Summarizing 1/1  alpha', '']);
     expect(out.at(-1)).toMatch(/^Up to date: 1 uploaded/);
   });
 

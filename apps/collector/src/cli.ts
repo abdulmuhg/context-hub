@@ -21,7 +21,7 @@ import {
 } from './config.js';
 import { runResummarize } from './resummarize.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
-import { listProjects, runSync, type ProjectRow, type SyncReport } from './sync.js';
+import { listProjects, runSync, type ProjectRow, type SyncProgress, type SyncReport } from './sync.js';
 import { deleteRemote, exchangeDeviceCode, getStatus, requestConnectCode, type Remote } from './upload.js';
 
 export interface Io {
@@ -135,6 +135,14 @@ function displayName(key: string): string {
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
+
+/** What each step of a sync is called on the progress line. */
+const PROGRESS_STEP: Record<SyncProgress['step'], string> = {
+  read: 'Reading',
+  summarize: 'Summarizing',
+  upload: 'Uploading',
+  page: 'Updating project page',
+};
 
 function printReport(io: Io, report: SyncReport, dryRun: boolean): void {
   const list = dryRun ? report.wouldUpload : report.uploaded;
@@ -472,7 +480,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
           progress &&
           ((p) => {
             shown = true;
-            progress(`Uploading ${p.done}/${p.total}  ${shortName(p.project)}`);
+            progress(`${PROGRESS_STEP[p.step]} ${p.done}/${p.total}  ${shortName(p.project)}`);
           }),
       });
       if (progress && shown) progress('');

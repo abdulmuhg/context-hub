@@ -71,8 +71,16 @@ export interface ProjectDigestEntry {
 }
 
 /** The main sessions of a project with who wrote each summary. */
+/**
+ * A tracked project the hub does not have (nothing uploaded yet, or emptied when its sessions
+ * moved to another project) has no summaries: an empty list, not an error that stops the sync.
+ */
 export async function listProjectDigests(remote: Remote, key: string): Promise<ProjectDigestEntry[]> {
-  return ((await (await send(remote, 'GET', `/api/projects/${encodeURIComponent(key)}/digests`)).json()) as { sessions: ProjectDigestEntry[] }).sessions;
+  const path = `/api/projects/${encodeURIComponent(key)}/digests`;
+  const res = await request(remote, 'GET', path);
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error(`GET ${path}: server answered ${res.status}`);
+  return ((await res.json()) as { sessions: ProjectDigestEntry[] }).sessions;
 }
 
 export async function deleteRemote(

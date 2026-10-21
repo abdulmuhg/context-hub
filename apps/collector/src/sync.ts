@@ -46,7 +46,7 @@ export interface SyncOptions {
   /** Lifts the cap on summaries written in this run. */
   all?: boolean;
   /** Called before each session or document that has to be read and possibly uploaded. */
-  onProgress?: (p: { done: number; total: number; project: string }) => void;
+  onProgress?: (p: SyncProgress) => void;
 }
 
 export interface SyncReport {
@@ -216,6 +216,14 @@ export function buildLlm(cfg: Config): Llm | null {
   return new ClaudeCodeLlm({ model: cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL, effort: cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT, cmd });
 }
 
+/** One step of a sync, for a progress line: reading sessions, summarizing them, uploading without a summary, building pages. */
+export interface SyncProgress {
+  step: 'read' | 'summarize' | 'upload' | 'page';
+  done: number;
+  total: number;
+  project: string;
+}
+
 export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   const s = scan(opts);
   const report: SyncReport = {
@@ -274,7 +282,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
       report.unchanged++;
       continue;
     }
-    opts.onProgress?.({ done: ++done, total, project: projectKey });
+    opts.onProgress?.({ step: 'read', done: ++done, total, project: projectKey });
 
     let raw: RawSession;
     try {
@@ -394,6 +402,11 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   const mains = fresh.filter(isMain).sort((a, b) => (b.session.last_activity_at ?? '').localeCompare(a.session.last_activity_at ?? ''));
   const subsOf = (w: Work): Work[] => fresh.filter((x) => x.item.parentKey === w.item.sessionKey);
   const mainKeys = new Set(mains.map((w) => w.item.sessionKey));
+  // For the progress line: the summaries this run means to write (empty sessions need no model call), within the cap.
+  const toSummarize = llm === null ? 0 : mains.filter((w) => w.session.messages.length > 0).length;
+  const summaryTotal = budget.left === null ? toSummarize : Math.min(toSummarize, budget.left);
+  let summaryDone = 0;
+  let uploadDone = 0;
 
   for (const w of mains) {
     if (stopped) break;
@@ -420,13 +433,17 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
         continue;
       }
       // The hub writes this one with its own key.
+      opts.onProgress?.({ step: 'upload', done: ++uploadDone, total: mains.length, project: w.ref.project });
     } else {
       if (!quiet && !budgetOpen(budget)) {
         if (budget.stopped === null) capHit = true;
         waiting++;
         continue;
       }
-      if (!quiet) spend(budget);
+      if (!quiet) {
+        spend(budget);
+        opts.onProgress?.({ step: 'summarize', done: ++summaryDone, total: summaryTotal, project: w.ref.project });
+      }
       try {
         digest = await summarize(llm, w.session);
       } catch (e) {
@@ -473,7 +490,11 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
       needed = [];
     }
     report.pages.left.push(...needed.filter((key) => deferred.has(key)));
-    const pages = await updatePages(remote, llm, needed.filter((key) => !deferred.has(key)), budget, { now: now().toISOString(), maxChars: MAX_CHARS });
+    const pages = await updatePages(remote, llm, needed.filter((key) => !deferred.has(key)), budget, {
+      now: now().toISOString(),
+      maxChars: MAX_CHARS,
+      onPage: (done, total, key) => opts.onProgress?.({ step: 'page', done, total, project: key }),
+    });
     report.pages.updated.push(...pages.updated);
     report.pages.left.push(...pages.left);
   }
