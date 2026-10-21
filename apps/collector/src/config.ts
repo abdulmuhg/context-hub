@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { canonicalKey, type Level, type PersonalEntry } from '@context-hub/core';
+import { canonicalKey, type Effort, type Level, type PersonalEntry } from '@context-hub/core';
 
 export interface DocFolder {
   /** The project key the documents belong to. */
@@ -30,7 +30,14 @@ export interface Config {
   personal: { card: Level; list: Level };
   /** Folders of Markdown notes uploaded with their project. */
   docs: DocFolder[];
+  /** How this computer writes summaries with Claude Code. Not part of the settings fingerprint: changing it re-uploads nothing. */
+  summaries?: { model?: string; effort?: Effort };
 }
+
+export const DEFAULT_SUMMARY_MODEL = 'claude-sonnet-5-5';
+export const DEFAULT_SUMMARY_EFFORT: Effort = 'low';
+/** The most summaries one sync writes, unless it is run with --all. */
+export const SUMMARY_CAP = 20;
 
 export interface StateEntry {
   size: number;

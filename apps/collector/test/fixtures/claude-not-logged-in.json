@@ -1,0 +1,8 @@
+{
+  "_note": "Hand-written guess.",
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": 401,
+  "result": "Not logged in · Please run /login"
+}
