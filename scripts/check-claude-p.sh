@@ -4,7 +4,7 @@
 #
 #   bash scripts/check-claude-p.sh
 #
-# Each step is one tiny call on your Claude plan (8 calls in all). The first step
+# Each step is one tiny call on your Claude plan (9 calls in all). The first step
 # that hangs or fails is the one to look at. Nothing is uploaded anywhere.
 
 set -u
@@ -70,13 +70,15 @@ step() {
 
 failed=0
 echo "== Steps (each adds to the one before)"
-step "1 plain, prompt as argument" "" -p "Say hi in two words." --output-format json || failed=1
-step "2 + model and effort" "" -p "Say hi in two words." --output-format json --model claude-sonnet-5-5 --effort low || failed=1
-step "3 + prompt on stdin (as hub does)" "$PROMPT" -p --output-format json --model claude-sonnet-5-5 --effort low || failed=1
-step "4 + no tools, no saved session" "$PROMPT" -p --output-format json --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence || failed=1
-step "5 + safe mode, no MCP servers" "$PROMPT" -p --output-format json --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence --safe-mode --strict-mcp-config || failed=1
-step "6 + system prompt" "$PROMPT" -p --output-format json --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence --safe-mode --strict-mcp-config --system-prompt "State the goal of this transcript." || failed=1
-step "7 + JSON schema (the full hub call)" "$PROMPT" -p --output-format json --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence --safe-mode --strict-mcp-config --system-prompt "State the goal of this transcript." --json-schema "$SCHEMA" || failed=1
+# Step 1 only shows how your own settings behave (a proxy in their env block, for example); hub does not use them.
+step "1 plain, with your own settings (not how hub runs it)" "" -p "Say hi in two words." --output-format json || echo "  (step 1 does not count: hub skips your user settings)"
+step "2 + skip your user settings (as hub does)" "" -p "Say hi in two words." --output-format json --setting-sources project || failed=1
+step "2b + model and effort" "" -p "Say hi in two words." --output-format json --setting-sources project --model claude-sonnet-5-5 --effort low || failed=1
+step "3 + prompt on stdin (as hub does)" "$PROMPT" -p --output-format json --setting-sources project --model claude-sonnet-5-5 --effort low || failed=1
+step "4 + no tools, no saved session" "$PROMPT" -p --output-format json --setting-sources project --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence || failed=1
+step "5 + safe mode, no MCP servers" "$PROMPT" -p --output-format json --setting-sources project --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence --safe-mode --strict-mcp-config || failed=1
+step "6 + system prompt" "$PROMPT" -p --output-format json --setting-sources project --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence --safe-mode --strict-mcp-config --system-prompt "State the goal of this transcript." || failed=1
+step "7 + JSON schema (the full hub call)" "$PROMPT" -p --output-format json --setting-sources project --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence --safe-mode --strict-mcp-config --system-prompt "State the goal of this transcript." --json-schema "$SCHEMA" || failed=1
 
 echo
 echo "== Step 8: the collector's own code (ClaudeCodeLlm, real digest prompt and schema)"

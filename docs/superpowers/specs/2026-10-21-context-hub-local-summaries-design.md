@@ -76,6 +76,7 @@ not part of this design.
           --output-format json --json-schema <schema>
           --system-prompt <the hub's prompt> --tools ""
           --no-session-persistence --safe-mode --strict-mcp-config
+          --setting-sources project
    ```
 
    with the transcript sent on **stdin** (it can be far longer than a command
@@ -89,6 +90,13 @@ not part of this design.
      and never reads the Claude sign-in, which defeats the purpose.
    - `--safe-mode`'s help text says "Auth, model selection, built-in tools and
      plugins, and permissions work normally", so it keeps the plan sign-in.
+   - `--setting-sources project` (owner's decision, added after review): the
+     user's `~/.claude/settings.json` can carry an `env` block that sends
+     Claude Code to a proxy or another account (`ANTHROPIC_BASE_URL`,
+     `ANTHROPIC_AUTH_TOKEN`), and `--safe-mode` still applies it. On the
+     owner's machine it pointed at a local proxy that was not running, so
+     every call hung in retries. Skipping user settings leaves the stored plan
+     login; the run's folder is empty, so there are no project settings.
    - A spike run from inside the Claude desktop app could not reach the API
      (the app's sandbox only allows its own proxy), so a real run has not yet
      been confirmed. **The plan's first task is that check**, run from an

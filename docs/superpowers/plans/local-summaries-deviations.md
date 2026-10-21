@@ -29,3 +29,14 @@
 - **Real `claude -p`** (Task 1 was skipped at the owner's request): that it runs from a fixed empty folder with these flags on the owner's plan, that `--safe-mode`/`--json-schema` behave as assumed, what a real usage-limit or sign-out response looks like, and that `claude auth status --json` is parsed correctly by the doctor. Tests use a fake runner and hand-written fixtures.
 - **Windows argument quoting** with a real `claude.exe` (Review Focus 1). The test checks the arguments reach the runner as single entries; a real spawn was not exercised.
 - **The real hub deployment** and the migration on a production database (the migration is tested on fresh and rewound test databases).
+
+## Changes after the branch review (2026-10-21)
+
+24. **`jsonSchemaOf` leaves out `$schema`.** A real `claude -p` run rejected the schema `z.toJSONSchema` produces (`no schema with key or ref "https://json-schema.org/draft/2020-12/schema"`), so every summary call failed. The fake runner never validated it.
+25. **A timeout stops the run's model work** (`ClaudeTimeoutError`), like a usage limit. Before, each of up to 20 sessions waited the full 5 minutes.
+26. **The server fallback merges every digest the page has not seen** (`saved_seq > digests_through`), not only the one it just wrote; saving the page marks them all as covered.
+27. **The server strips secrets again from uploaded summaries**, including refusal and failure reasons, as it already did for messages.
+28. **`cleanEnv` keeps `CLAUDE_CONFIG_DIR`**, so a custom Claude Code config folder still finds its sign-in.
+29. **An expired login counts as signed out.** The real response is `"Failed to authenticate: OAuth session expired…"` with `api_error_status: null`, which the old pattern missed; it would have counted as a failed summary and, after 3 syncs, uploaded sessions marked `failed`. Both sign-in fixtures are now trimmed from real runs.
+30. **Summary calls pass `--setting-sources project`** (owner's decision). The owner's `~/.claude/settings.json` `env` block pointed Claude Code at a local proxy (`http://127.0.0.1:20128/v1`) that was not running, so every call retried for minutes; `--safe-mode` does not stop that block. Skipping user settings uses the stored plan login. Hint texts now say `Run: claude auth login`.
+31. **`scripts/check-claude-p.sh`** (with `scripts/check-claude-llm.mts`) checks `claude -p` step by step on a computer, ending with the collector's own `ClaudeCodeLlm`.
