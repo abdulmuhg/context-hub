@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newProjects, run, type Io } from '../src/cli.js';
 import { SLASH_COMMANDS } from '../src/commands.js';
-import { loadConfig, loadPersonal, loadToken, saveConfig } from '../src/config.js';
+import { UsageLimitError } from '../src/claude-llm.js';
+import { loadConfig, loadPersonal, loadToken, saveConfig, saveState, settingsFingerprint } from '../src/config.js';
+import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
 import { tempDir, writeJsonl } from './helpers.js';
 
 const S1 = '11111111-1111-4111-8111-111111111111';
@@ -30,6 +32,7 @@ beforeEach(() => {
     ask: async () => answers.shift() ?? '',
     exists: () => true,
     git: (_cwd, args) => (args[0] === 'remote' ? 'git@github.com:me/alpha.git' : '/work/alpha'),
+    llm: new FakeLlm(),
     fetchImpl: async (input, init) => {
       requests.push({ method: init?.method ?? 'GET', url: String(input) });
       return new Response('{"sessions":1}', { status: 200 });
@@ -229,7 +232,9 @@ describe('hub sync', () => {
     expect(await run(['sync'], io)).toBe(0);
     expect(out.join('\n')).toMatch(/Uploaded 1 session/);
     expect(requests).toEqual([
+      { method: 'GET', url: 'https://hub.example.com/api/status' },
       { method: 'PUT', url: `https://hub.example.com/api/sessions/claude-code/${S1}` },
+      { method: 'GET', url: 'https://hub.example.com/api/status' },
       { method: 'POST', url: 'https://hub.example.com/api/sync-runs' },
     ]);
   });
@@ -575,7 +580,10 @@ describe('hub docs', () => {
 
 describe('hub doctor', () => {
   const STATUS = JSON.stringify({ projects: 6, sessions: 253, digests: { pending: 0, ok: 81, failed: 0, refused: 0 }, last_sync: [] });
-  const connected = () => ({ found: true, output: 'claude.ai context-hub: https://hub.example.com/mcp - ✓ Connected\n' });
+  const connected = (args: string[] = []) =>
+    args[0] === 'auth'
+      ? { found: true, output: JSON.stringify({ loggedIn: true }) }
+      : { found: true, output: 'claude.ai context-hub: https://hub.example.com/mcp - ✓ Connected\n' };
   const login = () => run(['init', '--url', 'https://hub.example.com', '--token', 'fake-token-QX7'], io);
   const answersWith = (status: number, body = STATUS) => {
     io.fetchImpl = async () => new Response(body, { status });
@@ -653,5 +661,261 @@ describe('hub doctor', () => {
     out = [];
     await run(['doctor'], io);
     expect(out.join('\n')).toMatch(/! Claude Code\s+no context-hub connection\. Add the connector to this Claude account/);
+  });
+});
+
+describe('hub sync: summaries', () => {
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const login = () => run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+  const addSessions = (n: number) => {
+    for (let i = 1; i <= n; i++) {
+      writeJsonl(join(io.home, '.claude', 'projects', 'p', `${uuid(i)}.jsonl`), [
+        { type: 'user', sessionId: uuid(i), cwd: '/work/alpha', timestamp: `2026-10-${String(i).padStart(2, '0')}T10:00:00.000Z`, message: { role: 'user', content: `q${i}` } },
+      ]);
+    }
+  };
+
+  beforeEach(async () => {
+    await login();
+    await run(['track', KEY], io);
+    out = [];
+  });
+
+  it('prints how many summaries were written', async () => {
+    expect(await run(['sync'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/1 summary written\./);
+  });
+
+  it('sync --all passes all to runSync', async () => {
+    addSessions(22);
+    expect(await run(['sync'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/Uploaded 20 sessions/);
+    expect(out.join('\n')).toMatch(/3 sessions waiting: cap of 20 reached\. Run hub sync --all to catch up/);
+    out = [];
+    expect(await run(['sync', '--all'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/Uploaded 3 sessions/);
+    expect(out.join('\n')).not.toMatch(/waiting/);
+  });
+
+  it('prints the waiting reason', async () => {
+    const fail = new FakeLlm();
+    fail.failWith = new UsageLimitError('2026-10-21T14:00:00.000Z');
+    io.llm = fail;
+    expect(await run(['sync'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/1 session waiting: Claude usage limit reached \(resets \d\d:\d\d\)/);
+    expect(out.join('\n')).toMatch(/Uploaded 0 sessions/);
+  });
+
+  it('says to install Claude Code when it is missing', async () => {
+    io.llm = null;
+    await run(['sync'], io);
+    expect(out.join('\n')).toMatch(/1 session waiting: Claude Code is not installed/);
+  });
+
+  it('says how many pages are left for the next sync', async () => {
+    io.fetchImpl = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/status')) return new Response(JSON.stringify({ pages_needed: [KEY], summaries_owed: 0 }), { status: 200 });
+      if (url.endsWith('/page-inputs')) return new Response(JSON.stringify({ page: null, digests: [{ session_id: 'x', title: 't', date: null, text: 'g', saved_seq: 1 }], through: 1 }), { status: 200 });
+      if (init?.method === 'PUT' && url.endsWith('/page')) return new Response('{}', { status: 409 });
+      return new Response('{}', { status: 200 });
+    };
+    await run(['sync'], io);
+    expect(out.join('\n')).toMatch(/1 page left for the next sync/);
+  });
+
+  it('a dry run says what it would summarize and calls no model', async () => {
+    const llm = new FakeLlm();
+    io.llm = llm;
+    await run(['sync', '--dry-run'], io);
+    expect(out.join('\n')).toMatch(/Would summarize 1 session/);
+    expect(llm.calls).toEqual([]);
+  });
+});
+
+describe('hub status', () => {
+  it('shows what waits on this computer and what the hub still needs', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    saveState(io.hubDir, { fingerprint: 'x', files: {}, last_waiting: { count: 3, reason: 'Claude usage limit reached (resets 14:00)', at: '2026-10-21T10:00:00.000Z' } });
+    io.fetchImpl = async () => new Response(JSON.stringify({ projects: 2, sessions: 9, pages_needed: ['github.com/me/alpha'], summaries_owed: 4 }), { status: 200 });
+    out = [];
+    expect(await run(['status'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/3 sessions waiting on this computer: Claude usage limit reached \(resets 14:00\)/);
+    expect(text).toMatch(/1 project page waiting for an update: github\.com\/me\/alpha/);
+    expect(text).toMatch(/4 summaries owed after re-cleaning/);
+  });
+
+  it('stays quiet about summaries when nothing waits', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    io.fetchImpl = async () => new Response(JSON.stringify({ projects: 2, sessions: 9, pages_needed: [], summaries_owed: 0 }), { status: 200 });
+    out = [];
+    await run(['status'], io);
+    expect(out.join('\n')).not.toMatch(/waiting on this computer|waiting for an update|owed after re-cleaning/);
+  });
+});
+
+describe('hub summaries', () => {
+  it('shows the model and effort in use', async () => {
+    expect(await run(['summaries'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/model: claude-sonnet-5-5/);
+    expect(out.join('\n')).toMatch(/effort: low/);
+  });
+
+  it('hub summaries model saves the model without changing the settings fingerprint', async () => {
+    const before = settingsFingerprint(loadConfig(io.hubDir), loadPersonal(io.hubDir));
+    expect(await run(['summaries', 'model', 'claude-opus-5-5'], io)).toBe(0);
+    expect(loadConfig(io.hubDir).summaries?.model).toBe('claude-opus-5-5');
+    expect(settingsFingerprint(loadConfig(io.hubDir), loadPersonal(io.hubDir))).toBe(before);
+    out = [];
+    await run(['summaries'], io);
+    expect(out.join('\n')).toMatch(/model: claude-opus-5-5/);
+  });
+
+  it('hub summaries effort saves a valid level and refuses another', async () => {
+    expect(await run(['summaries', 'effort', 'high'], io)).toBe(0);
+    expect(loadConfig(io.hubDir).summaries?.effort).toBe('high');
+    expect(await run(['summaries', 'effort', 'extreme'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/low, medium, high, xhigh, max/);
+    expect(loadConfig(io.hubDir).summaries?.effort).toBe('high');
+  });
+
+  it('is in the help text', async () => {
+    await run([], io);
+    expect(err.join('\n')).toMatch(/summaries \[model <id> \| effort <level>\]/);
+    expect(err.join('\n')).toMatch(/sync \[--project P\] \[--session S\] \[--dry-run\] \[--all\]/);
+  });
+});
+
+describe('hub doctor: summaries', () => {
+  const login = () => run(['init', '--url', 'https://hub.example.com', '--token', 'fake-token-QX7'], io);
+  const statusWith = (extra: Record<string, unknown> = {}) => {
+    io.fetchImpl = async () => new Response(JSON.stringify({ projects: 1, sessions: 1, ...extra }), { status: 200 });
+  };
+  const signedIn = (args: string[]) => (args[0] === 'auth' ? { found: true, output: JSON.stringify({ loggedIn: true, authMethod: 'oauth_token' }) } : { found: true, output: '' });
+
+  it('doctor reports Claude Code signed in', async () => {
+    await login();
+    statusWith();
+    io.runClaude = signedIn;
+    out = [];
+    await run(['doctor'], io);
+    expect(out.join('\n')).toMatch(/✓ Summaries\s+Claude Code signed in, model claude-sonnet-5-5, effort low/);
+  });
+
+  it('asks Claude Code for its sign-in with the auth status command', async () => {
+    await login();
+    statusWith();
+    const asked: string[][] = [];
+    io.runClaude = (args) => {
+      asked.push(args);
+      return signedIn(args);
+    };
+    await run(['doctor'], io);
+    expect(asked).toContainEqual(['auth', 'status', '--json']);
+  });
+
+  it('warns when Claude Code is not signed in', async () => {
+    await login();
+    statusWith();
+    io.runClaude = (args) => (args[0] === 'auth' ? { found: true, output: JSON.stringify({ loggedIn: false }) } : { found: true, output: '' });
+    out = [];
+    expect(await run(['doctor'], io)).toBe(1);
+    expect(out.join('\n')).toMatch(/✗ Summaries\s+Claude Code is not signed in, or its login expired\. Run: claude auth login/);
+  });
+
+  it('warns, without failing, when Claude Code is missing but the hub has a key', async () => {
+    await login();
+    statusWith({ server_summaries: true });
+    io.runClaude = () => ({ found: false, output: '' });
+    out = [];
+    expect(await run(['doctor'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/! Summaries\s+Claude Code is not installed; the hub will summarize this computer's sessions/);
+  });
+
+  it('fails when Claude Code is missing and the hub has no key', async () => {
+    await login();
+    statusWith({ server_summaries: false });
+    io.runClaude = () => ({ found: false, output: '' });
+    out = [];
+    expect(await run(['doctor'], io)).toBe(1);
+    expect(out.join('\n')).toMatch(/✗ Summaries\s+Claude Code is not installed, so sessions wait here\. Install it, then run: claude/);
+  });
+
+  it('shows the sessions waiting from the last sync', async () => {
+    await login();
+    statusWith();
+    io.runClaude = signedIn;
+    saveState(io.hubDir, { fingerprint: 'x', files: {}, last_waiting: { count: 2, reason: 'cap of 20 reached. Run hub sync --all to catch up', at: '2026-10-21T10:00:00.000Z' } });
+    out = [];
+    await run(['doctor'], io);
+    expect(out.join('\n')).toMatch(/! Waiting summaries\s+2 sessions: cap of 20 reached/);
+  });
+});
+
+describe('hub resummarize', () => {
+  const login = () => run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+  const owed = {
+    source: 'claude-code',
+    id: 'old1',
+    content_hash: 'a'.repeat(64),
+    last_activity_at: '2026-10-01T10:00:00.000Z',
+    status: 'ok',
+    model: 'claude-haiku-5-5',
+    written_by: null,
+    summary_to_follow: false,
+  };
+
+  beforeEach(async () => {
+    await login();
+    await run(['track', KEY], io);
+    out = [];
+    io.fetchImpl = async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      requests.push({ method, url });
+      if (url.endsWith('/digests')) return new Response(JSON.stringify({ sessions: [owed] }), { status: 200 });
+      if (method === 'GET' && url.includes('/api/sessions/')) {
+        return new Response(
+          JSON.stringify({ session: { source: 'claude-code', source_session_id: 'old1', project_key: KEY, parent: null, title: 'Old', content_hash: 'a'.repeat(64), messages: [{ seq: 0, role: 'user', kind: 'text', ts: null, text: 'hi' }] } }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith('/page-inputs')) return new Response(JSON.stringify({ page: null, digests: [{ session_id: 'x', title: 't', date: null, text: 'g', saved_seq: 1 }], through: 1 }), { status: 200 });
+      if (method === 'PUT' && url.endsWith('/digest')) return new Response(null, { status: 204 });
+      return new Response('{"version":1}', { status: 200 });
+    };
+  });
+
+  it('prints how many summaries it rewrote and rebuilt pages', async () => {
+    expect(await run(['resummarize'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/Rewrote 1 summary\./);
+    expect(text).toMatch(/Rebuilt 1 project page\./);
+    expect(requests.some((r) => r.method === 'PUT' && r.url.endsWith('/api/sessions/claude-code/old1/digest'))).toBe(true);
+  });
+
+  it('takes a project, --all and --model-not', async () => {
+    expect(await run(['resummarize', 'alpha', '--all', '--model-not', 'claude-sonnet-5-5'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/Rewrote 1 summary\./);
+  });
+
+  it('fails with the install message when Claude Code is missing', async () => {
+    io.llm = null;
+    expect(await run(['resummarize'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/Claude Code is not installed, so sessions wait here/);
+  });
+
+  it('prints the waiting reason', async () => {
+    const limited = new FakeLlm();
+    limited.failWith = new UsageLimitError(null);
+    io.llm = limited;
+    expect(await run(['resummarize'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/1 session waiting: Claude usage limit reached/);
+  });
+
+  it('is in the help text', async () => {
+    await run([], io);
+    expect(err.join('\n')).toMatch(/resummarize \[<project>\] \[--all\] \[--model-not ID\]/);
   });
 });

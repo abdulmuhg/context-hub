@@ -7,6 +7,7 @@ import { createGrant, issueTokens, listGrants } from '../src/oauth/store.js';
 import { latestSyncRun, listActivity } from '../src/activity.js';
 import { createToken, revokeToken } from '../src/tokens.js';
 import { contentHash } from '@context-hub/core';
+import { getProjectState, nextDueDigest, saveProjectState } from '../src/digest-store.js';
 import { gz, makeSession, startServer, text } from './helpers.js';
 
 const NOW = new Date('2026-10-11T00:00:00.000Z');
@@ -536,5 +537,207 @@ describe('POST /api/sync-runs', () => {
     const res = await report(ingest, good);
     expect(res.status).toBe(204);
     expect(latestSyncRun(db)).toMatchObject({ finishedAt: good.finished_at, uploaded: 2, unchanged: 5, errors: 0 });
+  });
+});
+
+describe('summaries written on the computer', () => {
+  const BODY = { goal: 'fix login', done: [{ text: 'patched the cookie check', seq: 1 }], decisions: [{ what: 'Keep sessions', why: 'users stay signed in', seq: 0 }], open_items: [], key_refs: ['src/auth.ts'] };
+  const sessionPath = (s = makeSession()) => `/api/sessions/${s.source}/${encodeURIComponent(s.source_session_id)}`;
+  const putWith = (session: ReturnType<typeof makeSession>, digest: unknown, token = ingest) =>
+    call('PUT', sessionPath(session), {
+      token,
+      body: gz({ ...session, digest }),
+      headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+    });
+  const row = (id = 's1') =>
+    db
+      .prepare(
+        `SELECT d.status, d.model, d.written_by, d.text, d.summary_to_follow FROM digests d JOIN sessions s ON s.id = d.session_id WHERE s.source_session_id = ?`,
+      )
+      .get(id) as { status: string; model: string | null; written_by: string | null; text: string | null; summary_to_follow: number };
+
+  it('stores a session and its digest in one upload', async () => {
+    const res = await putWith(makeSession(), { body: BODY, model: 'claude-sonnet-5-5' });
+    expect(res.status).toBe(200);
+    expect(row()).toMatchObject({ status: 'ok', model: 'claude-sonnet-5-5', written_by: 'collector' });
+    expect(row().text).toContain('Goal: fix login');
+    expect(nextDueDigest(db, NOW.toISOString())).toBeNull();
+  });
+
+  it('a main session without a digest becomes pending (older collectors)', async () => {
+    await put();
+    expect(row()).toMatchObject({ status: 'pending', summary_to_follow: 0 });
+  });
+
+  it('summary_to_follow removes the old summary and marks the page dirty', async () => {
+    const first = makeSession();
+    await putWith(first, { body: { ...BODY, goal: 'zebracrossing goal' }, model: 'claude-sonnet-5-5' });
+    const project = (db.prepare('SELECT id FROM projects').get() as { id: number }).id;
+    saveProjectState(db, project, { summary: 's', body: 'b', model: 'm' }, NOW.toISOString(), true);
+    const changed = makeSession({ messages: [text(0, 'user', 'the login page throws a redirect loop'), text(1, 'assistant', 'Found it, and changed.')] });
+    expect((await putWith(changed, { summary_to_follow: true })).status).toBe(200);
+    expect(row()).toMatchObject({ status: 'pending', text: null, summary_to_follow: 1 });
+    expect(db.prepare("SELECT 1 FROM search_index WHERE search_index MATCH 'zebracrossing' AND kind = 'digest'").all()).toEqual([]);
+    expect(getProjectState(db, project)!.dirty).toBe(true);
+    expect(nextDueDigest(db, NOW.toISOString())).toBeNull();
+  });
+
+  it('strips a secret from a digest that came with an upload, and from one sent alone', async () => {
+    const secret = 'gh' + 'p_' + 'b'.repeat(36);
+    await putWith(makeSession(), {
+      body: { ...BODY, goal: `use ${secret}`, decisions: [{ what: 'Keep it', why: `it is ${secret}`, seq: 0 }], key_refs: [secret] },
+      model: 'claude-sonnet-5-5',
+    });
+    const s2 = makeSession({ source_session_id: 's2' });
+    await put(s2);
+    await call('PUT', `${sessionPath(s2)}/digest`, { token: ingest, body: JSON.stringify({ hash: s2.content_hash, digest: { body: { ...BODY, goal: secret }, model: 'm' } }) });
+    await putWith(makeSession({ source_session_id: 's3' }), { refused: `because ${secret}`, model: 'm' });
+    const dump = JSON.stringify([db.prepare('SELECT * FROM digests').all(), db.prepare('SELECT * FROM search_index').all()]);
+    expect(dump).not.toContain(secret);
+    expect(dump).toContain('[REDACTED:github]');
+    expect(logs.join('\n')).toMatch(/server stripped \d+ secret\(s\) from its summary/);
+  });
+
+  it('rejects a digest body that does not match the schema with 400', async () => {
+    const res = await putWith(makeSession(), { body: { goal: 'x' }, model: 'm' });
+    expect(res.status).toBe(400);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 });
+  });
+
+  it('keeps a refused or failed marker with the upload', async () => {
+    await putWith(makeSession(), { refused: 'policy', model: 'claude-sonnet-5-5' });
+    expect(row()).toMatchObject({ status: 'refused' });
+    await putWith(makeSession({ source_session_id: 's2' }), { failed: 'timed out 3 times' });
+    expect(row('s2')).toMatchObject({ status: 'failed' });
+  });
+
+  it('PUT digest saves a digest alone, and answers 409 when the hash moved', async () => {
+    const s = makeSession();
+    await put(s);
+    const ok = await call('PUT', `${sessionPath(s)}/digest`, { token: ingest, body: JSON.stringify({ hash: s.content_hash, digest: { body: BODY, model: 'm' } }) });
+    expect(ok.status).toBe(204);
+    expect(row()).toMatchObject({ status: 'ok', written_by: 'collector' });
+    const moved = await call('PUT', `${sessionPath(s)}/digest`, { token: ingest, body: JSON.stringify({ hash: 'f'.repeat(64), digest: { body: BODY, model: 'm' } }) });
+    expect(moved.status).toBe(409);
+    expect(await moved.json()).toEqual({ error: 'The session changed since this summary was written' });
+  });
+
+  it('GET session returns the stored messages', async () => {
+    const s = makeSession();
+    await put(s);
+    const res = await call('GET', sessionPath(s), { token: ingest });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { session: unknown }).session).toEqual(s);
+    expect((await call('GET', '/api/sessions/claude-code/nope', { token: ingest })).status).toBe(404);
+  });
+
+  it('GET project digests lists writer and model', async () => {
+    await putWith(makeSession(), { body: BODY, model: 'claude-sonnet-5-5' });
+    await put(makeSession({ source_session_id: 's2' }));
+    await put(makeSession({ source_session_id: 's2/agent-1', parent: 's2' }));
+    const res = await call('GET', '/api/projects/github.com%2Fme%2Falpha/digests', { token: ingest });
+    expect(res.status).toBe(200);
+    const { sessions } = (await res.json()) as { sessions: { source: string; id: string; status: string; model: string | null; written_by: string | null; summary_to_follow: boolean }[] };
+    expect(sessions.map((x) => x.id).sort()).toEqual(['s1', 's2']);
+    expect(sessions.find((x) => x.id === 's1')).toMatchObject({ source: 'claude-code', status: 'ok', model: 'claude-sonnet-5-5', written_by: 'collector', summary_to_follow: false });
+    expect(sessions.find((x) => x.id === 's2')).toMatchObject({ status: 'pending', written_by: null });
+  });
+
+  it('status reports server_summaries, pages_needed and summaries_owed', async () => {
+    await putWith(makeSession(), { body: BODY, model: 'm' });
+    await putWith(makeSession({ source_session_id: 's2' }), { summary_to_follow: true });
+    const body = await (await call('GET', '/api/status', { token: ingest })).json();
+    expect(body).toMatchObject({ server_summaries: false, pages_needed: ['github.com/me/alpha'], summaries_owed: 1 });
+  });
+
+  it('a read token cannot use the new routes', async () => {
+    const s = makeSession();
+    await put(s);
+    expect((await call('GET', sessionPath(s), { token: read })).status).toBe(403);
+    expect((await call('PUT', `${sessionPath(s)}/digest`, { token: read, body: '{}' })).status).toBe(403);
+    expect((await call('GET', '/api/projects/github.com%2Fme%2Falpha/digests', { token: read })).status).toBe(403);
+  });
+});
+
+describe('state pages written on the computer', () => {
+  const BODY = { goal: 'fix login', done: [], decisions: [], open_items: [], key_refs: [] };
+  const KEY = 'github.com%2Fme%2Falpha';
+  const withDigest = (id: string, activity: string) =>
+    call('PUT', `/api/sessions/claude-code/${id}`, {
+      token: ingest,
+      body: gz({ ...makeSession({ source_session_id: id, last_activity_at: activity }), digest: { body: { ...BODY, goal: `goal of ${id}` }, model: 'claude-sonnet-5-5' } }),
+      headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+    });
+  const inputs = async () => (await (await call('GET', `/api/projects/${KEY}/page-inputs`, { token: ingest })).json()) as {
+    page: { version: number; digests_through: number; dirty: boolean } | null;
+    digests: { session_id: string; title: string; date: string | null; text: string; saved_seq: number }[];
+    through: number;
+  };
+  const savePage = (over: Record<string, unknown> = {}) =>
+    call('PUT', `/api/projects/${KEY}/page`, {
+      token: ingest,
+      body: JSON.stringify({ summary: 'S', body: 'B', model: 'claude-sonnet-5-5', base_version: null, full_rebuild: true, through: 2, ...over }),
+    });
+  const needed = async () => ((await (await call('GET', '/api/status', { token: ingest })).json()) as { pages_needed: string[] }).pages_needed;
+
+  it('page-inputs returns all ok digests oldest first with their saved_seq', async () => {
+    await withDigest('new', '2026-10-05T00:00:00.000Z');
+    await withDigest('old', '2026-10-01T00:00:00.000Z');
+    await put(makeSession({ source_session_id: 'pending-one' }));
+    const r = await inputs();
+    expect(r.page).toBeNull();
+    expect(r.digests.map((d) => [d.session_id, d.saved_seq])).toEqual([
+      ['claude-code:old', 2],
+      ['claude-code:new', 1],
+    ]);
+    expect(r.digests[0]).toMatchObject({ title: 'Fix the login bug', date: '2026-10-01T00:00:00.000Z' });
+    expect(r.digests[0]!.text).toContain('Goal: goal of old');
+    expect(r.through).toBe(2);
+    expect((await call('GET', '/api/projects/nope/page-inputs', { token: ingest })).status).toBe(404);
+  });
+
+  it('saving with the current version succeeds and clears pages_needed for that project', async () => {
+    await withDigest('a', '2026-10-01T00:00:00.000Z');
+    await withDigest('b', '2026-10-02T00:00:00.000Z');
+    expect(await needed()).toEqual(['github.com/me/alpha']);
+    const res = await savePage();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ version: 1 });
+    expect(await needed()).toEqual([]);
+    expect((await inputs()).page).toMatchObject({ version: 1, digests_through: 2, dirty: false });
+  });
+
+  it('saving with an old version answers 409', async () => {
+    await withDigest('a', '2026-10-01T00:00:00.000Z');
+    await savePage({ through: 1 });
+    const stale = await savePage({ base_version: null, through: 1 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ error: 'The page changed; fetch it again' });
+    expect((await savePage({ base_version: 1, through: 1, full_rebuild: false })).status).toBe(200);
+  });
+
+  it('a digest saved after the inputs were read keeps the project in pages_needed', async () => {
+    await withDigest('a', '2026-10-01T00:00:00.000Z');
+    const read = await inputs();
+    await withDigest('b', '2026-10-02T00:00:00.000Z');
+    expect((await savePage({ through: read.through })).status).toBe(200);
+    expect(await needed()).toEqual(['github.com/me/alpha']);
+  });
+
+  it('rejects a malformed page with 400, and a read token with 403', async () => {
+    await withDigest('a', '2026-10-01T00:00:00.000Z');
+    expect((await savePage({ summary: 5 })).status).toBe(400);
+    expect((await savePage({ base_version: 'x' })).status).toBe(400);
+    expect((await call('GET', `/api/projects/${KEY}/page-inputs`, { token: read })).status).toBe(403);
+    expect((await call('PUT', `/api/projects/${KEY}/page`, { token: read, body: '{}' })).status).toBe(403);
+  });
+
+  it('deletes a page only when the project has no digests left', async () => {
+    await withDigest('a', '2026-10-01T00:00:00.000Z');
+    await savePage({ through: 1 });
+    expect((await call('DELETE', `/api/projects/${KEY}/page`, { token: ingest })).status).toBe(409);
+    db.prepare("UPDATE digests SET status = 'refused', text = NULL").run();
+    expect((await call('DELETE', `/api/projects/${KEY}/page`, { token: ingest })).status).toBe(204);
+    expect((await inputs()).page).toBeNull();
   });
 });

@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from '../src/auto.js';
+import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild, startLockHeartbeat, takeLock } from '../src/auto.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
+import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
 import { tempDir, writeJsonl, writeRaw } from './helpers.js';
 
 const CMD = hookCommand('/usr/bin/node', '/home/me/.local/hub/bin.js');
@@ -131,6 +132,7 @@ describe('runAutoChild', () => {
         return new Response('{}', { status: 200 });
       },
       now: () => T0,
+      llm: new FakeLlm(),
     };
   });
 
@@ -139,7 +141,7 @@ describe('runAutoChild', () => {
     expect(puts).toEqual([`https://hub.example.com/api/sessions/claude-code/${S1}`]);
     expect(loadConfig(hubDir).tracked).toEqual(['github.com/me/alpha']);
     expect(loadConfig(hubDir).declined).toEqual([]);
-    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8')).toBe(`${T0.toISOString()} ok 1 uploaded, 0 unchanged\n`);
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8')).toBe(`${T0.toISOString()} ok 1 uploaded, 0 unchanged, 1 summarized, 0 waiting\n`);
     expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
   });
 
@@ -159,7 +161,7 @@ describe('runAutoChild', () => {
     const lines = readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n');
     expect(lines).toHaveLength(200);
     expect(lines[0]).toBe('old 51');
-    expect(lines.at(-1)).toBe(`${T0.toISOString()} ok 1 uploaded, 0 unchanged`);
+    expect(lines.at(-1)).toBe(`${T0.toISOString()} ok 1 uploaded, 0 unchanged, 1 summarized, 0 waiting`);
     expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
   });
 
@@ -168,7 +170,7 @@ describe('runAutoChild', () => {
     await expect(runAutoChild(opts)).resolves.toBeUndefined();
     const lines = readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n');
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/^2026-10-21T10:00:00.000Z error 0 uploaded, 0 unchanged, 1 errors: .*401/);
+    expect(lines[0]).toMatch(/^2026-10-21T10:00:00.000Z error 0 uploaded, 0 unchanged, 0 summarized, 0 waiting, 1 errors: .*401/);
   });
 
   it('does not throw when the hub folder cannot be used', async () => {
@@ -224,7 +226,7 @@ describe('hub sync --auto', () => {
     io.err = (l) => out.push(l);
     expect(await run(['sync', '--auto-child'], io)).toBe(0);
     expect(out).toEqual([]);
-    expect(readFileSync(join(io.hubDir, 'auto.log'), 'utf8')).toMatch(/ error 0 uploaded, 0 unchanged, 1 errors: No server address/);
+    expect(readFileSync(join(io.hubDir, 'auto.log'), 'utf8')).toMatch(/ error 0 uploaded, 0 unchanged, 0 summarized, 0 waiting, 1 errors: No server address/);
   });
 
   it.skipIf(process.platform === 'win32')('returns in under a second against an unreachable server with a real spawn', async () => {
@@ -253,3 +255,43 @@ describe('hub sync --auto', () => {
   });
 });
 
+
+describe('the auto-sync lock while summaries are written', () => {
+  const lockPath = () => join(tempDir(), 'auto.lock');
+
+  it('a heartbeat keeps the lock fresh past 10 minutes', async () => {
+    const path = lockPath();
+    let clock = T0;
+    expect(takeLock(path, clock)).toBe(true);
+    const stop = startLockHeartbeat(path, () => clock, 5);
+    clock = new Date(T0.getTime() + 11 * 60 * 1000);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(takeLock(path, clock)).toBe(false);
+    stop();
+  });
+
+  it('without a heartbeat the lock is taken over after 10 minutes', () => {
+    const path = lockPath();
+    expect(takeLock(path, T0)).toBe(true);
+    expect(takeLock(path, new Date(T0.getTime() + 11 * 60 * 1000))).toBe(true);
+  });
+
+  it('the heartbeat never brings back a lock that was removed', async () => {
+    const path = lockPath();
+    takeLock(path, T0);
+    const stop = startLockHeartbeat(path, () => T0, 5);
+    unlinkSync(path);
+    await new Promise((r) => setTimeout(r, 40));
+    stop();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('the lock is removed after the run, and the heartbeat stops', async () => {
+    const hubDir = tempDir();
+    saveConfig(hubDir, { ...loadConfig(hubDir), server_url: 'https://hub.example.com', tracked: [] });
+    saveToken(hubDir, 'tok');
+    await runAutoChild({ home: tempDir(), hubDir, exists: () => true, now: () => T0, llm: new FakeLlm(), fetchImpl: async () => new Response('{}', { status: 200 }) });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+});

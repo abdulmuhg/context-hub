@@ -1,0 +1,9 @@
+{
+  "_note": "The result text is from a real claude -p 2.1.296 run on a Pro plan (2026-10-21). Its api_error_status was not captured, so it is null here: the text alone must be enough.",
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": null,
+  "terminal_reason": "api_error",
+  "result": "You've hit your session limit · resets 5:20pm (Asia/Jakarta)"
+}

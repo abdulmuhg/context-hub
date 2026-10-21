@@ -2,6 +2,9 @@ import { existsSync, renameSync, rmSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { LlmRefusal } from '@context-hub/core';
+import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
+import { ClaudeTimeoutError, UsageLimitError } from '../src/claude-llm.js';
 import { loadConfig, loadState, saveConfig, savePersonal, saveToken } from '../src/config.js';
 import { listProjects, runSync, type SyncOptions } from '../src/sync.js';
 import { tempDir, writeJsonl, writeRaw } from './helpers.js';
@@ -30,6 +33,13 @@ let hub: string;
 let sent: Sent[];
 let reports: Sent[];
 let failAfter: number;
+let llm: FakeLlm;
+/** What the fake hub answers to GET /api/status, to the list of a project's digests, and to GET of a stored session. */
+let hubStatus: Record<string, unknown>;
+let owedList: Record<string, unknown>[];
+let stored: Record<string, unknown>;
+let digestAnswer: number;
+let pageInputs: Record<string, unknown>;
 
 /** A stand-in for the server: records requests, can start failing. */
 const fakeFetch: typeof fetch = async (input, init) => {
@@ -38,6 +48,16 @@ const fakeFetch: typeof fetch = async (input, init) => {
     const raw = init?.body as Uint8Array;
     reports.push({ method: init?.method ?? 'GET', url: String(input), auth: headers.get('authorization'), body: JSON.parse(gunzipSync(raw).toString('utf8')) });
     return new Response(null, { status: 204 });
+  }
+  const method = init?.method ?? 'GET';
+  const url = String(input);
+  const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+  if (method === 'GET' && url.endsWith('/api/status')) return json(hubStatus);
+  if (method === 'GET' && url.includes('/api/projects/') && url.endsWith('/digests')) return json({ sessions: owedList });
+  if (method === 'GET' && url.endsWith('/page-inputs')) return json(pageInputs[decodeURIComponent(url.split('/api/projects/')[1]!.split('/')[0]!)]);
+  if (method === 'GET' && url.includes('/api/sessions/')) {
+    const found = stored[url.split('/api/sessions/')[1]!];
+    return found ? json({ session: found }) : new Response('{}', { status: 404 });
   }
   if (sent.length >= failAfter) return new Response('boom', { status: 500 });
   const headers = new Headers(init?.headers);
@@ -48,6 +68,7 @@ const fakeFetch: typeof fetch = async (input, init) => {
     auth: headers.get('authorization'),
     body: raw ? JSON.parse(gunzipSync(raw).toString('utf8')) : null,
   });
+  if (url.endsWith('/digest')) return new Response(digestAnswer === 204 ? null : '{}', { status: digestAnswer });
   return new Response('{"ok":true}', { status: 200 });
 };
 
@@ -61,6 +82,7 @@ const opts = (over: Partial<SyncOptions> = {}): SyncOptions => ({
     return cwd.includes('alpha') ? '/work/alpha' : null;
   },
   now: () => new Date('2026-10-10T00:00:00Z'),
+  llm,
   ...over,
 });
 
@@ -73,6 +95,12 @@ beforeEach(() => {
   sent = [];
   reports = [];
   failAfter = Infinity;
+  llm = new FakeLlm();
+  hubStatus = { server_summaries: false, pages_needed: [], summaries_owed: 0 };
+  owedList = [];
+  stored = {};
+  digestAnswer = 204;
+  pageInputs = {};
   saveConfig(hub, { ...loadConfig(hub), server_url: 'https://hub.example.com/' });
   saveToken(hub, 'tok-1');
   writeJsonl(join(proj(), `${S1}.jsonl`), [cc(S1, '/work/alpha', 'alpha question')]);
@@ -508,5 +536,311 @@ describe('runSync: documents', () => {
     withDocs(['tickets']);
     await runSync(opts());
     expect(sent.filter((r) => r.method === 'DELETE').map((r) => r.url)).toEqual([docUrl('tickets/T-1.md')]);
+  });
+});
+
+describe('runSync: summaries', () => {
+  const S3 = '55555555-5555-4555-8555-555555555555';
+  const at = (n: number) => `2026-10-${String(n).padStart(2, '0')}T10:00:00.000Z`;
+  const ccAt = (sid: string, ts: string, text: string) => ({ ...cc(sid, '/work/alpha', text), timestamp: ts });
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const puts = () => sent.filter((r) => r.method === 'PUT' && !r.url.endsWith('/digest'));
+  const digestCalls = () => llm.calls.filter((c) => c.kind === 'digest');
+
+  /** Writes n sessions of the alpha project, session i last active on day i. */
+  const manySessions = (n: number) => {
+    rmSync(join(proj(), `${S1}.jsonl`));
+    for (let i = 1; i <= n; i++) writeJsonl(join(proj(), `${uuid(i)}.jsonl`), [ccAt(uuid(i), at(i), `question ${i}`)]);
+  };
+
+  it('uploads a new main session together with its digest', async () => {
+    track(KEY_A);
+    const report = await runSync(opts());
+    expect(puts()).toHaveLength(1);
+    expect(puts()[0]!.body.digest).toMatchObject({ model: 'fake-model', body: { goal: expect.stringContaining('digest of') } });
+    expect(report.summarized).toEqual([{ project: KEY_A, session: `claude-code:${S1}` }]);
+    expect(report.waiting).toEqual({ count: 0, reason: null });
+  });
+
+  it('writes at most 20 digests per sync, newest first, and --all lifts the cap', async () => {
+    track(KEY_A);
+    manySessions(25);
+    const first = await runSync(opts());
+    expect(first.uploaded).toHaveLength(20);
+    expect(puts().map((r) => r.body.source_session_id)).toEqual(Array.from({ length: 20 }, (_, i) => uuid(25 - i)));
+    expect(first.waiting.count).toBe(5);
+    expect(first.waiting.reason).toMatch(/cap of 20 reached.*hub sync --all/);
+
+    const second = await runSync(opts());
+    expect(second.uploaded).toHaveLength(5);
+    expect(second.waiting.count).toBe(0);
+
+    sent = [];
+    rmSync(join(hub, 'state.json'));
+    const all = await runSync(opts({ all: true }));
+    expect(all.uploaded).toHaveLength(25);
+  });
+
+  it('a session whose digest fails is not uploaded and is retried next sync', async () => {
+    track(KEY_A);
+    llm.failWith = new Error('claude exploded');
+    const first = await runSync(opts());
+    expect(puts()).toEqual([]);
+    expect(first.uploaded).toEqual([]);
+    expect(first.waiting.count).toBe(1);
+    expect(first.errors).toEqual([]);
+    const second = await runSync(opts());
+    expect(second.uploaded).toEqual([{ project: KEY_A, session: `claude-code:${S1}` }]);
+  });
+
+  it('stops summarizing when the limit is hit mid-session', async () => {
+    track(KEY_A);
+    const big = 'w'.repeat(70_000);
+    writeJsonl(join(proj(), `${S1}.jsonl`), [ccAt(S1, at(9), big), ccAt(S1, at(9), big)]);
+    writeJsonl(join(proj(), `${S3}.jsonl`), [ccAt(S3, at(1), 'older and small')]);
+    const realDigest = llm.digest.bind(llm);
+    llm.digest = async (req) => {
+      if (req.part?.index === 2) throw new UsageLimitError('2026-10-10T14:00:00.000Z');
+      return realDigest(req);
+    };
+    const report = await runSync(opts());
+    expect(puts()).toEqual([]);
+    expect(llm.calls.filter((c) => c.kind === 'digest')).toHaveLength(1); // part 1 only; part 2 threw, and the older session was not tried
+    expect(report.waiting.count).toBe(2);
+    expect(report.waiting.reason).toMatch(/Claude usage limit reached \(resets /);
+    expect(loadState(hub).files[join(proj(), `${S1}.jsonl`)]).toBeUndefined();
+  });
+
+  it('stops summarizing after claude times out, instead of waiting again for every session', async () => {
+    track(KEY_A);
+    writeJsonl(join(proj(), `${S3}.jsonl`), [ccAt(S3, at(1), 'older and small')]);
+    const realDigest = llm.digest.bind(llm);
+    llm.digest = async (req) => {
+      await realDigest(req); // counted as a call
+      throw new ClaudeTimeoutError(300_000);
+    };
+    const report = await runSync(opts());
+    expect(puts()).toEqual([]);
+    expect(llm.calls.filter((c) => c.kind === 'digest')).toHaveLength(1); // the older session was not tried
+    expect(report.waiting.count).toBe(2);
+    expect(report.waiting.reason).toMatch(/did not answer within 300s/);
+  });
+
+  it('makes no more model calls after an upload fails', async () => {
+    track(KEY_A);
+    writeJsonl(join(proj(), `${S3}.jsonl`), [ccAt(S3, at(1), 'second one')]);
+    failAfter = 0;
+    const report = await runSync(opts());
+    expect(report.errors).toHaveLength(1);
+    expect(digestCalls()).toHaveLength(1);
+  });
+
+  it('uploads a refused session marked refused', async () => {
+    track(KEY_A);
+    llm.failWith = new LlmRefusal('cyber');
+    const report = await runSync(opts());
+    expect(puts()[0]!.body.digest).toEqual({ refused: 'cyber', model: 'fake-model' });
+    expect(report.uploaded).toHaveLength(1);
+    expect(report.summarized).toEqual([]);
+  });
+
+  it('uploads failed after the same content fails on 3 syncs', async () => {
+    track(KEY_A);
+    for (let i = 0; i < 2; i++) {
+      llm.failWith = new Error('claude exploded');
+      const r = await runSync(opts());
+      expect(r.waiting.count).toBe(1);
+      expect(puts()).toEqual([]);
+    }
+    llm.failWith = new Error('claude exploded');
+    const third = await runSync(opts());
+    expect(puts()[0]!.body.digest).toEqual({ failed: 'claude exploded' });
+    expect(third.uploaded).toHaveLength(1);
+    expect(third.waiting.count).toBe(0);
+  });
+
+  it('restarts the failure count when the content changes', async () => {
+    track(KEY_A);
+    for (let i = 0; i < 2; i++) {
+      llm.failWith = new Error('claude exploded');
+      await runSync(opts());
+    }
+    writeJsonl(join(proj(), `${S1}.jsonl`), [cc(S1, '/work/alpha', 'alpha question'), cc(S1, '/work/alpha', 'and more')]);
+    llm.failWith = new Error('claude exploded');
+    await runSync(opts());
+    expect(puts()).toEqual([]);
+  });
+
+  it('holds a waiting session\'s subagents back', async () => {
+    track(KEY_A);
+    writeJsonl(join(proj(), S1, 'subagents', 'agent-x.jsonl'), [cc(S1, '/somewhere/else', 'sub task')]);
+    llm.failWith = new Error('claude exploded');
+    await runSync(opts());
+    expect(sent).toEqual([]);
+    const second = await runSync(opts());
+    expect(second.uploaded.map((u) => u.session)).toEqual([`claude-code:${S1}`, `claude-code:${S1}/agent-x`]);
+  });
+
+  it('uploads a subagent at once when its parent is already on the hub', async () => {
+    track(KEY_A);
+    await runSync(opts());
+    sent = [];
+    llm.calls = [];
+    writeJsonl(join(proj(), S1, 'subagents', 'agent-x.jsonl'), [cc(S1, '/somewhere/else', 'sub task')]);
+    const report = await runSync(opts());
+    expect(puts().map((r) => r.body.source_session_id)).toEqual([`${S1}/agent-x`]);
+    expect(puts()[0]!.body.digest).toBeUndefined();
+    expect(llm.calls).toEqual([]);
+    expect(report.uploaded).toHaveLength(1);
+  });
+
+  it('re-cleaning uploads changed sessions at once with summary_to_follow, outside the cap', async () => {
+    track(KEY_A);
+    manySessions(22);
+    await runSync(opts({ all: true }));
+    expect(puts()).toHaveLength(22);
+    sent = [];
+    llm.calls = [];
+
+    savePersonal(hub, [{ label: 'q', value: 'question', level: 'full' }]);
+    const report = await runSync(opts());
+    expect(puts()).toHaveLength(22);
+    expect(puts().every((r) => JSON.stringify(r.body.digest) === '{"summary_to_follow":true}')).toBe(true);
+    expect(puts()[0]!.body.messages[0].text).toContain('[REDACTED');
+    expect(report.uploaded).toHaveLength(22);
+    expect(llm.calls).toEqual([]);
+    expect(report.waiting.count).toBe(0);
+  });
+
+  it('re-cleaning also uploads a subagent of an uploaded session, without a digest', async () => {
+    track(KEY_A);
+    writeJsonl(join(proj(), S1, 'subagents', 'agent-x.jsonl'), [cc(S1, '/somewhere/else', 'sub question')]);
+    await runSync(opts());
+    sent = [];
+    savePersonal(hub, [{ label: 'q', value: 'question', level: 'full' }]);
+    await runSync(opts());
+    const sub = puts().find((r) => r.body.parent === S1)!;
+    expect(sub.body.digest).toBeUndefined();
+  });
+
+  it('catches up owed summaries from the server before new work', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: false, pages_needed: [], summaries_owed: 1 };
+    owedList = [{ source: 'claude-code', id: S3, content_hash: 'a'.repeat(64), last_activity_at: at(2), status: 'pending', model: null, written_by: null, summary_to_follow: true }];
+    stored[`claude-code/${S3}`] = {
+      source: 'claude-code',
+      source_session_id: S3,
+      project_key: KEY_A,
+      parent: null,
+      title: 'Owed',
+      content_hash: 'a'.repeat(64),
+      messages: [{ seq: 0, role: 'user', kind: 'text', ts: null, text: 'hello' }],
+    };
+    await runSync(opts());
+    const order = sent.map((r) => (r.url.endsWith('/digest') ? 'digest' : 'session'));
+    expect(order).toEqual(['digest', 'session']);
+    const digestPut = sent[0]!;
+    expect(digestPut.url).toBe(`https://hub.example.com/api/sessions/claude-code/${S3}/digest`);
+    expect(digestPut.body).toMatchObject({ hash: 'a'.repeat(64), digest: { model: 'fake-model', body: { goal: expect.stringContaining('digest of Owed') } } });
+  });
+
+  it('counts a catch-up digest toward the cap', async () => {
+    track(KEY_A);
+    manySessions(20);
+    hubStatus = { server_summaries: false, pages_needed: [], summaries_owed: 1 };
+    owedList = [{ source: 'claude-code', id: S3, content_hash: 'a'.repeat(64), last_activity_at: at(2), status: 'pending', model: null, written_by: null, summary_to_follow: true }];
+    stored[`claude-code/${S3}`] = { source: 'claude-code', source_session_id: S3, project_key: KEY_A, parent: null, title: 'Owed', content_hash: 'a'.repeat(64), messages: [{ seq: 0, role: 'user', kind: 'text', ts: null, text: 'hello' }] };
+    const report = await runSync(opts());
+    expect(puts()).toHaveLength(19);
+    expect(report.waiting.count).toBe(1);
+  });
+
+  it('without Claude Code, uploads without a digest only when the server has a key', async () => {
+    track(KEY_A);
+    const waiting = await runSync(opts({ llm: null }));
+    expect(puts()).toEqual([]);
+    expect(waiting.waiting).toEqual({ count: 1, reason: 'Claude Code is not installed' });
+
+    hubStatus = { server_summaries: true, pages_needed: [], summaries_owed: 0 };
+    const uploaded = await runSync(opts({ llm: null }));
+    expect(puts()).toHaveLength(1);
+    expect(puts()[0]!.body.digest).toBeUndefined();
+    expect(uploaded.waiting.count).toBe(0);
+  });
+
+  it('a dry run calls no model', async () => {
+    track(KEY_A);
+    const report = await runSync(opts({ dryRun: true }));
+    expect(llm.calls).toEqual([]);
+    expect(report.wouldSummarize).toEqual([{ project: KEY_A, session: `claude-code:${S1}` }]);
+    expect(report.wouldUpload).toEqual([{ project: KEY_A, session: `claude-code:${S1}` }]);
+    expect(sent).toEqual([]);
+  });
+
+  it('records the waiting count in the state file', async () => {
+    track(KEY_A);
+    llm.failWith = new Error('claude exploded');
+    await runSync(opts());
+    expect(loadState(hub).last_waiting).toEqual({ count: 1, reason: 'summary failed: claude exploded', at: '2026-10-10T00:00:00.000Z' });
+  });
+});
+
+describe('runSync: state pages', () => {
+  const pageDigest = { session_id: `claude-code:${S1}`, title: 'T', date: '2026-10-01T10:00:00.000Z', text: 'Goal: x', saved_seq: 1 };
+  const pagePuts = () => sent.filter((r) => r.method === 'PUT' && r.url.endsWith('/page'));
+
+  beforeEach(() => {
+    hubStatus = { server_summaries: false, pages_needed: [KEY_A], summaries_owed: 0 };
+    pageInputs = { [KEY_A]: { page: null, digests: [pageDigest], through: 1 } };
+  });
+
+  it('writes the pages the hub says it needs, after the uploads', async () => {
+    track(KEY_A);
+    const report = await runSync(opts());
+    expect(sent.map((r) => (r.url.endsWith('/page') ? 'page' : 'session'))).toEqual(['session', 'page']);
+    expect(pagePuts()[0]!.url).toBe(`https://hub.example.com/api/projects/${encodeURIComponent(KEY_A)}/page`);
+    expect(pagePuts()[0]!.body).toMatchObject({ base_version: null, through: 1, full_rebuild: true, model: 'fake-model' });
+    expect(report.pages).toEqual({ updated: [KEY_A], left: [] });
+  });
+
+  it('leaves the pages of projects it did not sync', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: false, pages_needed: ['github.com/me/other', KEY_A], summaries_owed: 0 };
+    await runSync(opts());
+    expect(pagePuts()).toHaveLength(1);
+  });
+
+  it('makes no page call without a writer', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: true, pages_needed: [KEY_A], summaries_owed: 0 };
+    const report = await runSync(opts({ llm: null }));
+    expect(pagePuts()).toEqual([]);
+    expect(report.pages).toEqual({ updated: [], left: [] });
+  });
+
+  it('skips the pages once the usage limit is hit', async () => {
+    track(KEY_A);
+    llm.digest = async () => {
+      throw new UsageLimitError(null);
+    };
+    const report = await runSync(opts());
+    expect(pagePuts()).toEqual([]);
+    expect(report.waiting.reason).toBe('Claude usage limit reached');
+  });
+
+  it('leaves the page of a re-cleaned project until its summaries are written', async () => {
+    track(KEY_A);
+    await runSync(opts());
+    sent = [];
+    savePersonal(hub, [{ label: 'q', value: 'question', level: 'full' }]);
+    const report = await runSync(opts());
+    expect(pagePuts()).toEqual([]);
+    expect(report.pages).toEqual({ updated: [], left: [KEY_A] });
+  });
+
+  it('does not touch pages in a dry run', async () => {
+    track(KEY_A);
+    await runSync(opts({ dryRun: true }));
+    expect(sent).toEqual([]);
   });
 });

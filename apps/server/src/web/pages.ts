@@ -302,6 +302,12 @@ export function projectsPage(db: Db, csrf: string): string {
 }
 
 /** How a session's or note's summary stands. The statuses are a fixed set, not stored text. */
+/** " · by my-pc" or " · by the server" after a summary status. A note is its own summary, so it names no one. */
+function writer(s: { digest_status: string; digest_written_by: string | null; digest_model: string | null }): string {
+  if (s.digest_written_by !== null) return ` &middot; by ${escapeHtml(s.digest_written_by)}`;
+  return s.digest_status === 'ok' && s.digest_model !== 'note' ? ' &middot; by the server' : '';
+}
+
 const DIGEST: Record<string, string> = {
   ok: 'ok',
   pending: 'pending',
@@ -338,7 +344,7 @@ export function projectPage(db: Db, key: string, csrf: string): string | null {
               `<tr><td class="name">${escapeHtml(s.title)}<span class="sub mono">${escapeHtml(s.session_id)}</span></td>` +
               `<td><span class="tag">${escapeHtml(s.source)}</span></td>` +
               `<td>${s.last_activity_at === null ? '' : timeTag(s.last_activity_at)}</td>` +
-              `<td>${escapeHtml(DIGEST[s.digest_status] ?? s.digest_status)}</td></tr>`,
+              `<td>${escapeHtml(DIGEST[s.digest_status] ?? s.digest_status)}${writer(s)}</td></tr>`,
           )
           .join('') +
         `</tbody></table></div>`;

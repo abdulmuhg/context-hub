@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
-import { getDigest, getProjectState, saveProjectState } from '../src/digest-store.js';
-import { LlmRefusal } from '../src/llm.js';
+import { getDigest, getProjectState, markStateDirty, queueServerPage, saveDigest, saveProjectState, type DigestBody } from '../src/digest-store.js';
+import { LlmRefusal } from '@context-hub/core';
 import { saveNote } from '../src/notes.js';
 import { recordUsage } from '../src/usage.js';
 import { search } from '../src/search.js';
@@ -10,6 +10,7 @@ import { CHARS_PER_TOKEN, REBUILD_AFTER_MS, runOnce, startWorker, type WorkerDep
 import { FakeLlm, makeSession, text, tool } from './helpers.js';
 
 const T0 = Date.parse('2026-10-11T00:00:00.000Z');
+const BODY: DigestBody = { goal: 'x', done: [], decisions: [], open_items: [], key_refs: [] };
 let db: Db;
 let llm: FakeLlm;
 let clock: number;
@@ -17,6 +18,7 @@ let logs: string[];
 
 const deps = (over: Partial<WorkerDeps> = {}): WorkerDeps => ({ db, llm, now: () => new Date(clock), log: (l) => logs.push(l), ...over });
 const iso = () => new Date(clock).toISOString();
+const contentHashOf = (id: string) => (db.prepare('SELECT content_hash FROM sessions WHERE source_session_id = ?').get(id) as { content_hash: string }).content_hash;
 const rowId = (id: string) => (db.prepare('SELECT id FROM sessions WHERE source_session_id = ?').get(id) as { id: number }).id;
 const pid = (name: string) => {
   const r = resolveProject(db, name);
@@ -159,6 +161,19 @@ describe('runOnce: project state', () => {
     expect(second.digests.map((d) => d.session_id)).toEqual(['claude-code:b']);
   });
 
+  it('merges a computer digest not yet on the page along with its own fallback digest', async () => {
+    add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    await runOnce(deps()); // the page now covers a
+    // A computer's digest reaches the hub, but its page update has not happened yet.
+    add('c', { last_activity_at: '2026-10-02T00:00:00.000Z' });
+    saveDigest(db, { sessionRowId: rowId('c'), hash: contentHashOf('c'), model: 'claude-sonnet-5-5', body: BODY, text: 'from a computer', now: iso(), writtenBy: 'laptop' });
+    add('b', { last_activity_at: '2026-10-03T00:00:00.000Z' });
+    await runOnce(deps()); // the fallback writes b, then merges the page
+    const merge = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { mode: string; digests: { session_id: string }[] };
+    expect(merge.mode).toBe('merge');
+    expect(merge.digests.map((d) => d.session_id)).toEqual(['claude-code:c', 'claude-code:b']);
+  });
+
   it('rebuilds from all digests once the last full rebuild is more than 7 days old', async () => {
     add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
     await runOnce(deps());
@@ -178,6 +193,8 @@ describe('runOnce: project state', () => {
     const p = pid('alpha');
     deleteSession(db, 'claude-code', 'a');
     expect(getProject(db, p, 5).state!.stale).toBe(true);
+    expect(await runOnce(deps())).toBe('idle'); // a delete leaves the page to a computer's next sync
+    queueServerPage(db, p); // the server owes the page once it has written a fallback digest
     expect(await runOnce(deps())).toBe('state');
     const rebuilt = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { mode: string; digests: { session_id: string }[] };
     expect(rebuilt.mode).toBe('rebuild');
@@ -187,6 +204,7 @@ describe('runOnce: project state', () => {
     // Now nothing usable is left: every digest refused, the page flagged.
     db.prepare("UPDATE digests SET status = 'refused', text = NULL").run();
     db.prepare('UPDATE project_states SET dirty = 1').run();
+    queueServerPage(db, p);
     const before = llm.calls.length;
     expect(await runOnce(deps())).toBe('state');
     expect(getProjectState(db, p)).toBeNull();
@@ -207,7 +225,7 @@ describe('runOnce: project state', () => {
     expect(await runOnce(deps({ llm: flaky }))).toBe('error');
     expect(n).toBe(1);
     expect(getDigest(db, rowId('b'))!.status).toBe('ok');
-    expect(getProjectState(db, pid('alpha'))!.dirty).toBe(true);
+    expect(db.prepare('SELECT 1 FROM server_page_queue WHERE project_id = ?').get(pid('alpha'))).toBeDefined(); // still owed
     expect(await runOnce(deps())).toBe('idle'); // changed in review: a failed page waits before it is retried
     clock += 60_000;
     expect(await runOnce(deps())).toBe('state'); // the healthy model repairs it
@@ -220,13 +238,16 @@ describe('runOnce: project state', () => {
     await drain();
     const p = pid('alpha');
     db.prepare('UPDATE project_states SET dirty = 1').run();
+    queueServerPage(db, p);
     const racing = Object.assign(Object.create(Object.getPrototypeOf(llm)), llm) as FakeLlm;
     racing.projectState = async (req) => {
       deleteSession(db, 'claude-code', 'a');
       return FakeLlm.prototype.projectState.call(llm, req);
     };
-    expect(await runOnce(deps({ llm: racing }))).toBe('state');
+    // The delete changes the page's version during the call, so the stale save is refused.
+    expect(await runOnce(deps({ llm: racing }))).toBe('error');
     expect(getProject(db, p, 5).state!.stale).toBe(true);
+    clock += 60_000;
     expect(await runOnce(deps())).toBe('state');
     const last = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { mode: string; digests: { session_id: string }[] };
     expect(last.digests.map((d) => d.session_id)).toEqual(['claude-code:b']);
@@ -237,6 +258,7 @@ describe('runOnce: project state', () => {
     for (let i = 1; i <= 5; i++) add(`s${i}`, { last_activity_at: `2026-10-0${i}T00:00:00.000Z` });
     await drain();
     db.prepare('UPDATE project_states SET dirty = 1').run();
+    queueServerPage(db, pid('alpha'));
     const one = getDigest(db, rowId('s1'))!.text!.length;
     await runOnce(deps({ maxInputTokens: Math.ceil((one * 2.5) / CHARS_PER_TOKEN) }));
     const req = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { mode: string; previous: string | null; digests: { session_id: string }[] };
@@ -474,31 +496,41 @@ describe('runOnce: notes', () => {
   };
   const noteRow = (sid: string) => rowId(sid.replace(/^note:/, ''));
 
-  it("stores a note's digest without calling the model", async () => {
+  it('a note has its digest when it is saved, so the worker has nothing to do for it', async () => {
     add('a');
     await drain();
+    llm.calls = [];
     const sid = note();
+    expect(getDigest(db, noteRow(sid))).toMatchObject({ status: 'ok', model: 'note' });
+    expect(await runOnce(deps())).toBe('idle');
+    expect(llm.calls).toEqual([]);
+  });
+
+  it("the note reaches the page on a computer's next sync, not through the server", async () => {
+    add('a');
+    await drain();
+    note();
+    expect(getProjectState(db, pid('alpha'))!.dirty).toBe(true);
+    expect(await runOnce(deps())).toBe('idle');
+  });
+
+  it('writes the digest of a note saved before digests moved to save time, without a model call', async () => {
+    add('a');
+    await drain();
+    llm.calls = [];
+    const sid = note();
+    // As an older version left it: a pending digest with no text.
+    db.prepare("UPDATE digests SET status = 'pending', body = NULL, text = NULL, model = NULL WHERE session_id = ?").run(noteRow(sid));
     expect(await runOnce(deps())).toBe('digest');
     const d = getDigest(db, noteRow(sid))!;
     expect(d).toMatchObject({ status: 'ok', model: 'note' });
     expect(d.text!.startsWith('Note saved from a chat: Pick Postgres\n')).toBe(true);
-    expect(d.text).toContain('We chose Postgres for the queue.');
-    expect(llm.calls.filter((c) => c.kind === 'digest').map((c) => (c.req as { title: string }).title)).toEqual(['T-a']);
+    expect(llm.calls).toEqual([]);
   });
 
-  it('the note then reaches the state page', async () => {
-    add('a');
-    await drain();
-    const sid = note();
-    await drain();
-    const req = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { digests: { session_id: string }[] };
-    expect(req.digests.map((d) => d.session_id)).toContain(sid);
-  });
-
-  it('a note waits like any other when digests are off', () => {
+  it('is searchable at once', () => {
     add('a');
     const sid = note();
-    expect(getDigest(db, noteRow(sid))!.status).toBe('pending');
     expect(search(db, { query: 'Postgres' }).some((h) => h.session_id === sid)).toBe(true);
   });
 });
@@ -531,5 +563,17 @@ describe('runOnce: daily budget', () => {
     expect(await runOnce(deps({ dailyBudgetMicroUsd: 1000 }))).toBe('digest');
     spend(5000);
     expect(await runOnce(deps())).toBe('digest');
+  });
+});
+
+describe('runOnce: pages the server does not own', () => {
+  it('never builds a page for a project whose digests a computer wrote', async () => {
+    add('a');
+    saveDigest(db, { sessionRowId: rowId('a'), hash: contentHashOf('a'), model: 'sonnet', body: BODY, text: 'Goal: x', now: iso(), writtenBy: 'my-pc' });
+    saveProjectState(db, pid('alpha'), { summary: 's', body: 'b', model: 'm' }, iso(), true);
+    markStateDirty(db, pid('alpha'));
+    expect(await runOnce(deps())).toBe('idle');
+    expect(llm.calls).toEqual([]);
+    expect(getProjectState(db, pid('alpha'))!.dirty).toBe(true);
   });
 });

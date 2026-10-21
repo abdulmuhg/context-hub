@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
 import { handleMcp } from '../src/mcp.js';
 import { createToken } from '../src/tokens.js';
-import { startServer } from './helpers.js';
+import { FakeLlm, startServer } from './helpers.js';
 
 const SID = '11111111-1111-4111-8111-111111111111';
 const SECRET = 'gh' + 'p_' + 'a'.repeat(36);
@@ -45,6 +45,7 @@ const sync = (over = {}) =>
     home,
     hubDir: hub,
     exists: () => true,
+    llm: new FakeLlm(),
     git: (cwd, args) => (cwd.includes('alpha') ? (args[0] === 'remote' ? 'git@github.com:me/alpha.git' : '/work/alpha') : null),
     ...over,
   });

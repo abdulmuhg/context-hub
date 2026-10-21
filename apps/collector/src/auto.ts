@@ -113,7 +113,7 @@ export function autoStatus(settingsPath: string, logPath: string): { on: boolean
 }
 
 /** Takes the lock, or returns false when a younger one exists. A stale lock is taken over. */
-function takeLock(lockPath: string, now: Date): boolean {
+export function takeLock(lockPath: string, now: Date): boolean {
   try {
     writeFileSync(lockPath, now.toISOString(), { flag: 'wx' });
     return true;
@@ -130,32 +130,52 @@ function takeLock(lockPath: string, now: Date): boolean {
   }
 }
 
+/**
+ * Keeps the lock fresh while a sync works. Writing summaries can take longer
+ * than the lock's 10 minutes, and a second auto-sync must not start meanwhile
+ * and write the same ones. It only touches a lock that still exists. Returns the function that stops it.
+ */
+export function startLockHeartbeat(lockPath: string, now: () => Date, everyMs = 60_000): () => void {
+  const timer = setInterval(() => {
+    try {
+      if (existsSync(lockPath)) writeFileSync(lockPath, now().toISOString());
+    } catch {
+      // the lock is only a courtesy to the next run
+    }
+  }, everyMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 /** The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line, never throws. */
 export async function runAutoChild(opts: SyncOptions): Promise<void> {
   const now = opts.now ?? (() => new Date());
   const lockPath = join(opts.hubDir, 'auto.lock');
   const logPath = join(opts.hubDir, 'auto.log');
   let locked = false;
+  let stopHeartbeat = (): void => {};
   try {
     mkdirSync(opts.hubDir, { recursive: true });
     if (!takeLock(lockPath, now())) return;
     locked = true;
+    stopHeartbeat = startLockHeartbeat(lockPath, now);
     const { project: _project, session: _session, dryRun: _dryRun, ...rest } = opts;
     let line: string;
     try {
       const r = await runSync(rest);
-      const counts = `${r.uploaded.length} uploaded, ${r.unchanged} unchanged`;
+      const counts = `${r.uploaded.length} uploaded, ${r.unchanged} unchanged, ${r.summarized.length} summarized, ${r.waiting.count} waiting`;
       line =
         r.errors.length === 0
           ? `${now().toISOString()} ok ${counts}`
           : `${now().toISOString()} error ${counts}, ${r.errors.length} errors: ${r.errors[0]}`;
     } catch (e) {
-      line = `${now().toISOString()} error 0 uploaded, 0 unchanged, 1 errors: ${(e as Error).message}`;
+      line = `${now().toISOString()} error 0 uploaded, 0 unchanged, 0 summarized, 0 waiting, 1 errors: ${(e as Error).message}`;
     }
     writeFileSync(logPath, [...readLines(logPath), line.replace(/\r?\n/g, ' ')].slice(-LOG_KEEP).join('\n') + '\n');
   } catch {
     // nothing may reach the terminal or the caller
   } finally {
+    stopHeartbeat();
     if (locked) {
       try {
         unlinkSync(lockPath);

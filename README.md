@@ -162,7 +162,8 @@ hub sync --dry-run           # see what would be sent
 
 #### Upload your notes as documents
 
-Session summaries are written by the hub. The notes you keep yourself, such as
+Session summaries are written on your computer by Claude Code (see below). The
+notes you keep yourself, such as
 ticket write-ups, decision logs or an assistant's memory folder, can go up as
 they are:
 
@@ -186,6 +187,29 @@ same notes synced from two machines stay one document.
 Documents are not summarised. Assistants see them listed in `get_project`,
 find them with `search` (source `doc`), and read them whole with
 `get_session`. Secrets and personal data are stripped exactly as for sessions.
+
+#### Summaries come from Claude Code on your computer
+
+`hub sync` writes each session's summary, and each project's briefing page,
+with Claude Code (`claude -p`) on your own computer, using your Claude plan.
+The hub only stores, searches and serves them, so it needs no model key. A
+session is uploaded together with its summary; if the summary cannot be
+written (usage limit reached, Claude Code not signed in), the session waits on
+the computer and the next sync tries again.
+
+- The model is `claude-sonnet-5-5` at low effort. `hub summaries` shows the
+  settings; `hub summaries model <id>` and `hub summaries effort <level>`
+  change them for this computer.
+- One sync writes at most 20 new summaries, newest first, so a sync cannot use
+  up your plan. `hub sync --all` lifts the cap, for catching up on a backlog.
+- `hub status` and `hub doctor` show how many sessions are waiting and why.
+- `hub resummarize [<project>]` rewrites older summaries (Haiku ones the hub
+  wrote, pending, failed or refused ones) from the transcripts stored on the
+  hub, then rebuilds the project pages. Add `--model-not <id>` to rewrite
+  other computers' summaries that were not written with that model.
+- Claude Code is started with every `ANTHROPIC_*` and `CLAUDE*` variable
+  removed, so it always signs in with your stored Claude login and never bills
+  an API account.
 
 #### Sync automatically (Claude Code)
 
@@ -316,10 +340,10 @@ interface; only the proxy should reach it.
 | Variable | Needed | What it does |
 |---|---|---|
 | `PUBLIC_URL` | for the Claude apps and the dashboard's secure cookies | The hub's public address, e.g. `https://hub.example.com`. Turns on sign-in for the Claude apps. No path, no trailing slash. |
-| `ANTHROPIC_API_KEY` | for summaries | Writes session summaries and project briefings with Claude. Without it, uploads and lookups still work and summaries wait in a queue. Billed separately from a Claude subscription. |
+| `ANTHROPIC_API_KEY` | no | A fallback only. Computers with Claude Code write their own summaries on your Claude plan, so the hub needs no key. With one set, the hub writes the summaries of sessions that arrive without one (a computer without Claude Code). Billed separately from a Claude subscription. |
 | `DIGEST_MODEL` | no | Default `claude-haiku-5-5`. |
 | `DIGEST_EFFORT` | no | Default `low`. |
-| `DIGEST_DAILY_BUDGET_USD` | no | A daily limit in US dollars for summaries (UTC day). When it is reached, summaries wait until 00:00 UTC; a job already running finishes, so the limit can be passed by one job. Saved notes wait too, because the page update after one calls the model. |
+| `DIGEST_DAILY_BUDGET_USD` | no | A daily limit in US dollars for the fallback's summaries (UTC day). When it is reached, they wait until 00:00 UTC; a job already running finishes, so the limit can be passed by one job. |
 | `DIGEST_MAX_INPUT_TOKENS` | no | Default `60000`, counted at 2 characters per token so a prompt stays under the 100K-token price step. Long sessions are summarised in parts of this size. |
 | `IMAGE_TAG` | no | Shown on the dashboard as the running version. The reference deploy sets it. |
 | `BACKUP_STATUS_PATH` | no | A JSON file the backup job writes; the dashboard shows it. Default `/backup-status/context-hub.json` when it exists. |

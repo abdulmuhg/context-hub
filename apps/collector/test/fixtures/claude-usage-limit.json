@@ -1,0 +1,8 @@
+{
+  "_note": "Hand-written guess, not captured from a real usage-limit response. The reset time is epoch seconds after a pipe, as older Claude Code versions printed it.",
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": 429,
+  "result": "Claude AI usage limit reached|1792580400"
+}

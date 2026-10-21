@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
+import { getDigest, getProjectState, nextDueDigest, saveProjectState } from '../src/digest-store.js';
 import { saveNote } from '../src/notes.js';
 import { search } from '../src/search.js';
 import { getSessionPage, splitPublicId, upsertSession } from '../src/store.js';
@@ -85,5 +86,21 @@ describe('saveNote', () => {
     const hits = search(db, { query: 'unusualword' });
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]!.session_id.startsWith('note:')).toBe(true);
+  });
+});
+
+describe('saveNote digest', () => {
+  it('writes its digest at save time, with no worker and no key', () => {
+    const project = (db.prepare('SELECT id FROM projects').get() as { id: number }).id;
+    saveProjectState(db, project, { summary: 's', body: 'b', model: 'm' }, NOW, true);
+    const r = saveNote(db, { project: 'alpha', title: 'Pick Postgres', text: 'We chose Postgres for the queue.' }, NOW);
+    if (!r.ok) throw new Error('note not saved');
+    const row = (db.prepare('SELECT id FROM sessions WHERE source = ?').get('note') as { id: number }).id;
+    const d = getDigest(db, row)!;
+    expect(d).toMatchObject({ status: 'ok', model: 'note' });
+    expect(d.text).toBe('Note saved from a chat: Pick Postgres\nWe chose Postgres for the queue.');
+    expect(nextDueDigest(db, NOW)?.source).toBe('claude-code'); // only the ordinary session is still due
+    expect(search(db, { query: '"Note saved from a chat"' }).some((h) => h.kind === 'digest' && h.session_id === r.session_id)).toBe(true);
+    expect(getProjectState(db, project)!.dirty).toBe(true);
   });
 });

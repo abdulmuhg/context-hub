@@ -1,0 +1,9 @@
+{
+  "_note": "Trimmed from a real claude -p 2.1.296 run with no sign-in at all (2026-10-21).",
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": 401,
+  "terminal_reason": "api_error",
+  "result": "Not logged in · Please run /login"
+}

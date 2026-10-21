@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { contentHash, filterPersonal, stripSecrets, type Session } from '@context-hub/core';
 import type { Db } from './db.js';
+import { markStateDirty, saveDigest } from './digest-store.js';
 import { publicId, resolveProject, upsertSession } from './store.js';
 
 export const NOTE_TITLE_MAX = 200;
@@ -21,6 +22,23 @@ function clean(value: string): { text: string; redactions: number } {
   const b = filterPersonal(a.text, { ...PERSONAL, entries: [] });
   const sum = (o: Record<string, number>) => Object.values(o).reduce((n, v) => n + v, 0);
   return { text: b.text, redactions: sum(a.counts) + sum(b.findings) };
+}
+
+/**
+ * A note is already a summary: its title is the goal and its text is the digest.
+ * It is written when the note is saved, with no model, so it works without a key.
+ * The project's page is flagged so the next sync of a computer folds the note in.
+ * The worker also uses this for a note saved before digests moved here.
+ */
+export function writeNoteDigest(db: Db, sessionRowId: number, now: string): void {
+  const s = db.prepare('SELECT title, content_hash, project_id FROM sessions WHERE id = ?').get(sessionRowId) as
+    | { title: string; content_hash: string; project_id: number }
+    | undefined;
+  if (!s) return;
+  const first = db.prepare('SELECT text FROM messages WHERE session_id = ? AND seq = 0').get(sessionRowId) as { text: string | null } | undefined;
+  const body = { goal: s.title, done: [], decisions: [], open_items: [], key_refs: [] };
+  saveDigest(db, { sessionRowId, hash: s.content_hash, model: 'note', body, text: `Note saved from a chat: ${s.title}\n${first?.text ?? ''}`, now });
+  markStateDirty(db, s.project_id);
 }
 
 export function saveNote(db: Db, input: { project: string; title: string; text: string }, now: string): SaveNoteResult {
@@ -66,6 +84,8 @@ export function saveNote(db: Db, input: { project: string; title: string; text: 
     last_activity_at: now,
     messages: [{ seq: 0, role: 'user', kind: 'text', ts: now, text: b.text }],
   };
-  upsertSession(db, { ...session, content_hash: contentHash(session) }, now);
+  const hashed = { ...session, content_hash: contentHash(session) };
+  upsertSession(db, hashed, now);
+  writeNoteDigest(db, (db.prepare("SELECT id FROM sessions WHERE source = 'note' AND source_session_id = ?").get(id) as { id: number }).id, now);
   return { ok: true, session_id: publicId('note', id), project: project.key, title: t.text, duplicate: false, redactions };
 }

@@ -1,4 +1,3 @@
-import type { Message } from '@context-hub/core';
 import type { Db } from './db.js';
 import {
   clearStateRetry,
@@ -8,24 +7,24 @@ import {
   getProjectState,
   markStateDirty,
   nextDueDigest,
-  nextProjectNeedingState,
+  nextServerPage,
   okDigestsForProject,
   projectHasDueDigest,
+  queueServerPage,
   refuseDigest,
   saveDigest,
-  saveProjectState,
+  savePageIfVersion,
   stateIsWaiting,
+  unqueueServerPage,
   type DigestBody,
   type DueDigest,
 } from './digest-store.js';
-import { LlmRefusal, type Llm, type StatePage } from './llm.js';
-import { applyReview } from './page-review.js';
+import { buildStatePage, CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, renderDigest, writeDigest, type Llm, type PageDigest } from '@context-hub/core';
+import { writeNoteDigest } from './notes.js';
+import { loadMessages } from './store.js';
 import { budgetReached } from './usage.js';
-import { renderDigest, renderLines, splitParts } from './transcript.js';
 
-export const CHARS_PER_TOKEN = 2;
-export const DEFAULT_MAX_INPUT_TOKENS = 60000;
-export const REBUILD_AFTER_MS = 7 * 24 * 60 * 60_000;
+export { CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, REBUILD_AFTER_MS } from '@context-hub/core';
 
 export interface WorkerDeps {
   db: Db;
@@ -58,49 +57,6 @@ function context(deps: WorkerDeps): Ctx {
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-function loadMessages(db: Db, sessionRowId: number): Message[] {
-  const rows = db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY seq').all(sessionRowId) as {
-    seq: number;
-    role: 'user' | 'assistant';
-    kind: 'text' | 'tool_call';
-    ts: string | null;
-    text: string | null;
-    tool_name: string | null;
-    tool_input: string | null;
-    tool_result: string | null;
-    tool_status: 'ok' | 'error' | null;
-  }[];
-  return rows.map((r) =>
-    r.kind === 'text'
-      ? { seq: r.seq, role: r.role, kind: 'text', ts: r.ts, text: r.text ?? '' }
-      : {
-          seq: r.seq,
-          role: 'assistant',
-          kind: 'tool_call',
-          ts: r.ts,
-          tool_name: r.tool_name ?? '',
-          tool_input: r.tool_input ?? '',
-          tool_result: r.tool_result ?? '',
-          tool_status: r.tool_status ?? 'ok',
-        },
-  );
-}
-
-async function writeDigest(c: Ctx, due: DueDigest): Promise<DigestBody> {
-  const parts = splitParts(renderLines(loadMessages(c.db, due.session_id)), c.maxChars);
-  if (parts.length === 0) {
-    return { goal: 'Empty session: no conversation content.', done: [], decisions: [], open_items: [], key_refs: [] };
-  }
-  if (parts.length === 1) {
-    return c.llm.digest({ project: due.project_key, title: due.title, transcript: parts[0]!, part: null });
-  }
-  const bodies: DigestBody[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    bodies.push(await c.llm.digest({ project: due.project_key, title: due.title, transcript: parts[i]!, part: { index: i + 1, total: parts.length } }));
-  }
-  return c.llm.mergeDigests({ project: due.project_key, title: due.title, parts: bodies });
-}
-
 /** The sessions a page is built from. A change during a model call means the page is already out of date. */
 const pageSources = (db: Db, projectId: number): string =>
   okDigestsForProject(db, projectId)
@@ -108,113 +64,69 @@ const pageSources = (db: Db, projectId: number): string =>
     .join('|');
 
 /** Saves a page, and keeps it flagged when its sources changed while the model was working. */
-function savePage(c: Ctx, projectId: number, page: { summary: string; body: string }, fullRebuild: boolean, sourcesBefore: string): void {
-  saveProjectState(c.db, projectId, { ...page, model: c.llm.model }, c.now(), fullRebuild);
+function savePage(c: Ctx, projectId: number, page: { summary: string; body: string }, opts: { baseVersion: number | null; through: number; fullRebuild: boolean }, sourcesBefore: string): void {
+  const saved = savePageIfVersion(c.db, projectId, { ...page, model: c.llm.model }, { ...opts, writtenBy: null, now: c.now() });
+  if (!saved.ok) throw new Error('the page was changed while it was being written');
   clearStateRetry(c.db, projectId);
+  unqueueServerPage(c.db, projectId);
   if (pageSources(c.db, projectId) !== sourcesBefore) markStateDirty(c.db, projectId);
 }
 
-/**
- * A second look at a finished page against the newest digests, to drop open
- * items and state lines a session already settled. A failed review keeps the
- * page as written: it is an improvement, not a reason to lose the update.
- */
-async function reviewPage(c: Ctx, projectId: number, projectKey: string, page: StatePage): Promise<StatePage> {
-  const all = okDigestsForProject(c.db, projectId);
-  const shown: typeof all = [];
-  let used = 0;
-  for (let i = all.length - 1; i >= 0; i--) {
-    const d = all[i]!;
-    if (shown.length > 0 && used + d.text.length > c.maxChars) break;
-    shown.push(d);
-    used += d.text.length;
-  }
-  try {
-    const review = await c.llm.reviewState({
-      project: projectKey,
-      page,
-      digests: shown.map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text })),
-    });
-    return applyReview(page, review, new Set(shown.map((d) => d.session_id)));
-  } catch (e) {
-    c.log(`state project ${projectId}: review skipped (${message(e)})`);
-    return page;
-  }
-}
+const pageDigests = (all: ReturnType<typeof okDigestsForProject>): PageDigest[] =>
+  all.map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text }));
 
-/** Rebuilds a project's page from its ok digests, or removes the page when none are left. */
-async function rebuildState(c: Ctx, projectId: number): Promise<void> {
+/** Writes a project's page from its ok digests, or removes the page when none are left. */
+async function updatePage(c: Ctx, projectId: number, fresh: PageDigest[], forceRebuild: boolean): Promise<void> {
   const project = c.db.prepare('SELECT key FROM projects WHERE id = ?').get(projectId) as { key: string } | undefined;
   if (!project) return;
+  const state = getProjectState(c.db, projectId);
+  const sourcesBefore = pageSources(c.db, projectId);
   const all = okDigestsForProject(c.db, projectId);
-  if (all.length === 0) {
+  const built = await buildStatePage(c.llm, {
+    project: project.key,
+    page: state,
+    digests: pageDigests(all),
+    fresh,
+    now: c.now(),
+    maxChars: c.maxChars,
+    forceRebuild,
+    onReviewSkipped: (reason) => c.log(`state project ${projectId}: review skipped (${reason})`),
+  });
+  if (built === null) {
     deleteProjectState(c.db, projectId);
     clearStateRetry(c.db, projectId);
+    unqueueServerPage(c.db, projectId);
     return;
   }
-  // Newest first until the limit is reached, then back into oldest-first order.
-  const chosen: typeof all = [];
-  let used = 0;
-  for (let i = all.length - 1; i >= 0; i--) {
-    const d = all[i]!;
-    if (chosen.length > 0 && used + d.text.length > c.maxChars) break;
-    chosen.unshift(d);
-    used += d.text.length;
-  }
-  const truncated = chosen.length < all.length;
-  const previous = truncated ? (getProjectState(c.db, projectId)?.body ?? null) : null;
-  const sourcesBefore = pageSources(c.db, projectId);
-  const page = await c.llm.projectState({
-    project: project.key,
-    mode: 'rebuild',
-    previous,
-    digests: chosen.map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text })),
-  });
-  savePage(c, projectId, await reviewPage(c, projectId, project.key, page), true, sourcesBefore);
+  const through = Math.max(0, ...all.map((d) => d.saved_seq));
+  savePage(c, projectId, built.page, { baseVersion: state?.version ?? null, through, fullRebuild: built.fullRebuild }, sourcesBefore);
 }
 
-async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Promise<void> {
+const rebuildState = (c: Ctx, projectId: number): Promise<void> => updatePage(c, projectId, [], true);
+
+async function updateStateAfterDigest(c: Ctx, due: DueDigest): Promise<void> {
   // The page failed recently and is waiting. Do not spend a call per digest on it;
-  // flag it so the state pass rebuilds it with every digest once the wait is over.
-  if (stateIsWaiting(c.db, due.project_id, c.now())) {
-    markStateDirty(c.db, due.project_id);
-    return;
-  }
-  const state = getProjectState(c.db, due.project_id);
-  const old = state ? Date.parse(c.now()) - Date.parse(state.rebuilt_at) > REBUILD_AFTER_MS : false;
-  if (!state || state.dirty || old) return rebuildState(c, due.project_id);
-
-  const session = c.db.prepare('SELECT last_activity_at FROM sessions WHERE id = ?').get(due.session_id) as { last_activity_at: string | null } | undefined;
-  const sourcesBefore = pageSources(c.db, due.project_id);
-  const page = await c.llm.projectState({
-    project: due.project_key,
-    mode: 'merge',
-    previous: state.body,
-    digests: [{ session_id: `${due.source}:${due.source_session_id}`, title: due.title, date: session?.last_activity_at ?? null, text }],
-  });
-  savePage(c, due.project_id, await reviewPage(c, due.project_id, due.project_key, page), false, sourcesBefore);
-}
-
-/** A note is already a summary: its title is the goal and its text is the digest. The model is not called. */
-function noteDigest(c: Ctx, due: DueDigest): { body: DigestBody; text: string } {
-  const first = loadMessages(c.db, due.session_id)[0];
-  const note = first?.kind === 'text' ? first.text : '';
-  const body: DigestBody = { goal: due.title, done: [], decisions: [], open_items: [], key_refs: [] };
-  return { body, text: `Note saved from a chat: ${due.title}
-${note}` };
+  // it stays queued and the state pass rebuilds it with every digest once the wait is over.
+  if (stateIsWaiting(c.db, due.project_id, c.now())) return;
+  // Every digest saved since the page was built, not only this one: a computer's
+  // digest may be on the hub before its page update, and saving this page marks it as covered.
+  const seen = getProjectState(c.db, due.project_id)?.digests_through ?? 0;
+  const fresh = pageDigests(okDigestsForProject(c.db, due.project_id).filter((d) => d.saved_seq > seen));
+  await updatePage(c, due.project_id, fresh, false);
 }
 
 async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
   const id = `${due.source}:${due.source_session_id}`;
-  const isNote = due.source === 'note';
+  // A note saved before notes were digested at save time. Its digest needs no model.
+  if (due.source === 'note') {
+    writeNoteDigest(c.db, due.session_id, c.now());
+    return 'digest';
+  }
   let body: DigestBody;
   let text: string;
   try {
-    if (isNote) ({ body, text } = noteDigest(c, due));
-    else {
-      body = await writeDigest(c, due);
-      text = renderDigest(body);
-    }
+    body = await writeDigest(c.llm, { project: due.project_key, title: due.title, messages: loadMessages(c.db, due.session_id) }, c.maxChars);
+    text = renderDigest(body);
   } catch (e) {
     if (e instanceof LlmRefusal) {
       refuseDigest(c.db, due.session_id, e.category, c.now());
@@ -226,24 +138,21 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
     return 'error';
   }
 
-  const saved = saveDigest(c.db, { sessionRowId: due.session_id, hash: due.content_hash, model: isNote ? 'note' : c.llm.model, body, text, now: c.now() });
+  const saved = saveDigest(c.db, { sessionRowId: due.session_id, hash: due.content_hash, model: c.llm.model, body, text, now: c.now() });
   if (!saved) {
     c.log(`digest ${id}: the session changed while its digest was being written; it stays queued`);
     return 'digest';
   }
 
-  // More of this project's digests are queued: the next one would replace this
-  // page, so flag it and build it once when the queue is empty.
-  if (projectHasDueDigest(c.db, due.project_id, c.now())) {
-    markStateDirty(c.db, due.project_id);
-    return 'digest';
-  }
+  // The page is owed from here on. If more of this project's digests are queued,
+  // the next one would replace this page, so build it once when the queue is empty.
+  queueServerPage(c.db, due.project_id);
+  if (projectHasDueDigest(c.db, due.project_id, c.now())) return 'digest';
 
   try {
-    await updateStateAfterDigest(c, due, text);
+    await updateStateAfterDigest(c, due);
   } catch (e) {
-    // The digest is safe. Leave the page to the state pass.
-    markStateDirty(c.db, due.project_id);
+    // The digest is safe. The page stays queued for the state pass.
     const r = failState(c.db, due.project_id, message(e), c.now());
     c.log(`state ${due.project_key}: update failed (${message(e)}); attempt ${r.attempts}, next try ${r.next_attempt_at}`);
     return 'error';
@@ -258,7 +167,7 @@ export async function runOnce(deps: WorkerDeps): Promise<'digest' | 'state' | 'i
   const due = nextDueDigest(c.db, c.now());
   if (due) return digestOne(c, due);
 
-  const projectId = nextProjectNeedingState(c.db, c.now());
+  const projectId = nextServerPage(c.db, c.now());
   if (projectId !== null) {
     try {
       await rebuildState(c, projectId);

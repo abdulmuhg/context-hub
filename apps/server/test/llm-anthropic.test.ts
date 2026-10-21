@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LlmRefusal } from '../src/llm.js';
+import { LlmRefusal } from '@context-hub/core';
 import type { UsageRecord } from '../src/usage.js';
 import { AnthropicLlm, DEFAULT_MODEL, type ParseClient } from '../src/llm-anthropic.js';
 

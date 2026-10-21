@@ -1,5 +1,5 @@
-import type { Message } from '@context-hub/core';
-import type { DigestBody } from './digest-store.js';
+import type { Message } from './types.js';
+import type { DigestBody } from './summary-schema.js';
 
 /** Tool calls are context for the digest, not its subject; a short form is enough. */
 export const TOOL_FIELD_CAP = 500;

@@ -209,8 +209,9 @@ describe('save_note', () => {
     await callOn(saver, 'save_note', { project: 'beta', title: 'Note', text: 'the flurblewidget needs a rebuild' });
     const { data, isError } = await callOn(saver, 'search', { query: 'flurblewidget', source: 'note' });
     expect(isError).toBe(false);
-    expect(data.hits).toHaveLength(1);
-    expect(data.hits[0].session_id).toMatch(/^note:/);
+    // The note's message and its digest, which is written when the note is saved.
+    expect(data.hits.length).toBeGreaterThanOrEqual(1);
+    for (const h of data.hits) expect(h.session_id).toMatch(/^note:/);
     expect((await callOn(saver, 'search', { query: 'flurblewidget', source: 'codex' })).data.hits).toHaveLength(0);
   });
 });

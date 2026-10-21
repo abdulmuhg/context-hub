@@ -1,0 +1,9 @@
+{
+  "_note": "Hand-written guess: a refusal is reported through stop_reason.",
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "",
+  "stop_reason": "refusal",
+  "stop_details": { "category": "cyber" }
+}

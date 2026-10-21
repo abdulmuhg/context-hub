@@ -36,7 +36,7 @@ const web: WebConfig = {
 
 const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };
 
-const server = createServer(createHandler({ db, mcp: handleMcp(db), web, client, ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
+const server = createServer(createHandler({ db, mcp: handleMcp(db), web, client, serverSummaries: Boolean(process.env.ANTHROPIC_API_KEY), ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
 console.log(publicUrl ? `oauth: on, ${publicUrl}` : 'oauth: off, no PUBLIC_URL');
 console.log(`client bundle: ${client.bundle === null ? 'off' : 'on'}`);
 console.log(`dashboard: on, secure cookies ${web.secureCookies ? 'on' : 'off'}, backup status ${web.backupStatusPath ?? 'none'}`);
@@ -56,7 +56,7 @@ if (process.env.ANTHROPIC_API_KEY) {
   worker = startWorker({ db, llm: new AnthropicLlm({ model, effort, onUsage: (u) => recordUsage(db, u, new Date().toISOString()) }), maxInputTokens, ...(dailyBudgetUsd === null ? {} : { dailyBudgetMicroUsd: Math.round(dailyBudgetUsd * 1_000_000) }) });
   console.log(`digests: on, model ${model}, effort ${effort}`);
 } else {
-  console.log('digests: off, no ANTHROPIC_API_KEY. Uploads and lookups work; digests stay queued until a key is set.');
+  console.log('fallback summaries: off, no ANTHROPIC_API_KEY. Computers with Claude Code write their own summaries.');
 }
 
 server.listen(port, () => console.log(`context-hub listening on :${port}, database ${path}`));

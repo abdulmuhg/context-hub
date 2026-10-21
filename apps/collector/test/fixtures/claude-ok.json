@@ -1,0 +1,21 @@
+{
+  "_note": "Hand-written from the documented shape of `claude -p --output-format json`; not captured from a real run.",
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 4200,
+  "num_turns": 1,
+  "result": "",
+  "stop_reason": "end_turn",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "total_cost_usd": 0.0021,
+  "usage": { "input_tokens": 120, "output_tokens": 80 },
+  "modelUsage": { "claude-sonnet-5-5": { "inputTokens": 120, "outputTokens": 80 } },
+  "structured_output": {
+    "goal": "Use SQLite for the hub.",
+    "done": [],
+    "decisions": [{ "what": "Use SQLite", "why": "it needs no separate server", "seq": 1 }],
+    "open_items": [],
+    "key_refs": []
+  }
+}
