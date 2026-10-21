@@ -4,6 +4,7 @@ import type { HubScope } from '../oauth/config.js';
 import { listGrants, type CodePurpose } from '../oauth/store.js';
 import { getProject, listProjects, projectName, resolveProject } from '../store.js';
 import { listTokens } from '../tokens.js';
+import { formatUsd } from '../usage.js';
 import { computeHealth, type Health, type Problem } from './health.js';
 import { escapeHtml, pageShell } from './html.js';
 import { renderMarkdown } from './markdown.js';
@@ -48,7 +49,15 @@ const card = (label: string, value: string, sub = '', tone = ''): string =>
 const line = (p: Problem, suffix = ''): string =>
   `<li>${escapeHtml(p.text)}${p.at === undefined ? '' : ` <span class="muted">${timeTag(p.at, 'inline')}</span>`}${suffix}</li>`;
 
-function cards(h: Health): string {
+function spendCard(h: Health, limitUsd: number | null): string {
+  const { today, month } = h.cards.spend;
+  const limit = limitUsd === null ? '' : ` · limit ${formatUsd(Math.round(limitUsd * 1_000_000))}`;
+  if (month.calls === 0) return card('Model spend', '$0.00', `No model calls recorded yet${limit}`);
+  const calls = `${today.calls} call${today.calls === 1 ? '' : 's'} today`;
+  return card('Model spend', formatUsd(today.micro_usd), `${calls} · ${formatUsd(month.micro_usd)} in 30 days${limit}`);
+}
+
+function cards(h: Health, limitUsd: number | null): string {
   const sync = h.cards.lastSync;
   const backup = h.cards.lastBackup;
   const offsite =
@@ -76,6 +85,7 @@ function cards(h: Health): string {
     (backup === null
       ? card('Last backup', '—', 'No backup status yet')
       : card('Last backup', timeTag(backup.finished_at, 'ago'), `${timeTag(backup.finished_at, 'when')} · ${offsite}`)) +
+    spendCard(h, limitUsd) +
     `</section>`
   );
 }
@@ -200,7 +210,7 @@ export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string):
     csrf,
     body:
       `<h1>Overview</h1>` +
-      cards(health) +
+      cards(health, cfg.dailyBudgetUsd) +
       problems +
       notices +
       `<section class="card"><h2>Recent activity</h2>${activityTable(rows)}<p class="card-foot"><a href="/activity">All activity</a></p></section>` +

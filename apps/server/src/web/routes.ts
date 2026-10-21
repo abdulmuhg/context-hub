@@ -29,6 +29,8 @@ export interface WebConfig {
   secureCookies: boolean;
   /** The hub's own origin, used to refuse cross-site actions. Null when PUBLIC_URL is unset (tests, local runs). */
   publicOrigin: string | null;
+  /** The daily limit on model spend in US dollars (UTC day), or null for none. */
+  dailyBudgetUsd: number | null;
 }
 
 export interface WebCtx {

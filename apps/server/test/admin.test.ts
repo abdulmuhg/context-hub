@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runAdmin, type AdminIo } from '../src/admin.js';
+import { recordUsage } from '../src/usage.js';
 import { openDb } from '../src/db.js';
 import { consumeConnectCode, createGrant, issueTokens } from '../src/oauth/store.js';
 import { upsertSession } from '../src/store.js';
@@ -141,5 +142,38 @@ describe('hub-admin oauth', () => {
     expect(await runAdmin(['oauth', 'revoke', 'abc'], io)).toBe(1);
     expect(await runAdmin(['oauth', 'revoke'], io)).toBe(1);
     expect(err.join('\n')).toMatch(/oauth list/);
+  });
+});
+
+describe('hub-admin usage', () => {
+  const call = (at: string, over: Partial<Parameters<typeof recordUsage>[1]> = {}) =>
+    recordUsage(io.db, { model: 'claude-haiku-5-5', kind: 'digest', project: 'github.com/me/alpha', input_tokens: 10_000, output_tokens: 1_000, cache_read_tokens: 0, cache_write_tokens: 0, ...over }, at);
+
+  it('prints a line per day, the breakdowns and the count over 100K', async () => {
+    call('2026-10-11T12:00:00.000Z', { kind: 'review' });
+    call('2026-10-11T13:00:00.000Z', { input_tokens: 150_000 });
+    call('2026-10-10T12:00:00.000Z', { project: 'local:beta' });
+    call('2026-10-01T12:00:00.000Z'); // outside --days 2
+    expect(await runAdmin(['usage', '--days', '2'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/2026-10-10 +1 calls +10000 in +1000 out +\$0\.00/);
+    expect(text).toMatch(/2026-10-11 +2 calls +160000 in/);
+    expect(text).not.toContain('2026-10-01');
+    expect(text).toMatch(/By kind\n(.*\n)*.*review/);
+    expect(text).toMatch(/By project\n(.*\n)*.*github\.com\/me\/alpha/);
+    expect(text).toContain('local:beta');
+    expect(text).toContain('over the 100K price step: 1 call');
+  });
+
+  it('defaults to 7 days and rejects a bad --days', async () => {
+    expect(await runAdmin(['usage'], io)).toBe(0);
+    expect(out.filter((l) => /^2026-10-\d\d /.test(l))).toHaveLength(7);
+    expect(await runAdmin(['usage', '--days', '0'], io)).toBe(1);
+  });
+
+  it('shows tokens and a dash for the cost of a model with no known price', async () => {
+    call('2026-10-11T12:00:00.000Z', { model: 'some-other-model' });
+    await runAdmin(['usage', '--days', '1'], io);
+    expect(out.join('\n')).toMatch(/2026-10-11 +1 calls +10000 in +1000 out +—/);
   });
 });

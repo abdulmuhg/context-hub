@@ -11,7 +11,7 @@ let db: Db;
 let url: string;
 let close: () => Promise<void>;
 
-const cfg: WebConfig = { imageTag: null, startedAt: START.toISOString(), digestsOn: false, backupStatusPath: null, secureCookies: false, publicOrigin: null };
+const cfg: WebConfig = { imageTag: null, startedAt: START.toISOString(), digestsOn: false, backupStatusPath: null, secureCookies: false, publicOrigin: null, dailyBudgetUsd: null };
 
 beforeEach(async () => {
   db = openDb(':memory:');

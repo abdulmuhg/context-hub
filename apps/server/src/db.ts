@@ -201,6 +201,22 @@ const MIGRATIONS: string[] = [
   UPDATE activity SET actor = substr(actor, 10, length(actor) - 10) WHERE actor LIKE 'your PC (%)';
   UPDATE activity SET actor = 'a computer' WHERE actor = 'your PC';
   `,
+  `
+  -- Real token counts and cost of every model call. Counts only: no prompt or transcript text.
+  CREATE TABLE model_usage (
+    id                 INTEGER PRIMARY KEY,
+    at                 TEXT NOT NULL,
+    model              TEXT NOT NULL,
+    kind               TEXT NOT NULL,
+    project_key        TEXT,
+    input_tokens       INTEGER NOT NULL,
+    output_tokens      INTEGER NOT NULL,
+    cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_micro_usd     INTEGER
+  );
+  CREATE INDEX model_usage_at ON model_usage(at);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

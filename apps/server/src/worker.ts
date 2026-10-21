@@ -10,6 +10,7 @@ import {
   nextDueDigest,
   nextProjectNeedingState,
   okDigestsForProject,
+  projectHasDueDigest,
   refuseDigest,
   saveDigest,
   saveProjectState,
@@ -19,10 +20,11 @@ import {
 } from './digest-store.js';
 import { LlmRefusal, type Llm, type StatePage } from './llm.js';
 import { applyReview } from './page-review.js';
+import { budgetReached } from './usage.js';
 import { renderDigest, renderLines, splitParts } from './transcript.js';
 
-export const CHARS_PER_TOKEN = 3;
-export const DEFAULT_MAX_INPUT_TOKENS = 80000;
+export const CHARS_PER_TOKEN = 2;
+export const DEFAULT_MAX_INPUT_TOKENS = 60000;
 export const REBUILD_AFTER_MS = 7 * 24 * 60 * 60_000;
 
 export interface WorkerDeps {
@@ -30,6 +32,8 @@ export interface WorkerDeps {
   llm: Llm;
   now?: () => Date;
   maxInputTokens?: number;
+  /** Soft daily limit on model spend (UTC day). Work waits for the next day once it is reached. */
+  dailyBudgetMicroUsd?: number;
   log?: (line: string) => void;
 }
 
@@ -228,6 +232,13 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
     return 'digest';
   }
 
+  // More of this project's digests are queued: the next one would replace this
+  // page, so flag it and build it once when the queue is empty.
+  if (projectHasDueDigest(c.db, due.project_id, c.now())) {
+    markStateDirty(c.db, due.project_id);
+    return 'digest';
+  }
+
   try {
     await updateStateAfterDigest(c, due, text);
   } catch (e) {
@@ -243,6 +254,7 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
 /** Does at most one job. */
 export async function runOnce(deps: WorkerDeps): Promise<'digest' | 'state' | 'idle' | 'error'> {
   const c = context(deps);
+  if (deps.dailyBudgetMicroUsd !== undefined && budgetReached(c.db, deps.dailyBudgetMicroUsd, c.now())) return 'idle';
   const due = nextDueDigest(c.db, c.now());
   if (due) return digestOne(c, due);
 

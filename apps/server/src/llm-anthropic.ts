@@ -4,6 +4,7 @@ import type { DigestBody } from './digest-store.js';
 import { DigestSchema, LlmRefusal, ReviewSchema, StateSchema, type DigestRequest, type Llm, type ReviewRequest, type StatePage, type StateRequest } from './llm.js';
 import { CURRENT_STATE, OPEN_ITEMS, sectionBullets, type PageReview } from './page-review.js';
 import { renderDigest } from './transcript.js';
+import type { UsageKind, UsageRecord } from './usage.js';
 
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -83,14 +84,16 @@ export class AnthropicLlm implements Llm {
   readonly model: string;
   private readonly client: ParseClient;
   private readonly effort: Effort;
+  private readonly onUsage: ((u: UsageRecord) => void) | undefined;
 
-  constructor(opts: { client?: ParseClient; model?: string; effort?: Effort } = {}) {
+  constructor(opts: { client?: ParseClient; model?: string; effort?: Effort; onUsage?: (u: UsageRecord) => void } = {}) {
+    this.onUsage = opts.onUsage;
     this.client = opts.client ?? new Anthropic();
     this.model = opts.model ?? DEFAULT_MODEL;
     this.effort = opts.effort ?? 'low';
   }
 
-  private async ask<T>(system: string, user: string, schema: Parameters<typeof zodOutputFormat>[0]): Promise<T> {
+  private async ask<T>(system: string, user: string, schema: Parameters<typeof zodOutputFormat>[0], kind: UsageKind, project: string | null): Promise<T> {
     const response = await this.client.messages.parse({
       model: this.model,
       max_tokens: 16000,
@@ -98,6 +101,23 @@ export class AnthropicLlm implements Llm {
       messages: [{ role: 'user', content: user }],
       output_config: { effort: this.effort, format: zodOutputFormat(schema) },
     });
+    // Refusals and incomplete answers are billed too, so record before checking them.
+    const usage = response.usage;
+    if (usage && this.onUsage) {
+      try {
+        this.onUsage({
+          model: this.model,
+          kind,
+          project,
+          input_tokens: usage.input_tokens ?? 0,
+          output_tokens: usage.output_tokens ?? 0,
+          cache_read_tokens: usage.cache_read_input_tokens ?? 0,
+          cache_write_tokens: usage.cache_creation_input_tokens ?? 0,
+        });
+      } catch (e) {
+        console.error(`usage not recorded: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     // A refusal is a normal HTTP 200 response, not an exception.
     if (response.stop_reason === 'refusal') throw new LlmRefusal(response.stop_details?.category ?? 'unspecified');
     if (response.stop_reason === 'max_tokens' || response.parsed_output == null) {
@@ -109,12 +129,12 @@ export class AnthropicLlm implements Llm {
   digest(req: DigestRequest): Promise<DigestBody> {
     const part = req.part ? `\nThis is part ${req.part.index} of ${req.part.total} of a long session. Digest only this part.` : '';
     const user = `Project: ${req.project}\nSession title: ${req.title}${part}\n\n<transcript>\n${req.transcript}\n</transcript>`;
-    return this.ask<DigestBody>(DIGEST_SYSTEM, user, DigestSchema);
+    return this.ask<DigestBody>(DIGEST_SYSTEM, user, DigestSchema, 'digest', req.project);
   }
 
   mergeDigests(req: { project: string; title: string; parts: DigestBody[] }): Promise<DigestBody> {
     const parts = req.parts.map((p, i) => `<part number="${i + 1}">\n${renderDigest(p)}\n</part>`).join('\n');
-    return this.ask<DigestBody>(MERGE_SYSTEM, `Project: ${req.project}\nSession title: ${req.title}\n\n${parts}`, DigestSchema);
+    return this.ask<DigestBody>(MERGE_SYSTEM, `Project: ${req.project}\nSession title: ${req.title}\n\n${parts}`, DigestSchema, 'merge', req.project);
   }
 
   async projectState(req: StateRequest): Promise<StatePage> {
@@ -126,7 +146,7 @@ export class AnthropicLlm implements Llm {
         ? 'Fold the new session digest below into the previous page. The result must still fit the length limits: make room by dropping the oldest or least important entries, not by exceeding them.'
         : 'Write the page from scratch from the session digests below, which are in order from oldest to newest.';
     const previous = req.previous === null ? '' : `\n<previous_page>\n${req.previous}\n</previous_page>\n`;
-    const page = await this.ask<StatePage>(STATE_SYSTEM, `Project: ${req.project}\n${task}\n${previous}\n${digests}`, StateSchema);
+    const page = await this.ask<StatePage>(STATE_SYSTEM, `Project: ${req.project}\n${task}\n${previous}\n${digests}`, StateSchema, 'state', req.project);
     if (wordCount(page.body) <= STATE_HARD_WORDS) return page;
 
     // Merging one digest at a time made pages grow without bound in practice.
@@ -136,6 +156,8 @@ export class AnthropicLlm implements Llm {
       STATE_SYSTEM,
       `Project: ${req.project}\nThe page below is too long. Rewrite it to fit the limits: under 600 words in total, with the per-section limits. Keep what someone continuing the project needs most.\n\n<page>\n${page.body}\n</page>`,
       StateSchema,
+      'shorten',
+      req.project,
     );
     return wordCount(shorter.body) <= STATE_HARD_WORDS ? shorter : { summary: shorter.summary, body: cutToSections(shorter.body, STATE_HARD_WORDS) };
   }
@@ -155,6 +177,6 @@ export class AnthropicLlm implements Llm {
       `<page>\n${req.page.body}\n</page>`,
       `Session digests, newest first:\n${digests}`,
     ].join('\n\n');
-    return this.ask<PageReview>(REVIEW_SYSTEM, user, ReviewSchema);
+    return this.ask<PageReview>(REVIEW_SYSTEM, user, ReviewSchema, 'review', req.project);
   }
 }

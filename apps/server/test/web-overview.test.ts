@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { logActivity } from '../src/activity.js';
 import { openDb, type Db } from '../src/db.js';
 import { failDigest, markDigestPending, refuseDigest } from '../src/digest-store.js';
+import { recordUsage } from '../src/usage.js';
 import { createConnectCode } from '../src/oauth/store.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import type { WebConfig } from '../src/web/routes.js';
@@ -63,6 +64,7 @@ beforeEach(async () => {
     backupStatusPath: statusPath,
     secureCookies: false,
     publicOrigin: null,
+    dailyBudgetUsd: null,
   };
   const s = await startServer({ db, now: () => clock, limiter: new AuthLimiter(() => clock.getTime()), web: cfg });
   url = s.url;
@@ -101,6 +103,29 @@ describe('the Overview page', () => {
     // One project, one session, and the run the collector reported.
     expect(html).toMatch(/Projects<\/[a-z]+><[^>]*>1</);
     expect(html).toMatch(/2 uploaded/);
+  });
+
+  it('shows model spend: today, calls today and the 30-day total', async () => {
+    const call = (at: string) =>
+      recordUsage(db, { model: 'claude-haiku-5-5', kind: 'review', project: 'p', input_tokens: 1_000_000, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }, at);
+    call('2026-10-19T12:00:00.000Z'); // yesterday: $0.50 over the step
+    call('2026-10-20T01:00:00.000Z');
+    const html = await overview();
+    expect(html).toContain('Model spend');
+    expect(html).toContain('$0.50');
+    expect(html).toContain('1 call today · $1.00 in 30 days');
+  });
+
+  it('names the daily limit on the card when one is set', async () => {
+    cfg.dailyBudgetUsd = 5;
+    expect(await overview()).toContain('No model calls recorded yet · limit $5.00');
+  });
+
+  it('shows $0.00 and a hint when no call has been recorded', async () => {
+    const html = await overview();
+    expect(html).toContain('Model spend');
+    expect(html).toContain('$0.00');
+    expect(html).toContain('No model calls recorded yet');
   });
 
   it('shows the deployed version and when the server started', async () => {
