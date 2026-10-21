@@ -47,12 +47,19 @@ const DATE = /^\d{4}-\d{2}-\d{2}/;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 
+/**
+ * Digest hits come first, then titles, then messages and tool calls. Each tier is its own ranked
+ * query, so a common word is answered from the digests without ranking every message it is in.
+ */
+const TIERS = ['kind : "digest"', 'kind : "title"', '( kind : "message" OR kind : "tool" )'];
+
 export function search(db: Db, opts: SearchOptions): SearchHit[] {
   const fts = toFtsQuery(opts.query);
   if (fts === null) return [];
 
-  const where = ['search_index MATCH ?'];
-  const params: (string | number)[] = [fts];
+  // The words are matched in the body only, and the kind column weighs nothing in the rank.
+  const where = ['search_index MATCH ?', "rank MATCH 'bm25(1.0, 0.0)'"];
+  const params: (string | number)[] = [];
   if (opts.projectId !== undefined) {
     where.push('s.project_id = ?');
     params.push(opts.projectId);
@@ -70,21 +77,19 @@ export function search(db: Db, opts: SearchOptions): SearchHit[] {
     params.push(opts.until.slice(0, 10));
   }
   const limit = Math.max(1, Math.min(MAX_LIMIT, Math.floor(opts.limit ?? DEFAULT_LIMIT)));
-  params.push(limit);
 
-  const rows = db
-    .prepare(
-      `SELECT s.source, s.source_session_id, s.title, s.last_activity_at, s.parent, p.key AS project,
-              search_index.kind AS kind, search_index.seq AS seq,
-              snippet(search_index, 0, '[', ']', '…', 24) AS snippet
-       FROM search_index
-       JOIN sessions s ON s.id = CAST(search_index.session_id AS INTEGER)
-       JOIN projects p ON p.id = s.project_id
-       WHERE ${where.join(' AND ')}
-       ORDER BY (search_index.kind = 'digest') DESC, (search_index.kind = 'title') DESC, rank
-       LIMIT ?`,
-    )
-    .all(...params) as {
+  const tier = db.prepare(
+    `SELECT s.source, s.source_session_id, s.title, s.last_activity_at, s.parent, p.key AS project,
+            search_index.kind AS kind, search_index.seq AS seq,
+            snippet(search_index, 0, '[', ']', '…', 24) AS snippet
+     FROM search_index
+     JOIN sessions s ON s.id = CAST(search_index.session_id AS INTEGER)
+     JOIN projects p ON p.id = s.project_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY rank
+     LIMIT ?`,
+  );
+  const rows: {
     source: string;
     source_session_id: string;
     title: string;
@@ -94,7 +99,11 @@ export function search(db: Db, opts: SearchOptions): SearchHit[] {
     kind: SearchHit['kind'];
     seq: number;
     snippet: string;
-  }[];
+  }[] = [];
+  for (const kinds of TIERS) {
+    if (rows.length >= limit) break;
+    rows.push(...(tier.all(`body : ( ${fts} ) AND ${kinds}`, ...params, limit - rows.length) as typeof rows));
+  }
 
   return rows.map((r) => ({
     session_id: publicId(r.source, r.source_session_id),

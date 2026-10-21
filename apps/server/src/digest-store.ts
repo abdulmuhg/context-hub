@@ -1,5 +1,6 @@
 import { renderDigest, type DigestBody, type DigestItem, type UploadDigest } from '@context-hub/core';
 import type { Db } from './db.js';
+import { deleteDigestRow, searchRowWriter } from './search-rows.js';
 
 export type { DigestBody, DigestItem };
 
@@ -83,8 +84,8 @@ export function saveDigest(
                           saved_seq = (SELECT COALESCE(MAX(saved_seq), 0) + 1 FROM digests)
        WHERE session_id = ?`,
     ).run(args.hash, args.model, JSON.stringify(args.body), args.text, args.now, args.writtenBy ?? null, args.sessionRowId);
-    db.prepare("DELETE FROM search_index WHERE session_id = ? AND kind = 'digest'").run(args.sessionRowId);
-    db.prepare("INSERT INTO search_index(body, kind, session_id, seq) VALUES (?, 'digest', ?, -1)").run(args.text, args.sessionRowId);
+    deleteDigestRow(db, args.sessionRowId);
+    searchRowWriter(db)(args.sessionRowId, 'digest', -1, args.text);
     return true;
   })();
 }
@@ -107,7 +108,7 @@ export function markSummaryToFollow(db: Db, sessionRowId: number, now: string): 
                           error = NULL, summary_to_follow = 1, updated_at = ?
        WHERE session_id = ?`,
     ).run(now, sessionRowId);
-    db.prepare("DELETE FROM search_index WHERE session_id = ? AND kind = 'digest'").run(sessionRowId);
+    deleteDigestRow(db, sessionRowId);
     const session = db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(sessionRowId) as { project_id: number } | undefined;
     if (session) markStateDirty(db, session.project_id);
   })();

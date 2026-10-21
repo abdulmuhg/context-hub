@@ -1,4 +1,5 @@
 import { DigestSchema, type HashedSession, type Message, type UploadDigest } from '@context-hub/core';
+import { MAX_SEQ } from './search-rows.js';
 
 export class HttpError extends Error {
   constructor(
@@ -76,6 +77,7 @@ export function parseSession(body: unknown, source: string, id: string): HashedS
   const seen = new Set<number>();
   for (const m of messages) {
     if (m.seq < 0) bad('messages', `has a negative seq (${m.seq})`);
+    if (m.seq > MAX_SEQ) bad('messages', `has a seq above ${MAX_SEQ} (${m.seq})`);
     if (seen.has(m.seq)) bad('messages', `has two messages with seq ${m.seq}`);
     seen.add(m.seq);
   }

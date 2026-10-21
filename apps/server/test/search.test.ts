@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
+import { saveDigest } from '../src/digest-store.js';
 import { search, toFtsQuery } from '../src/search.js';
 import { resolveProject, upsertSession } from '../src/store.js';
 import { makeSession, text, tool } from './helpers.js';
@@ -78,6 +79,19 @@ describe('search', () => {
     const hits = search(db, { query: 'redis' });
     expect(hits[0]).toMatchObject({ kind: 'title', seq: null, session_id: 'claude-code:a1' });
     expect(hits.map((h) => h.kind)).toContain('message');
+  });
+
+  it('puts digest hits first, then titles, then messages, filling the limit in that order', () => {
+    upsertSession(db, makeSession({ source_session_id: 'd1', title: 'Unrelated', messages: [text(0, 'user', 'a kiwi in a message')] }), NOW);
+    upsertSession(db, makeSession({ source_session_id: 't1', title: 'Kiwi title', messages: [text(0, 'user', 'nothing here')] }), NOW);
+    const d1 = db.prepare("SELECT id, content_hash FROM sessions WHERE source_session_id = 'd1'").get() as { id: number; content_hash: string };
+    saveDigest(db, { sessionRowId: d1.id, hash: d1.content_hash, model: 'm', body: { goal: 'g', done: [], decisions: [], open_items: [], key_refs: [] }, text: 'Goal: the kiwi', now: NOW });
+    expect(search(db, { query: 'kiwi' }).map((h) => `${h.session_id} ${h.kind}`)).toEqual(['claude-code:d1 digest', 'claude-code:t1 title', 'claude-code:d1 message']);
+    expect(search(db, { query: 'kiwi', limit: 2 }).map((h) => h.kind)).toEqual(['digest', 'title']);
+  });
+
+  it.each([['digest'], ['title'], ['message'], ['tool']])('does not match "%s" against the kind of a row', (query) => {
+    expect(search(db, { query })).toEqual([]);
   });
 
   it('finds tool calls by command text', () => {
