@@ -145,6 +145,14 @@ describe('PUT /api/sessions', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 });
   });
 
+  it('accepts a document whose id holds a project key and a path', async () => {
+    const id = 'github.com/me/alpha#knowledge/tickets/T-1.md';
+    const doc = makeSession({ source: 'doc', source_session_id: id });
+    const res = await put(doc, ingest, `/api/sessions/doc/${encodeURIComponent(id)}`);
+    expect(res.status).toBe(200);
+    expect(db.prepare('SELECT source, source_session_id FROM sessions').get()).toEqual({ source: 'doc', source_session_id: id });
+  });
+
   // Review Focus 2
   it('400 when the URL and the body name different sessions', async () => {
     const s = makeSession();

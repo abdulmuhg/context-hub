@@ -97,6 +97,14 @@ describe('the healthy fixture', () => {
     expect(h.cards.lastSync).toMatchObject({ uploaded: 2, errors: 0, finishedAt: ago(HOUR) });
     expect(h.cards.lastBackup).toEqual(GOOD_STATUS);
   });
+
+  it('leaves documents out of the sessions card', () => {
+    db.prepare(
+      `INSERT INTO sessions(source, source_session_id, project_id, parent, title, last_activity_at, content_hash, synced_at)
+       VALUES ('doc', 'local:alpha#kb/INDEX.md', ?, NULL, 'Index', ?, 'h1', ?)`,
+    ).run(projectId(), ago(DAY), ago(DAY));
+    expect(computeHealth(db, cfg(), NOW).cards.sessions).toBe(2);
+  });
 });
 
 describe('problem rules', () => {

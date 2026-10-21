@@ -225,7 +225,7 @@ describe('tool descriptions', () => {
     upsertSession(db, makeSession({ source_session_id: 'a2', last_activity_at: '2026-10-10T10:00:00.000Z' }), NOW);
     expect(await describeTool(client, 'get_project')).toContain('Projects: alpha, beta.');
     expect(await describeTool(client, 'list_projects')).toContain('Projects in the hub: alpha, beta.');
-    expect(await describeTool(client, 'search')).toContain('Covers the coding sessions and notes of: alpha, beta.');
+    expect(await describeTool(client, 'search')).toContain('Covers the coding sessions, notes and documents of: alpha, beta.');
   });
 
   it('builds the description from the database on every request', async () => {
@@ -254,9 +254,9 @@ describe('tool descriptions', () => {
 describe('the exact description of every tool', () => {
   const NAMES = 'alpha, beta';
   const expected = (names: string): Record<string, string> => ({
-    list_projects: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, and notes saved from chats). Projects in the hub: ${names}.`,
-    get_project: `Catch up on one of the user's software projects: its current state and recent coding sessions. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
-    search: `Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match. Covers the coding sessions and notes of: ${names}.`,
+    list_projects: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, notes saved from chats, and documents synced from their notes files). Projects in the hub: ${names}.`,
+    get_project: `Catch up on one of the user's software projects: its current state, recent coding sessions and its documents. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
+    search: `Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match. Covers the coding sessions, notes and documents of: ${names}.`,
     save_note: `Save a short note into one of the user's existing projects, so it is there in later sessions in any tool. Use only when the user asks to save, remember or record something. Save it to the project the user names; a project can share its name with this hub, so "save to context-hub" means the project called context-hub. If the user names no project, or the name could mean more than one, ask which project before saving. Never include passwords, keys, card numbers or phone numbers. Projects: ${names}.`,
   });
 

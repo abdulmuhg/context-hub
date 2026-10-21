@@ -1,3 +1,4 @@
+import { symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { claudeCode } from '../src/adapters/claude-code.js';
@@ -36,6 +37,19 @@ describe('claudeCode.discover', () => {
 
   it('returns nothing when the tool is not installed', () => {
     expect(claudeCode.discover(tempDir())).toEqual([]);
+  });
+
+  it('follows links to transcripts kept elsewhere, such as an archive', () => {
+    const archive = tempDir();
+    writeJsonl(join(archive, 'p', `${SID}.jsonl`), [rec('user', 'archived')]);
+    writeJsonl(join(archive, 'p', SID, 'subagents', 'agent-a1.jsonl'), [rec('user', 'sub')]);
+    const h = tempDir();
+    const proj = join(h, '.claude', 'projects', 'C--work-demo');
+    writeRaw(join(proj, 'keep.txt'), '');
+    symlinkSync(join(archive, 'p', `${SID}.jsonl`), join(proj, `${SID}.jsonl`));
+    symlinkSync(join(archive, 'p', SID), join(proj, SID));
+    const ids = claudeCode.discover(h).map((f) => f.id).sort();
+    expect(ids).toEqual([SID, `${SID}/agent-a1`]);
   });
 });
 

@@ -273,7 +273,7 @@ export function projectsPage(db: Db, csrf: string): string {
   const body =
     projects.length === 0
       ? `<p class="muted">No projects yet.</p>`
-      : `<div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Sessions</th><th>Last activity</th>` +
+      : `<div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Sessions</th><th class="num">Docs</th><th>Last activity</th>` +
         `<th>Last sync</th><th>Summary</th></tr></thead><tbody>` +
         projects
           .map(
@@ -281,6 +281,7 @@ export function projectsPage(db: Db, csrf: string): string {
               `<tr><td class="name"><a href="/projects/${escapeHtml(encodeURIComponent(p.key))}">${escapeHtml(p.name)}</a>` +
               `<span class="sub mono">${escapeHtml(p.key)}</span></td>` +
               `<td class="num">${p.session_count}</td>` +
+              `<td class="num">${p.doc_count}</td>` +
               `<td>${p.last_activity_at === null ? '' : timeTag(p.last_activity_at)}</td>` +
               `<td>${timeTag(p.last_synced_at)}</td>` +
               `<td>${p.summary === null ? `<span class="muted">No summary yet</span>` : escapeHtml(p.summary)}</td></tr>`,
@@ -332,6 +333,24 @@ export function projectPage(db: Db, key: string, csrf: string): string | null {
           .join('') +
         `</tbody></table></div>`;
 
+  const documents =
+    view.document_count === 0
+      ? ''
+      : `<section class="card"><h2>Documents</h2>` +
+        `<div class="table-wrap"><table><thead><tr><th>Path</th><th>Title</th><th>Updated</th></tr></thead><tbody>` +
+        view.documents
+          .map(
+            (d) =>
+              `<tr><td class="mono">${escapeHtml(d.path)}</td><td>${escapeHtml(d.title)}</td>` +
+              `<td>${d.updated_at === null ? '' : timeTag(d.updated_at)}</td></tr>`,
+          )
+          .join('') +
+        `</tbody></table></div>` +
+        (view.document_count > view.documents.length
+          ? `<p class="footnote card-foot">The ${view.documents.length} most recently changed of ${view.document_count}.</p>`
+          : '') +
+        `</section>`;
+
   return pageShell({
     title: view.name,
     active: 'projects',
@@ -340,6 +359,7 @@ export function projectPage(db: Db, key: string, csrf: string): string | null {
       `<h1>${escapeHtml(view.name)}</h1><p class="intro mono">${escapeHtml(view.key)}</p>` +
       state +
       `<section class="card"><h2>Recent sessions and notes</h2>${recent}</section>` +
+      documents +
       `<p class="footnote">Last synced ${timeTag(view.last_synced_at, 'inline')}</p>`,
   });
 }

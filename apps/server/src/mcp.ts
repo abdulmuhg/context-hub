@@ -15,6 +15,7 @@ export const INSTRUCTIONS = [
   'When the user names one of their software projects, use these tools rather than searching past chats: coding sessions are stored here, not in the chat app.',
   'Use search to find a specific decision or detail, and get_session to read the original conversation behind a result.',
   'Digests are summaries and can be wrong; when a detail matters, open the session with get_session.',
+  'Documents (source "doc") are the user\'s own notes files, such as ticket write-ups, topic notes and saved memories, kept in step with their computer on every sync. They hold conclusions the user chose to keep, so when one covers the question, read it with get_session before relying on digests. get_project lists the most recently changed; find others with search and source "doc".',
   'A session with digest_status "pending" or a digest marked stale has changed since its digest was written; a state page marked stale may describe work that was removed. In those cases read the session itself before relying on the summary.',
   'Every result carries last_synced_at. If that time is old, tell the user the context may be behind.',
   'This is a briefing, not a live status. It records what was said in conversations, so it misses anything done outside a conversation: a pull request merged on the website, a branch pushed or deleted, a deploy, an environment variable changed. Before acting on or recommending a step that depends on such state, verify it with the tools you have (git status, the pull request, the running service). If you cannot check, say that the state is as of the last recorded session and may have changed.',
@@ -79,7 +80,7 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false, act
   server.registerTool(
     'list_projects',
     {
-      description: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, and notes saved from chats). Projects in the hub: ${names}.`,
+      description: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, notes saved from chats, and documents synced from their notes files). Projects in the hub: ${names}.`,
       inputSchema: {},
     },
     async () => {
@@ -92,16 +93,17 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false, act
   server.registerTool(
     'get_project',
     {
-      description: `Catch up on one of the user's software projects: its current state and recent coding sessions. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
+      description: `Catch up on one of the user's software projects: its current state, recent coding sessions and its documents. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
       inputSchema: {
         project: z.string().describe('A project key or name, for example "jsonroom" or "github.com/abdulmuhg/jsonroom"'),
         sessions: z.number().int().min(1).max(20).optional().describe('How many recent sessions to include. Default 5.'),
+        documents: z.number().int().min(0).max(200).optional().describe('How many of the most recently changed documents to list. Default 30.'),
       },
     },
-    async ({ project, sessions }) => {
+    async ({ project, sessions, documents }) => {
       const resolved = resolveProject(db, project);
       if (!resolved.ok) return unknownProject(project, resolved.candidates);
-      const result = ok(getProject(db, resolved.id, sessions ?? 5));
+      const result = ok(getProject(db, resolved.id, sessions ?? 5, documents ?? 30));
       record({ direction: 'out', action: 'get_project', projectKey: resolved.key, sessionRef: null, detail: null });
       return result;
     },
@@ -110,11 +112,11 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false, act
   server.registerTool(
     'search',
     {
-      description: `Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match. Covers the coding sessions and notes of: ${names}.`,
+      description: `Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match. Covers the coding sessions, notes and documents of: ${names}.`,
       inputSchema: {
         query: z.string().describe('Words or "quoted phrases" to look for'),
         project: z.string().optional().describe('Limit to one project (key or name)'),
-        source: z.enum(['claude-code', 'codex', 'antigravity', 'note']).optional().describe('Limit to one tool'),
+        source: z.enum(['claude-code', 'codex', 'antigravity', 'note', 'doc']).optional().describe('Limit to one tool, or "doc" for documents'),
         since: z.string().optional().describe('Earliest date, YYYY-MM-DD'),
         until: z.string().optional().describe('Latest date, YYYY-MM-DD'),
         limit: z.number().int().min(1).max(50).optional().describe('Maximum results. Default 10.'),

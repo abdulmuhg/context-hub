@@ -2,7 +2,18 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Level, PersonalEntry } from '@context-hub/core';
+import { canonicalKey, type Level, type PersonalEntry } from '@context-hub/core';
+
+export interface DocFolder {
+  /** The project key the documents belong to. */
+  project: string;
+  /** Absolute path of the folder. */
+  path: string;
+  /** Names the folder in document ids, so the same notes get the same id on every computer. */
+  label: string;
+  /** File and folder names to leave out, at any depth. */
+  exclude: string[];
+}
 
 export interface Config {
   server_url: string;
@@ -17,6 +28,8 @@ export interface Config {
   /** Session key -> project key. */
   assignments: Record<string, string>;
   personal: { card: Level; list: Level };
+  /** Folders of Markdown notes uploaded with their project. */
+  docs: DocFolder[];
 }
 
 export interface StateEntry {
@@ -46,7 +59,8 @@ const defaultConfig = (): Config => ({
   declined: [],
   aliases: {},
   assignments: {},
-  personal: { card: 'warn', list: 'warn' },
+  personal: { card: 'partial', list: 'warn' },
+  docs: [],
 });
 
 function readJson<T>(dir: string, name: string, fallback: T): T {
@@ -73,7 +87,15 @@ function writePrivate(dir: string, name: string, text: string): void {
 export function loadConfig(dir: string): Config {
   const saved = readJson<Partial<Config>>(dir, 'config.json', {});
   const d = defaultConfig();
-  return { ...d, ...saved, personal: { ...d.personal, ...(saved.personal ?? {}) } };
+  const cfg = { ...d, ...saved, personal: { ...d.personal, ...(saved.personal ?? {}) } };
+  // Keys saved before SSH host aliases were folded still name the same projects.
+  const keys = (list: string[]) => [...new Set(list.map(canonicalKey))];
+  return {
+    ...cfg,
+    tracked: keys(cfg.tracked),
+    declined: keys(cfg.declined),
+    docs: cfg.docs.map((f) => ({ ...f, project: canonicalKey(f.project) })),
+  };
 }
 
 export function saveConfig(dir: string, cfg: Config): void {
@@ -118,8 +140,9 @@ export function saveToken(dir: string, token: string): void {
  * 1: first release
  * 2: account id read from bridge-session records; hub tokens stripped
  * 3: project decided by vote over every folder a session ran in, not the first
+ * 4: SSH host aliases folded into their host; a deleted Claude Code worktree filed under its repo
  */
-export const COLLECTOR_REVISION = 3;
+export const COLLECTOR_REVISION = 4;
 
 /** Covers everything that changes what a session looks like when uploaded. */
 export function settingsFingerprint(cfg: Config, entries: PersonalEntry[], revision: number = COLLECTOR_REVISION): string {

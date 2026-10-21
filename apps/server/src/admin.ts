@@ -118,12 +118,13 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
         | undefined;
       if (!row) throw new Fail(`No session with id "${values.session}".`);
       if (row.parent !== null) throw new Fail('That is a subagent transcript. Subagents are covered by their parent session; redigest the parent.');
+      if (parts.source === 'doc') throw new Fail('That is a document. Documents are read as they are and have no digest.');
       markDigestPending(io.db, row.id, now);
       io.out(`Queued ${values.session}.`);
       return 0;
     }
     const project = projectOrFail(io, positionals[0]);
-    const rows = io.db.prepare('SELECT id FROM sessions WHERE project_id = ? AND parent IS NULL').all(project.id) as { id: number }[];
+    const rows = io.db.prepare("SELECT id FROM sessions WHERE project_id = ? AND parent IS NULL AND source <> 'doc'").all(project.id) as { id: number }[];
     for (const r of rows) markDigestPending(io.db, r.id, now);
     io.out(`Queued ${rows.length} session${rows.length === 1 ? '' : 's'} of ${project.key}.`);
     return 0;

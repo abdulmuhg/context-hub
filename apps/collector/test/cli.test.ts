@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newProjects, run, type Io } from '../src/cli.js';
 import { SLASH_COMMANDS } from '../src/commands.js';
-import { loadConfig, loadPersonal, loadToken } from '../src/config.js';
+import { loadConfig, loadPersonal, loadToken, saveConfig } from '../src/config.js';
 import { tempDir, writeJsonl } from './helpers.js';
 
 const S1 = '11111111-1111-4111-8111-111111111111';
@@ -471,5 +471,76 @@ describe('hub sync: summary and usage', () => {
       expect(starts(lines.slice(0, at), c)).toBe(false);
       expect(starts(lines.slice(at), c)).toBe(true);
     }
+  });
+});
+
+describe('hub docs', () => {
+  beforeEach(() => {
+    saveConfig(io.hubDir, { ...loadConfig(io.hubDir), tracked: [KEY] });
+  });
+
+  it('adds a folder under the project of the repo it sits in', async () => {
+    const folder = tempDir();
+    expect(await run(['docs', 'add', folder, '--exclude', 'archive, sessions'], io)).toBe(0);
+    const cfg = loadConfig(io.hubDir);
+    expect(cfg.docs).toEqual([{ project: KEY, path: folder, label: folder.split(/[/\\]/).pop(), exclude: ['archive', 'sessions'] }]);
+  });
+
+  it('refuses a project that is not tracked, and never starts tracking it', async () => {
+    saveConfig(io.hubDir, { ...loadConfig(io.hubDir), tracked: [], declined: [KEY] });
+    expect(await run(['docs', 'add', tempDir()], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/is not tracked.*hub track github\.com\/me\/alpha/s);
+    const cfg = loadConfig(io.hubDir);
+    expect(cfg).toMatchObject({ tracked: [], declined: [KEY], docs: [] });
+  });
+
+  it('refuses a folder inside or around one already added', async () => {
+    const outer = tempDir();
+    writeJsonl(join(outer, 'tickets', 'keep.jsonl'), []);
+    await run(['docs', 'add', outer, '--as', 'kb'], io);
+    expect(await run(['docs', 'add', join(outer, 'tickets'), '--as', 'tickets'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/overlaps/);
+    err = [];
+    await run(['docs', 'remove', 'kb'], io);
+    await run(['docs', 'add', join(outer, 'tickets'), '--as', 'tickets'], io);
+    expect(await run(['docs', 'add', outer, '--as', 'kb'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/overlaps/);
+    expect(loadConfig(io.hubDir).docs.map((f) => f.label)).toEqual(['tickets']);
+  });
+
+  it('takes a project by name and a label', async () => {
+    const folder = tempDir();
+    expect(await run(['docs', 'add', folder, '--project', 'alpha', '--as', 'memory'], io)).toBe(0);
+    expect(loadConfig(io.hubDir).docs[0]).toMatchObject({ project: KEY, label: 'memory' });
+  });
+
+  it('asks for --project when the folder is not in a git repo', async () => {
+    io.git = () => null;
+    expect(await run(['docs', 'add', tempDir()], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/not inside a git repo.*--project/);
+  });
+
+  it('refuses a second folder with the same label in one project', async () => {
+    await run(['docs', 'add', tempDir(), '--as', 'kb'], io);
+    expect(await run(['docs', 'add', tempDir(), '--as', 'kb'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/already has a folder called "kb"/);
+  });
+
+  it('lists and removes folders, leaving uploaded copies alone', async () => {
+    const folder = tempDir();
+    await run(['docs', 'add', folder, '--as', 'kb'], io);
+    out = [];
+    expect(await run(['docs'], io)).toBe(0);
+    expect(out).toEqual([`kb  ${folder}  -> ${KEY}`]);
+    expect(await run(['docs', 'remove', 'kb'], io)).toBe(0);
+    expect(loadConfig(io.hubDir).docs).toEqual([]);
+    expect(requests).toEqual([]);
+  });
+
+  it('lets forget name a document', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    answers = ['yes'];
+    expect(await run(['forget', '--session', `doc:${KEY}#kb/INDEX.md`], io)).toBe(0);
+    expect(requests.at(-1)).toEqual({ method: 'DELETE', url: `https://hub.example.com/api/sessions/doc/${encodeURIComponent(`${KEY}#kb/INDEX.md`)}` });
   });
 });

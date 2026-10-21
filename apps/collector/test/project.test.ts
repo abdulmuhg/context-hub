@@ -47,6 +47,19 @@ describe('resolveProjectKey', () => {
     expect(resolveProjectKey({ ...none, cwd: 'C:\\old\\gone' }, deps({}, ['C:\\old\\gone']))).toBe('local:gone');
   });
 
+  it('files a removed Claude Code worktree under its repo', () => {
+    const repo = { remote: 'git@github.com:abdulmuhg/jsonroom.git', top: '/work/jsonroom' };
+    const gone = '/work/jsonroom/.claude/worktrees/upbeat-wilbur-78ec46';
+    expect(resolveProjectKey({ ...none, cwd: gone }, deps({ '/work/jsonroom': repo }, [gone]))).toBe('github.com/abdulmuhg/jsonroom');
+    const win = 'C:\\work\\jsonroom\\.claude\\worktrees\\x';
+    expect(resolveProjectKey({ ...none, cwd: win }, deps({ 'C:\\work\\jsonroom': repo }, [win]))).toBe('github.com/abdulmuhg/jsonroom');
+  });
+
+  it('uses the worktree name when its repo is gone too', () => {
+    const gone = '/old/app/.claude/worktrees/brave-x';
+    expect(resolveProjectKey({ ...none, cwd: gone }, deps({}, [gone, '/old/app']))).toBe('local:brave-x');
+  });
+
   it('prefers a remote hint recorded by the tool', () => {
     const input = { cwd: '/tmp/x', remoteHint: 'https://github.com/abdulmuhg/harmonize.git', pathHints: [] };
     expect(resolveProjectKey(input, deps({}))).toBe('github.com/abdulmuhg/harmonize');

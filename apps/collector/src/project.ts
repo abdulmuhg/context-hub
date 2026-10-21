@@ -63,9 +63,14 @@ function repoKeyForHint(hint: string, deps: ResolveDeps): string | null {
   return keyForExistingDir(dir, deps.git);
 }
 
+/** Claude Code puts a worktree at "<repo>/.claude/worktrees/<name>" and removes it when done. */
+const CLAUDE_WORKTREE = /^(.+?)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+/;
+
 function keyForCwd(cwd: string, deps: ResolveDeps): string {
-  if (!deps.exists(cwd)) return `local:${baseName(cwd)}`;
-  return keyForExistingDir(cwd, deps.git);
+  if (deps.exists(cwd)) return keyForExistingDir(cwd, deps.git);
+  const repo = CLAUDE_WORKTREE.exec(cwd)?.[1];
+  if (repo && deps.exists(repo)) return keyForExistingDir(repo, deps.git);
+  return `local:${baseName(cwd)}`;
 }
 
 /**

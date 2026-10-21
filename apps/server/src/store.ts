@@ -39,8 +39,8 @@ export function upsertSession(db: Db, s: HashedSession, now: string): { changed:
       now,
     );
     const projectId = (db.prepare('SELECT id FROM projects WHERE key = ?').get(s.project_key) as { id: number }).id;
-    // The old project's state page describes work that is leaving it.
-    if (existing && existing.project_id !== projectId) markStateDirty(db, existing.project_id);
+    // The old project's state page describes work that is leaving it. A document never fed it.
+    if (existing && existing.project_id !== projectId && s.source !== 'doc') markStateDirty(db, existing.project_id);
 
     let rowId: number;
     if (existing) {
@@ -79,8 +79,8 @@ export function upsertSession(db: Db, s: HashedSession, now: string): { changed:
       }
     }
 
-    // Subagent transcripts are covered by their parent's digest.
-    if (s.parent === null) markDigestPending(db, rowId, now);
+    // Subagent transcripts are covered by their parent's digest. A document is read as it is.
+    if (s.parent === null && s.source !== 'doc') markDigestPending(db, rowId, now);
 
     pruneEmptyProjects(db);
     return { changed: true };
@@ -89,9 +89,9 @@ export function upsertSession(db: Db, s: HashedSession, now: string): { changed:
 
 function removeSessions(db: Db, rowIds: number[]): number {
   for (const id of rowIds) {
-    const row = db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(id) as { project_id: number } | undefined;
-    // Whatever the state page says about this session is about to be untrue.
-    if (row) markStateDirty(db, row.project_id);
+    const row = db.prepare('SELECT project_id, source FROM sessions WHERE id = ?').get(id) as { project_id: number; source: string } | undefined;
+    // Whatever the state page says about this session is about to be untrue. A document never fed it.
+    if (row && row.source !== 'doc') markStateDirty(db, row.project_id);
     removeContent(db, id);
     db.prepare('DELETE FROM sessions WHERE id = ?').run(id); // its digest row goes with it
   }
@@ -119,7 +119,9 @@ export function deleteProject(db: Db, key: string): number {
 
 export interface Status {
   projects: number;
+  /** Sessions and notes, not documents. */
   sessions: number;
+  documents: number;
   messages: number;
   digests: Record<DigestStatus, number>;
   last_sync: { project: string; last_synced_at: string }[];
@@ -129,7 +131,8 @@ export function status(db: Db): Status {
   const n = (table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
   return {
     projects: n('projects'),
-    sessions: n('sessions'),
+    sessions: (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE source <> 'doc'").get() as { n: number }).n,
+    documents: (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE source = 'doc'").get() as { n: number }).n,
     messages: n('messages'),
     digests: digestCounts(db),
     last_sync: db
@@ -148,6 +151,8 @@ export interface ProjectSummary {
   name: string;
   /** Main sessions only. */
   session_count: number;
+  /** Documents synced from the user's own notes files. */
+  doc_count: number;
   last_activity_at: string | null;
   last_synced_at: string;
   /** The state page's one-sentence summary, or null before one is written. */
@@ -158,7 +163,8 @@ export function listProjects(db: Db): ProjectSummary[] {
   return db
     .prepare(
       `SELECT p.key, p.name,
-              SUM(CASE WHEN s.parent IS NULL THEN 1 ELSE 0 END) AS session_count,
+              SUM(CASE WHEN s.parent IS NULL AND s.source <> 'doc' THEN 1 ELSE 0 END) AS session_count,
+              SUM(CASE WHEN s.source = 'doc' THEN 1 ELSE 0 END) AS doc_count,
               MAX(s.last_activity_at) AS last_activity_at,
               MAX(s.synced_at) AS last_synced_at,
               (SELECT summary FROM project_states ps WHERE ps.project_id = p.id) AS summary
@@ -246,6 +252,14 @@ export interface ProjectStateView {
   stale: boolean;
 }
 
+export interface DocumentSummary {
+  session_id: string;
+  /** Where the file sits under its synced folder, for example "knowledge/tickets/MOBILE-1.md". */
+  path: string;
+  title: string;
+  updated_at: string | null;
+}
+
 export interface ProjectView {
   key: string;
   name: string;
@@ -253,21 +267,46 @@ export interface ProjectView {
   state: ProjectStateView | null;
   last_synced_at: string;
   recent: SessionSummary[];
+  /** The most recently changed documents. */
+  documents: DocumentSummary[];
+  document_count: number;
 }
 
-export function getProject(db: Db, projectId: number, sessions: number): ProjectView {
+/** A document id is "<project key>#<path>"; the path is what a reader recognises. */
+export function documentPath(id: string): string {
+  const i = id.indexOf('#');
+  return i < 0 ? id : id.slice(i + 1);
+}
+
+export function getProject(db: Db, projectId: number, sessions: number, documents: number = 30): ProjectView {
   const project = db.prepare('SELECT key, name FROM projects WHERE id = ?').get(projectId) as { key: string; name: string };
   const synced = db.prepare('SELECT MAX(synced_at) AS t FROM sessions WHERE project_id = ?').get(projectId) as { t: string };
   const rows = db
     .prepare(
       `SELECT ${SESSION_COLUMNS} FROM sessions s JOIN projects p ON p.id = s.project_id
-       WHERE s.project_id = ? AND s.parent IS NULL
+       WHERE s.project_id = ? AND s.parent IS NULL AND s.source <> 'doc'
        ORDER BY s.last_activity_at DESC, s.id DESC LIMIT ?`,
     )
     .all(projectId, sessions) as SessionRow[];
+  const docs = db
+    .prepare(
+      `SELECT source_session_id AS id, title, last_activity_at FROM sessions
+       WHERE project_id = ? AND source = 'doc'
+       ORDER BY last_activity_at DESC, source_session_id LIMIT ?`,
+    )
+    .all(projectId, documents) as { id: string; title: string; last_activity_at: string | null }[];
+  const docCount = (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE project_id = ? AND source = 'doc'").get(projectId) as { n: number }).n;
   const page = getProjectState(db, projectId);
   const state: ProjectStateView | null = page ? { summary: page.summary, body: page.body, updated_at: page.updated_at, stale: page.dirty } : null;
-  return { key: project.key, name: project.name, state, last_synced_at: synced.t, recent: rows.map((r) => summarise(db, r)) };
+  return {
+    key: project.key,
+    name: project.name,
+    state,
+    last_synced_at: synced.t,
+    recent: rows.map((r) => summarise(db, r)),
+    documents: docs.map((d) => ({ session_id: publicId('doc', d.id), path: documentPath(d.id), title: d.title, updated_at: d.last_activity_at })),
+    document_count: docCount,
+  };
 }
 
 export interface SessionPage {

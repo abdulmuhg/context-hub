@@ -9,7 +9,7 @@ export class HttpError extends Error {
   }
 }
 
-const SOURCES = new Set(['claude-code', 'codex', 'antigravity']);
+const SOURCES = new Set(['claude-code', 'codex', 'antigravity', 'doc']);
 
 function bad(field: string, problem: string): never {
   throw new HttpError(400, `Invalid session: ${field} ${problem}`);

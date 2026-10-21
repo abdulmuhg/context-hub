@@ -143,9 +143,15 @@ hub sync --dry-run           # see what would be sent
 
 - A project is named by its git remote (`github.com/you/repo`), or
   `local:<folder>` when it has none. A session is filed under the project
-  where most of its work happened.
+  where most of its work happened. An SSH host alias such as
+  `git@github.com-work:you/repo` counts as `github.com/you/repo`, and a
+  session from a Claude Code worktree that has since been removed is filed
+  under its repo.
 - Secrets (tokens, keys, passwords in URLs) are stripped before anything
   leaves the computer, and again on the server.
+- Card numbers are masked to their last four digits by default
+  (`hub personal level card partial`); `full` removes them, `warn` only
+  reports them.
 - `hub personal add phone` adds one of your own values, such as a phone
   number, to a personal-data list. The default is `warn`: it is reported but
   still uploaded. Raise it with `hub personal level list partial` or `full`.
@@ -153,6 +159,33 @@ hub sync --dry-run           # see what would be sent
   use `/hub-sync` in Claude Code.
 - `hub forget <project>` or `hub forget --session <source>:<id>` deletes from
   the hub. Local files are never touched.
+
+#### Upload your notes as documents
+
+Session summaries are written by the hub. The notes you keep yourself, such as
+ticket write-ups, decision logs or an assistant's memory folder, can go up as
+they are:
+
+```bash
+hub docs add .claude/knowledge --exclude archive,sessions   # project taken from the folder's repo
+hub docs add ~/.claude/projects/<folder>/memory --project my-repo --as memory
+hub docs                                                     # list folders
+hub docs remove memory                                       # stop uploading one
+```
+
+The project must already be tracked (`hub track`): adding notes never starts
+uploading a project's sessions. Every `.md` file in the folder, at any depth,
+becomes one document of that project; hidden files and the names after
+`--exclude` are left out. A folder inside, or around, one already added is
+refused. `hub sync`
+(and `hub auto`) uploads a document when it changes and removes it from the
+hub when its file is deleted or renamed. A missing folder removes nothing.
+The id is `doc:<project>#<label>/<path>`, the same on every computer, so the
+same notes synced from two machines stay one document.
+
+Documents are not summarised. Assistants see them listed in `get_project`,
+find them with `search` (source `doc`), and read them whole with
+`get_session`. Secrets and personal data are stripped exactly as for sessions.
 
 #### Sync automatically (Claude Code)
 
@@ -207,7 +240,7 @@ the browser stays signed in for 30 days.
 |---|---|
 | **Overview** | Healthy or Needs attention, counts, the last sync, the last backup (and whether it reached off-site storage), anything wrong right now, recent activity, and the running version. |
 | **Activity** | Everything saved into the hub and read from it over the last 30 days, and by whom. |
-| **Projects** | Every project and its summary; open one for its full briefing, recent sessions and notes. |
+| **Projects** | Every project and its summary; open one for its full briefing, recent sessions and notes, and its documents. |
 | **Sign-ins** | Every way in: Claude apps, tokens and browsers, each with a **Disconnect** that asks once and says what breaks. |
 
 ### Sign-in codes
