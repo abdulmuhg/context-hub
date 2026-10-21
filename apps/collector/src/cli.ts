@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -9,6 +9,7 @@ import type { Level } from '@context-hub/core';
 import {
   loadConfig,
   loadPersonal,
+  loadState,
   loadToken,
   saveConfig,
   savePersonal,
@@ -35,6 +36,8 @@ export interface Io {
   execPath?: string;
   bundlePath?: string;
   spawn?: typeof spawn;
+  /** For `hub doctor`: runs `claude mcp list`. found is false when Claude Code is not installed. */
+  runClaude?: () => { found: boolean; output: string };
 }
 
 const USAGE = `Usage: hub <command>
@@ -42,6 +45,7 @@ const USAGE = `Usage: hub <command>
   login [--url URL] [--name NAME]      connect this computer with a code from the dashboard
   sync                                 upload your tracked projects (asks about new ones)
   auto on | off | status               sync automatically when a Claude Code session ends
+  doctor                               check that this computer is set up and connected
 
 Advanced:
   init [--url URL] [--token TOKEN]     save the server address and upload token
@@ -493,6 +497,8 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       io.out(`Installed ${Object.keys(SLASH_COMMANDS).length} slash commands in ${dir}.`);
       return 0;
     }
+    case 'doctor':
+      return doctorCase(io);
     case 'auto':
       return autoCase(io, rest[0]);
     case 'personal':
@@ -503,6 +509,109 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
     default:
       throw new Fail(USAGE);
   }
+}
+
+type Mark = '✓' | '!' | '✗' | '–';
+
+const DAY_MS = 86_400_000;
+const QUIET_DAYS = 3;
+
+function ago(iso: string, now: number): string {
+  const min = Math.round((now - Date.parse(iso)) / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h} h ago`;
+  return `${Math.round(h / 24)} d ago`;
+}
+
+/** `claude mcp list`, if Claude Code is installed. It checks every server, so it can take a few seconds. */
+function runClaudeMcpList(): { found: boolean; output: string } {
+  const r = spawnSync('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 20_000, shell: process.platform === 'win32', windowsHide: true });
+  return { found: r.status === 0, output: `${r.stdout ?? ''}` };
+}
+
+/**
+ * `hub doctor`: one line per piece of the setup, with the fix for anything wrong. Exit 1 only for
+ * problems that stop uploads; warnings ("!") and skipped checks ("–") do not fail it.
+ */
+async function doctorCase(io: Io): Promise<number> {
+  const rows: [Mark, string, string][] = [];
+  const add = (mark: Mark, label: string, text: string): void => {
+    rows.push([mark, label, text]);
+  };
+  const now = Date.now();
+  const cfg = loadConfig(io.hubDir);
+  const token = loadToken(io.hubDir);
+
+  add('✓', 'hub command', bundleOf(io));
+
+  // Uploading: where to, and whether the hub accepts this computer.
+  if (!cfg.server_url) {
+    add('✗', 'Hub address', 'not set. Run: hub login');
+  } else {
+    const url = cfg.server_url.replace(/\/+$/, '');
+    add('✓', 'Hub address', url);
+    if (!token) {
+      add('✗', 'Connection', 'no upload token saved. Run: hub login');
+    } else {
+      try {
+        const s = (await getStatus({ url: cfg.server_url, token, fetchImpl: io.fetchImpl })) as { projects?: number; sessions?: number };
+        add('✓', 'Connection', `hub reachable, token accepted (${s.projects ?? '?'} projects, ${s.sessions ?? '?'} sessions)`);
+      } catch (e) {
+        const refused = /answered 40[13]/.test((e as Error).message);
+        add('✗', 'Connection', refused ? "the hub refused this computer's token. Run: hub login" : `could not reach ${url}. Check the address and your network.`);
+      }
+    }
+  }
+
+  // What gets uploaded, and when it last was.
+  const fresh = newProjects(listProjects(scanOpts(io)), cfg);
+  if (cfg.tracked.length === 0) add('!', 'Tracked projects', 'none yet. Run: hub sync');
+  else add('✓', 'Tracked projects', String(cfg.tracked.length));
+  if (fresh.length > 0) {
+    const names = fresh.slice(0, 5).map((r) => shortName(r.key)).join(', ');
+    add('!', 'New projects', `${fresh.length} not decided (${names}${fresh.length > 5 ? ', …' : ''}). Run: hub sync`);
+  }
+  if (cfg.tracked.length > 0) {
+    const last = Object.values(loadState(io.hubDir).files)
+      .map((f) => f.synced_at)
+      .filter((t): t is string => typeof t === 'string')
+      .sort()
+      .at(-1);
+    if (!last) add('!', 'Last sync', 'never from this computer. Run: hub sync');
+    else if (now - Date.parse(last) > QUIET_DAYS * DAY_MS) add('!', 'Last sync', `${ago(last, now)}. Run: hub sync`);
+    else add('✓', 'Last sync', ago(last, now));
+  }
+
+  // Automatic sync is optional, so "off" is not a problem.
+  const auto = autoStatus(join(io.home, '.claude', 'settings.json'), join(io.hubDir, 'auto.log'));
+  if (!auto.on) add('–', 'Automatic sync', 'off (optional). Turn on with: hub auto on');
+  else if (auto.lastLine && / error /.test(auto.lastLine)) add('!', 'Automatic sync', `on, but the last run failed: ${auto.lastLine}`);
+  else add('✓', 'Automatic sync', auto.lastLine ? `on, last run: ${auto.lastLine}` : 'on, no run yet');
+
+  // The slash commands, compared with the copies this hub command carries.
+  const dir = join(io.home, '.claude', 'commands');
+  const names = Object.keys(SLASH_COMMANDS);
+  const stale = names.filter((n) => !existsSync(join(dir, n)) || readFileSync(join(dir, n), 'utf8') !== SLASH_COMMANDS[n]);
+  if (stale.length === 0) add('✓', 'Slash commands', `${names.length} installed, up to date`);
+  else add('!', 'Slash commands', `${stale.length} missing or out of date. Run: hub install-commands`);
+
+  // Reading: whether Claude Code on this computer can reach the hub.
+  const claude = (io.runClaude ?? runClaudeMcpList)();
+  const hubLines = claude.output.split(/\r?\n/).filter((l) => /context-hub/i.test(l));
+  if (!claude.found) add('–', 'Claude Code', 'not installed here, skipped');
+  else if (hubLines.some((l) => /✓|✔|connected/i.test(l) && !/failed|✗|needs/i.test(l))) add('✓', 'Claude Code', 'context-hub connected');
+  else if (hubLines.length > 0) add('!', 'Claude Code', `context-hub listed but not connected: ${hubLines[0]!.trim()}`);
+  else add('!', 'Claude Code', 'no context-hub connection. Add the connector to this Claude account (README: "Read from the hub in the Claude apps").');
+
+  const width = Math.max(...rows.map(([, label]) => label.length)) + 2;
+  for (const [mark, label, text] of rows) io.out(`${mark} ${label.padEnd(width)}${text}`);
+  const fails = rows.filter(([m]) => m === '✗').length;
+  const warns = rows.filter(([m]) => m === '!').length;
+  io.out('');
+  io.out(fails > 0 ? `${fails} problem(s) to fix${warns > 0 ? `, ${warns} thing(s) to look at` : ''}.` : warns > 0 ? `${warns} thing(s) to look at.` : 'All good.');
+  return fails > 0 ? 1 : 0;
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {

@@ -544,3 +544,86 @@ describe('hub docs', () => {
     expect(requests.at(-1)).toEqual({ method: 'DELETE', url: `https://hub.example.com/api/sessions/doc/${encodeURIComponent(`${KEY}#kb/INDEX.md`)}` });
   });
 });
+
+describe('hub doctor', () => {
+  const STATUS = JSON.stringify({ projects: 6, sessions: 253, digests: { pending: 0, ok: 81, failed: 0, refused: 0 }, last_sync: [] });
+  const connected = () => ({ found: true, output: 'claude.ai context-hub: https://hub.example.com/mcp - ✓ Connected\n' });
+  const login = () => run(['init', '--url', 'https://hub.example.com', '--token', 'fake-token-QX7'], io);
+  const answersWith = (status: number, body = STATUS) => {
+    io.fetchImpl = async () => new Response(body, { status });
+  };
+
+  it('says all good when everything is connected', async () => {
+    await login();
+    await run(['track', KEY], io);
+    answersWith(200);
+    await run(['sync'], io);
+    await run(['install-commands', '--dir', join(io.home, '.claude', 'commands')], io);
+    answersWith(200);
+    io.runClaude = connected;
+    out = [];
+    expect(await run(['doctor'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/✓ Hub address\s+https:\/\/hub\.example\.com/);
+    expect(text).toMatch(/✓ Connection\s+.*6 projects, 253 sessions/);
+    expect(text).toMatch(/✓ Tracked projects\s+1/);
+    expect(text).toMatch(/✓ Slash commands\s+6 installed/);
+    expect(text).toMatch(/✓ Claude Code\s+context-hub connected/);
+    expect(text).toContain('All good.');
+    expect(text).not.toContain('fake-token-QX7');
+  });
+
+  it('fails with the fix when this computer is not connected', async () => {
+    io.runClaude = connected;
+    expect(await run(['doctor'], io)).toBe(1);
+    expect(out.join('\n')).toMatch(/✗ Hub address\s+not set\. Run: hub login/);
+  });
+
+  it('tells a refused token from an unreachable hub', async () => {
+    await login();
+    io.runClaude = connected;
+    answersWith(401, '{"error":"A valid token is required"}');
+    out = [];
+    expect(await run(['doctor'], io)).toBe(1);
+    expect(out.join('\n')).toMatch(/✗ Connection\s+the hub refused this computer's token\. Run: hub login/);
+    io.fetchImpl = async () => {
+      throw new Error('getaddrinfo ENOTFOUND hub.example.com');
+    };
+    out = [];
+    expect(await run(['doctor'], io)).toBe(1);
+    expect(out.join('\n')).toMatch(/✗ Connection\s+could not reach https:\/\/hub\.example\.com/);
+  });
+
+  it('warns about missing or outdated slash commands and an untracked project, without failing', async () => {
+    await login();
+    answersWith(200);
+    io.runClaude = connected;
+    const dir = join(io.home, '.claude', 'commands');
+    await run(['install-commands', '--dir', dir], io);
+    writeFileSync(join(dir, 'hub-sync.md'), 'old text');
+    out = [];
+    expect(await run(['doctor'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/! Slash commands\s+1 missing or out of date\. Run: hub install-commands/);
+    expect(text).toMatch(/! Tracked projects\s+none yet\. Run: hub sync/);
+    expect(text).toMatch(/! New projects\s+1 not decided \(alpha\)\. Run: hub sync/);
+  });
+
+  it('skips the Claude Code check when Claude Code is not installed', async () => {
+    await login();
+    answersWith(200);
+    io.runClaude = () => ({ found: false, output: '' });
+    out = [];
+    await run(['doctor'], io);
+    expect(out.join('\n')).toMatch(/– Claude Code\s+not installed here, skipped/);
+  });
+
+  it('warns when Claude Code is installed but has no context-hub connection', async () => {
+    await login();
+    answersWith(200);
+    io.runClaude = () => ({ found: true, output: 'github: npx github-mcp - ✓ Connected\n' });
+    out = [];
+    await run(['doctor'], io);
+    expect(out.join('\n')).toMatch(/! Claude Code\s+no context-hub connection\. Add the connector to this Claude account/);
+  });
+});
