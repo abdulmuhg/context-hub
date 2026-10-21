@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
 import { failDigest, failState, markDigestPending, refuseDigest } from '../src/digest-store.js';
 import { readBackupStatus, type BackupStatus } from '../src/web/backup-status.js';
+import { recordUsage } from '../src/usage.js';
 import { computeHealth } from '../src/web/health.js';
 import type { WebConfig } from '../src/web/routes.js';
 
@@ -268,5 +269,27 @@ describe('readBackupStatus', () => {
   it('accepts a null size and an unconfigured off-site target', () => {
     writeStatus({ size_bytes: null, offsite_configured: false, offsite_ok: null });
     expect(readBackupStatus(statusPath)).toMatchObject({ size_bytes: null, offsite_configured: false, offsite_ok: null });
+  });
+});
+
+describe('the model spend card', () => {
+  const call = (at: string, over: Partial<Parameters<typeof recordUsage>[1]> = {}) =>
+    recordUsage(db, { model: 'claude-haiku-5-5', kind: 'digest', project: 'p', input_tokens: 10_000, output_tokens: 1_000, cache_read_tokens: 0, cache_write_tokens: 0, ...over }, at);
+
+  it('counts today (UTC) apart from the 30 days, which include today', () => {
+    call('2026-10-19T23:59:00.000Z'); // yesterday
+    call('2026-10-20T00:00:00.000Z');
+    call('2026-10-20T09:00:00.000Z');
+    call('2026-09-20T09:00:00.000Z'); // 30 days back: outside the window
+    const { spend } = computeHealth(db, cfg(), NOW).cards;
+    // 10,000 x $0.10/M + 1,000 x $0.50/M = $0.0015 per call
+    expect(spend.today).toMatchObject({ calls: 2, micro_usd: 3000 });
+    expect(spend.month).toMatchObject({ calls: 3, micro_usd: 4500 });
+  });
+
+  it('is all zeros with no rows', () => {
+    const { spend } = computeHealth(db, cfg(), NOW).cards;
+    expect(spend.today.calls).toBe(0);
+    expect(spend.month.calls).toBe(0);
   });
 });

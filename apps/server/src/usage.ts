@@ -69,3 +69,56 @@ export function spendBetween(db: Db, fromIso: string, toIso: string): Spend {
     )
     .get(fromIso, toIso) as Spend;
 }
+
+/** Money for display: 2 decimals, or 4 when the total is under $0.01 but not zero. */
+export function formatUsd(microUsd: number): string {
+  const dollars = microUsd / 1_000_000;
+  return `$${dollars.toFixed(microUsd > 0 && microUsd < 10_000 ? 4 : 2)}`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Start of the UTC day containing `nowIso`, as an ISO time. */
+export function utcDayStart(nowIso: string): string {
+  const d = new Date(nowIso);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString();
+}
+
+export const addDays = (iso: string, n: number): string => new Date(Date.parse(iso) + n * DAY_MS).toISOString();
+
+export interface Totals extends Spend {
+  /** Calls whose cost is known. When 0 for a non-empty group, the cost is shown as unknown. */
+  priced: number;
+}
+
+export interface UsageReport {
+  /** Oldest first, one entry per UTC day. */
+  days: (Totals & { day: string })[];
+  by_kind: (Totals & { name: string })[];
+  by_project: (Totals & { name: string })[];
+  over_step: number;
+}
+
+const TOTALS = `COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output,
+                COALESCE(SUM(cost_micro_usd), 0) AS micro_usd, COUNT(cost_micro_usd) AS priced`;
+
+/** The last `days` UTC days up to and including today's. */
+export function usageReport(db: Db, days: number, now: string): UsageReport {
+  const today = utcDayStart(now);
+  const from = addDays(today, -(days - 1));
+  const to = addDays(today, 1);
+  const grouped = (expr: string): (Totals & { name: string })[] =>
+    db
+      .prepare(`SELECT ${expr} AS name, ${TOTALS} FROM model_usage WHERE at >= ? AND at < ? GROUP BY name ORDER BY micro_usd DESC, input DESC, name`)
+      .all(from, to) as (Totals & { name: string })[];
+  const perDay = new Map(
+    (db.prepare(`SELECT substr(at, 1, 10) AS day, ${TOTALS} FROM model_usage WHERE at >= ? AND at < ? GROUP BY day`).all(from, to) as (Totals & { day: string })[]).map((r) => [r.day, r]),
+  );
+  const list: UsageReport['days'] = [];
+  for (let i = 0; i < days; i++) {
+    const day = addDays(from, i).slice(0, 10);
+    list.push(perDay.get(day) ?? { day, calls: 0, input: 0, output: 0, micro_usd: 0, priced: 0 });
+  }
+  const over = db.prepare('SELECT COUNT(*) AS n FROM model_usage WHERE at >= ? AND at < ? AND input_tokens > ?').get(from, to, PRICE_STEP_TOKENS) as { n: number };
+  return { days: list, by_kind: grouped('kind'), by_project: grouped("COALESCE(project_key, '(none)')"), over_step: over.n };
+}

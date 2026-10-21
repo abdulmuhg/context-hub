@@ -1,6 +1,7 @@
 import { latestSyncRun, type SyncRun } from '../activity.js';
 import type { Db } from '../db.js';
 import { readBackupStatus, type BackupStatus } from './backup-status.js';
+import { addDays, spendBetween, utcDayStart, type Spend } from '../usage.js';
 import type { WebConfig } from './routes.js';
 
 /** One line in the Problems box, or in the notices below it. `at` is a time to show after the text. */
@@ -21,6 +22,8 @@ export interface Health {
     sessions: number;
     lastSync: SyncRun | null;
     lastBackup: BackupStatus | null;
+    /** Model spend for the current UTC day and for the last 30 days (today included). */
+    spend: { today: Spend; month: Spend };
   };
 }
 
@@ -176,6 +179,10 @@ export function computeHealth(db: Db, cfg: WebConfig, now: string): Health {
       sessions: (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE source <> 'doc'").get() as { n: number }).n,
       lastSync,
       lastBackup,
+      spend: {
+        today: spendBetween(db, utcDayStart(now), addDays(utcDayStart(now), 1)),
+        month: spendBetween(db, addDays(utcDayStart(now), -29), addDays(utcDayStart(now), 1)),
+      },
     },
   };
 }

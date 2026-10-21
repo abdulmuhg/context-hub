@@ -4,6 +4,7 @@ import type { HubScope } from '../oauth/config.js';
 import { listGrants, type CodePurpose } from '../oauth/store.js';
 import { getProject, listProjects, projectName, resolveProject } from '../store.js';
 import { listTokens } from '../tokens.js';
+import { formatUsd } from '../usage.js';
 import { computeHealth, type Health, type Problem } from './health.js';
 import { escapeHtml, pageShell } from './html.js';
 import { renderMarkdown } from './markdown.js';
@@ -48,6 +49,13 @@ const card = (label: string, value: string, sub = '', tone = ''): string =>
 const line = (p: Problem, suffix = ''): string =>
   `<li>${escapeHtml(p.text)}${p.at === undefined ? '' : ` <span class="muted">${timeTag(p.at, 'inline')}</span>`}${suffix}</li>`;
 
+function spendCard(h: Health): string {
+  const { today, month } = h.cards.spend;
+  if (month.calls === 0) return card('Model spend', '$0.00', 'No model calls recorded yet');
+  const calls = `${today.calls} call${today.calls === 1 ? '' : 's'} today`;
+  return card('Model spend', formatUsd(today.micro_usd), `${calls} · ${formatUsd(month.micro_usd)} in 30 days`);
+}
+
 function cards(h: Health): string {
   const sync = h.cards.lastSync;
   const backup = h.cards.lastBackup;
@@ -76,6 +84,7 @@ function cards(h: Health): string {
     (backup === null
       ? card('Last backup', '—', 'No backup status yet')
       : card('Last backup', timeTag(backup.finished_at, 'ago'), `${timeTag(backup.finished_at, 'when')} · ${offsite}`)) +
+    spendCard(h) +
     `</section>`
   );
 }

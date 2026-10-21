@@ -3,6 +3,7 @@ import type { Db } from './db.js';
 import { digestCounts, getProjectState, markDigestPending, markStateDirty } from './digest-store.js';
 import { createConnectCode, listGrants, revokeGrant } from './oauth/store.js';
 import { resolveProject, splitPublicId } from './store.js';
+import { formatUsd, usageReport, type Totals } from './usage.js';
 import { createToken, listTokens, revokeToken, type Scope } from './tokens.js';
 
 export interface AdminIo {
@@ -25,7 +26,8 @@ const USAGE = `Usage: hub-admin <command>
   redigest <project> | redigest --session <source>:<id>  queue digests again
   redigest --failed [<project>]                          queue again only the digests that failed
   rebuild-state <project>                                rebuild a project's state page from all digests
-  digests                                                show digest counts and problems`;
+  digests                                                show digest counts and problems
+  usage [--days N]                                       show model calls, tokens and cost per day (default 7 days, UTC)`;
 
 class Fail extends Error {}
 
@@ -173,6 +175,27 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
       const when = p.status === 'failed' ? `, attempt ${p.attempts}, next try ${p.next_attempt_at}` : '';
       io.out(`${p.status}  ${p.source}:${p.source_session_id}  ${p.error ?? ''}${when}`);
     }
+    return 0;
+  }
+
+  if (command === 'usage') {
+    const { values } = parseArgs({ args: argv.slice(1), options: { days: { type: 'string' } } });
+    const days = values.days === undefined ? 7 : Number(values.days);
+    if (!Number.isInteger(days) || days < 1 || days > 90) throw new Fail('--days must be a whole number from 1 to 90.');
+    const report = usageReport(io.db, days, now);
+    const cost = (t: Totals): string => (t.calls > 0 && t.priced === 0 ? '—' : formatUsd(t.micro_usd));
+    const line = (name: string, t: Totals): string =>
+      `${name.padEnd(30)}  ${String(t.calls).padStart(6)} calls  ${String(t.input).padStart(12)} in  ${String(t.output).padStart(10)} out  ${cost(t).padStart(9)}`;
+    io.out(`Model usage, last ${days} day${days === 1 ? '' : 's'} (UTC days)`);
+    for (const d of report.days) io.out(line(d.day, d));
+    io.out('');
+    io.out('By kind');
+    for (const k of report.by_kind) io.out(line(k.name, k));
+    io.out('');
+    io.out('By project');
+    for (const p of report.by_project) io.out(line(p.name, p));
+    io.out('');
+    io.out(`over the 100K price step: ${report.over_step} call${report.over_step === 1 ? '' : 's'}`);
     return 0;
   }
 
