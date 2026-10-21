@@ -28,6 +28,11 @@ export function resourceUrl(cfg: OAuthConfig): string {
   return `${base(cfg)}/mcp`;
 }
 
+/** A connector added as ".../mcp/" may send that back as the resource; it names the same server. */
+export function isResource(cfg: OAuthConfig, value: string): boolean {
+  return value === resourceUrl(cfg) || value === `${resourceUrl(cfg)}/`;
+}
+
 export function protectedResourceMetadata(cfg: OAuthConfig): object {
   return {
     resource: resourceUrl(cfg),

@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe('OAuth discovery', () => {
-  it.each(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'])('serves protected resource metadata at %s', async (p) => {
+  it.each(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/mcp/'])('serves protected resource metadata at %s', async (p) => {
     const url = await start(true);
     const res = await fetch(url + p);
     expect(res.status).toBe(200);

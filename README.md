@@ -36,8 +36,8 @@ claude.ai, the Claude desktop app's chat and Claude mobile connect as a
 custom connector. Add it once, in claude.ai:
 
 1. **Customize > Connectors > Add custom connector.**
-2. URL: `https://hub.abdulmughnialfikri.com/mcp`, exactly, with no trailing
-   slash. Keep the default settings.
+2. URL: `https://hub.abdulmughnialfikri.com/mcp`. The hub also answers on
+   `/mcp/`, but use the form without the slash. Keep the default settings.
 3. When it asks you to sign in, get a one-time code (see
    [Sign-in codes](#sign-in-codes)) and enter it. Leave **"Also allow it to
    save notes"** ticked if you want chats to be able to save notes.

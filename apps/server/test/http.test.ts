@@ -466,6 +466,21 @@ describe('limiter rules', () => {
     expect(plain.headers.get('www-authenticate')).toBeNull();
   });
 
+  it('/mcp/ with a trailing slash answers exactly like /mcp', async () => {
+    const slash = (token?: string) =>
+      fetch(oUrl + '/mcp/', {
+        method: 'POST',
+        body: '{}',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+    const none = await slash();
+    expect(none.status).toBe(401);
+    expect(none.headers.get('www-authenticate')).toBe('Bearer resource_metadata="https://hub.test/.well-known/oauth-protected-resource"');
+    expect((await slash(oauthToken(['hub.read'], nowIso))).status).toBe(501);
+    expect((await slash(ingest)).status).toBe(403);
+    expect((await fetch(oUrl + '/mcp/', { headers: { Authorization: `Bearer ${read}` } })).status).toBe(405);
+  });
+
   it('an OAuth access token with hub.read can call /mcp; an ingest bearer still cannot (403)', async () => {
     const at = oauthToken(['hub.read'], nowIso);
     expect((await mcp(at)).status).toBe(501);

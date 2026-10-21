@@ -113,6 +113,11 @@ describe('POST /oauth/token authorization_code', () => {
     await errorOf(await exchange(issueCode(), { client_id: 'someone-else' }), 'invalid_grant');
   });
 
+  it('accepts the MCP URL with a trailing slash as the resource', async () => {
+    const t = await ok(await exchange(issueCode(), { resource: 'https://hub.test/mcp/' }));
+    expect((await mcp(t.access_token)).status).toBe(501);
+  });
+
   it('refuses a resource that is not the MCP URL', async () => {
     await errorOf(await exchange(issueCode(), { resource: 'https://evil.test/mcp' }), 'invalid_target');
   });
