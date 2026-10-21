@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { LlmRefusal } from '@context-hub/core';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
-import { UsageLimitError } from '../src/claude-llm.js';
+import { ClaudeTimeoutError, UsageLimitError } from '../src/claude-llm.js';
 import { loadConfig, loadState, saveConfig, savePersonal, saveToken } from '../src/config.js';
 import { listProjects, runSync, type SyncOptions } from '../src/sync.js';
 import { tempDir, writeJsonl, writeRaw } from './helpers.js';
@@ -609,6 +609,21 @@ describe('runSync: summaries', () => {
     expect(report.waiting.count).toBe(2);
     expect(report.waiting.reason).toMatch(/Claude usage limit reached \(resets /);
     expect(loadState(hub).files[join(proj(), `${S1}.jsonl`)]).toBeUndefined();
+  });
+
+  it('stops summarizing after claude times out, instead of waiting again for every session', async () => {
+    track(KEY_A);
+    writeJsonl(join(proj(), `${S3}.jsonl`), [ccAt(S3, at(1), 'older and small')]);
+    const realDigest = llm.digest.bind(llm);
+    llm.digest = async (req) => {
+      await realDigest(req); // counted as a call
+      throw new ClaudeTimeoutError(300_000);
+    };
+    const report = await runSync(opts());
+    expect(puts()).toEqual([]);
+    expect(llm.calls.filter((c) => c.kind === 'digest')).toHaveLength(1); // the older session was not tried
+    expect(report.waiting.count).toBe(2);
+    expect(report.waiting.reason).toMatch(/did not answer within 300s/);
   });
 
   it('makes no more model calls after an upload fails', async () => {

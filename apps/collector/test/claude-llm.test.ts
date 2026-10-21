@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DigestSchema, jsonSchemaOf, LlmRefusal, type AskCall } from '@context-hub/core';
-import { ClaudeCodeLlm, ClaudeSignInError, cleanEnv, UsageLimitError, type ClaudeRunner } from '../src/claude-llm.js';
+import { ClaudeCodeLlm, ClaudeSignInError, ClaudeTimeoutError, cleanEnv, UsageLimitError, type ClaudeRunner } from '../src/claude-llm.js';
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8');
 
@@ -141,7 +141,9 @@ describe('ClaudeCodeLlm', () => {
 
   it('throws on a timeout', async () => {
     const { run } = fakeRunner('', { status: null, timedOut: true });
-    await expect(llm(run, { timeoutMs: 5000 }).digest(REQ)).rejects.toThrow('claude did not answer within 5s');
+    const err = await llm(run, { timeoutMs: 5000 }).digest(REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ClaudeTimeoutError);
+    expect((err as Error).message).toBe('Claude Code did not answer within 5s');
   });
 
   it('throws when the answer has no structured output, or is not JSON', async () => {

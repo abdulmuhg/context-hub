@@ -1,5 +1,5 @@
 import { buildStatePage, CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, writeDigest, type HashedSession, type Llm, type UploadDigest } from '@context-hub/core';
-import { ClaudeSignInError, UsageLimitError } from './claude-llm.js';
+import { ClaudeSignInError, ClaudeTimeoutError, UsageLimitError } from './claude-llm.js';
 import { SUMMARY_CAP } from './config.js';
 import { deletePage, getPageInputs, getSession, listProjectDigests, putDigest, putPage, type Remote } from './upload.js';
 
@@ -31,6 +31,7 @@ const clock = (iso: string): string => {
 export function stopReason(e: unknown): string | null {
   if (e instanceof UsageLimitError) return e.resetsAt === null ? 'Claude usage limit reached' : `Claude usage limit reached (resets ${clock(e.resetsAt)})`;
   if (e instanceof ClaudeSignInError) return 'Claude Code is not signed in. Run: claude';
+  if (e instanceof ClaudeTimeoutError) return `${e.message}, so summaries stopped for this run`;
   return null;
 }
 

@@ -101,6 +101,16 @@ export class UsageLimitError extends Error {
   }
 }
 
+/**
+ * Claude Code gave no answer in time. Whatever held it up (a stuck start, the
+ * network) would hold up the next call too, so the run stops writing summaries.
+ */
+export class ClaudeTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Claude Code did not answer within ${Math.round(timeoutMs / 1000)}s`);
+  }
+}
+
 /** Claude Code has no usable sign-in on this computer. */
 export class ClaudeSignInError extends Error {
   constructor() {
@@ -174,7 +184,7 @@ export class ClaudeCodeLlm extends PromptedLlm {
       '--strict-mcp-config',
     ];
     const out = await this.run(this.cmd, args, call.user, cleanEnv(process.env), this.timeoutMs);
-    if (out.timedOut) throw new Error(`claude did not answer within ${Math.round(this.timeoutMs / 1000)}s`);
+    if (out.timedOut) throw new ClaudeTimeoutError(this.timeoutMs);
 
     const result = parseResult(out.stdout);
     if (result === null) {
