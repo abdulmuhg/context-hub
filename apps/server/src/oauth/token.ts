@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resourceUrl, TTL } from './config.js';
+import { isResource, TTL } from './config.js';
 import { findToken, issueTokens, revokeGrant, rotateRefresh, takeAuthCode } from './store.js';
 import type { OAuthCtx } from './routes.js';
 import { send } from '../http.js';
@@ -39,7 +39,7 @@ export async function token(req: IncomingMessage, res: ServerResponse, ctx: OAut
   if (grantType !== 'authorization_code' && grantType !== 'refresh_token') {
     return fail(res, 'unsupported_grant_type', 'Only authorization_code and refresh_token are supported');
   }
-  if (resource !== null && resource !== resourceUrl(ctx.cfg)) return fail(res, 'invalid_target', 'The resource is not this server');
+  if (resource !== null && !isResource(ctx.cfg, resource)) return fail(res, 'invalid_target', 'The resource is not this server');
 
   if (grantType === 'authorization_code') {
     const taken = takeAuthCode(ctx.db, form.get('code') ?? '', now);

@@ -296,7 +296,8 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       return send(res, 200, { deleted });
     }
 
-    if (path === '/mcp') {
+    // "/mcp/" too: claude.ai keeps the URL as typed, and a 404 there gives no sign-in challenge.
+    if (path === '/mcp' || path === '/mcp/') {
       const credential = authorise(req, res, ['read'], true);
       if (method !== 'POST') {
         res.setHeader('Allow', 'POST');

@@ -76,7 +76,7 @@ async function register(req: IncomingMessage, res: ServerResponse, ctx: OAuthCtx
 export async function handleOAuth(req: IncomingMessage, res: ServerResponse, path: string, method: string, ctx: OAuthCtx): Promise<boolean> {
   if (method === 'GET' || method === 'HEAD') {
     // Built from configuration only, never from the Host header.
-    if (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') {
+    if (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp' || path === '/.well-known/oauth-protected-resource/mcp/') {
       json(res, 200, protectedResourceMetadata(ctx.cfg));
       return true;
     }

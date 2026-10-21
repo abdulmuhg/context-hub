@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resourceUrl, type HubScope } from './config.js';
+import { isResource, resourceUrl, type HubScope } from './config.js';
 import { resolveClient, isAllowedRedirect } from './clients.js';
 import { consumeConnectCode, createAuthCode, createGrant } from './store.js';
 import { errorPage, signInPage } from './page.js';
@@ -49,7 +49,7 @@ export async function authorize(req: IncomingMessage, res: ServerResponse, metho
   };
   if (p.response_type !== 'code') return fail('unsupported_response_type');
   if (!p.code_challenge || p.code_challenge_method !== 'S256') return fail('invalid_request');
-  if (p.resource !== undefined && p.resource !== resourceUrl(ctx.cfg)) return fail('invalid_target');
+  if (p.resource !== undefined && !isResource(ctx.cfg, p.resource)) return fail('invalid_target');
 
   const hidden: Record<string, string> = {};
   for (const k of PARAMS) if (p[k] !== undefined) hidden[k] = p[k]!;

@@ -118,6 +118,9 @@ describe('GET/POST /oauth/authorize', () => {
     expect((await getPage(params(id, { response_type: 'token' }))).headers.get('location')).toContain('error=unsupported_response_type');
     expect((await getPage(params(id, { resource: 'https://evil.test/mcp' }))).headers.get('location')).toContain('error=invalid_target');
     expect((await getPage(params(id, { resource: 'https://hub.test/mcp' }))).status).toBe(200);
+    // A connector added as .../mcp/ may send its own URL back as the resource.
+    expect((await getPage(params(id, { resource: 'https://hub.test/mcp/' }))).status).toBe(200);
+    expect((await getPage(params(id, { resource: 'https://hub.test/mcp//' }))).headers.get('location')).toContain('error=invalid_target');
   });
 
   it('a right code issues an auth code and redirects', async () => {
