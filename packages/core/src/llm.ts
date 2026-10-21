@@ -85,7 +85,7 @@ export abstract class PromptedLlm implements Llm {
       .join('\n');
     const task =
       req.mode === 'merge'
-        ? 'Fold the new session digest below into the previous page. The result must still fit the length limits: make room by dropping the oldest or least important entries, not by exceeding them.'
+        ? 'Fold the new session digests below into the previous page. The result must still fit the length limits: make room by dropping the oldest or least important entries, not by exceeding them.'
         : 'Write the page from scratch from the session digests below, which are in order from oldest to newest.';
     const previous = req.previous === null ? '' : `\n<previous_page>\n${req.previous}\n</previous_page>\n`;
     const page = await this.ask<StatePage>({
