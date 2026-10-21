@@ -96,6 +96,13 @@ describe('ClaudeCodeLlm', () => {
     expect(calls[0]!.cmd).toBe('claude');
   });
 
+  it("skips the user's settings, whose env block can point Claude Code at another API", async () => {
+    const { run, calls } = fakeRunner(fixture('claude-ok'));
+    await llm(run).digest(REQ);
+    const args = calls[0]!.args;
+    expect(args[args.indexOf('--setting-sources') + 1]).toBe('project');
+  });
+
   it('starts claude with a clean environment', async () => {
     const { run, calls } = fakeRunner(fixture('claude-ok'));
     process.env.ANTHROPIC_AUTH_TOKEN = 'secret';

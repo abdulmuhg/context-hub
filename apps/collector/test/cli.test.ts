@@ -821,7 +821,7 @@ describe('hub doctor: summaries', () => {
     io.runClaude = (args) => (args[0] === 'auth' ? { found: true, output: JSON.stringify({ loggedIn: false }) } : { found: true, output: '' });
     out = [];
     expect(await run(['doctor'], io)).toBe(1);
-    expect(out.join('\n')).toMatch(/✗ Summaries\s+Claude Code is not signed in\. Run: claude/);
+    expect(out.join('\n')).toMatch(/✗ Summaries\s+Claude Code is not signed in, or its login expired\. Run: claude auth login/);
   });
 
   it('warns, without failing, when Claude Code is missing but the hub has a key', async () => {

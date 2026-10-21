@@ -115,7 +115,7 @@ export class ClaudeTimeoutError extends Error {
 /** Claude Code has no usable sign-in on this computer. */
 export class ClaudeSignInError extends Error {
   constructor() {
-    super('Claude Code is not signed in. Run: claude');
+    super('Claude Code is not signed in, or its login expired. Run: claude auth login');
   }
 }
 
@@ -184,6 +184,11 @@ export class ClaudeCodeLlm extends PromptedLlm {
       '--no-session-persistence',
       '--safe-mode',
       '--strict-mcp-config',
+      // The user's settings.json can carry an env block (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN)
+      // that sends Claude Code to a proxy or another account, and --safe-mode still applies it.
+      // Loading only project settings, from an empty folder, leaves the stored plan login.
+      '--setting-sources',
+      'project',
     ];
     const out = await this.run(this.cmd, args, call.user, cleanEnv(process.env), this.timeoutMs);
     if (out.timedOut) throw new ClaudeTimeoutError(this.timeoutMs);

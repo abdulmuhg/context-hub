@@ -730,7 +730,7 @@ async function doctorCase(io: Io): Promise<number> {
     const model = cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL;
     const effort = cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT;
     if (loggedIn === true) add('✓', 'Summaries', `Claude Code signed in, model ${model}, effort ${effort}`);
-    else if (loggedIn === false) add('✗', 'Summaries', 'Claude Code is not signed in. Run: claude');
+    else if (loggedIn === false) add('✗', 'Summaries', 'Claude Code is not signed in, or its login expired. Run: claude auth login');
     else add('!', 'Summaries', 'could not tell whether Claude Code is signed in. Run: claude');
   }
   const waiting = loadState(io.hubDir).last_waiting;
