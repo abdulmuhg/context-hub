@@ -260,7 +260,7 @@ export interface ProjectStateView {
 
 export interface DocumentSummary {
   session_id: string;
-  /** Where the file sits under its synced folder, for example "knowledge/tickets/MOBILE-1.md". */
+  /** Where the file sits under its synced folder, for example "knowledge/tickets/TICKET-1.md". */
   path: string;
   title: string;
   updated_at: string | null;

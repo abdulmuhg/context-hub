@@ -4,3 +4,5 @@ packages:
 allowBuilds:
   esbuild: true
   better-sqlite3: true
+overrides:
+  esbuild: ^0.28.1

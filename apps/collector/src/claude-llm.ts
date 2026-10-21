@@ -99,7 +99,7 @@ export const spawnRunner: ClaudeRunner = (cmd, args, stdin, env, timeoutMs) =>
 export class UsageLimitError extends Error {
   /**
    * resetsAt is an ISO time when Claude Code gave a timestamp. resetsText is the
-   * reset time as Claude Code wrote it otherwise, for example "5:20pm (Asia/Jakarta)".
+   * reset time as Claude Code wrote it otherwise, for example "5:20pm (Europe/London)".
    */
   constructor(
     readonly resetsAt: string | null,
@@ -138,7 +138,7 @@ interface ClaudeResult {
 
 // "Failed to authenticate: OAuth session expired…" comes with api_error_status null, so the text decides.
 const SIGNED_OUT = /not logged in|please run \/login|run \/login|invalid api key|authentication|failed to authenticate|oauth session expired/i;
-// "You've hit your session limit · resets 5:20pm (Asia/Jakarta)" is what a Pro plan shows today.
+// "You've hit your session limit · resets 5:20pm (Europe/London)" is what a Pro plan shows today.
 const LIMIT = /usage limit|limit reached|rate limit|hit your [a-z ]*limit/i;
 
 /** "Claude AI usage limit reached|1792580400" carries the reset time as epoch seconds. */
@@ -147,7 +147,7 @@ function resetTime(text: string): string | null {
   return m ? new Date(Number(m[1]) * 1000).toISOString() : null;
 }
 
-/** "… · resets 5:20pm (Asia/Jakarta)": the reset time as written, or null. */
+/** "… · resets 5:20pm (Europe/London)": the reset time as written, or null. */
 function resetText(text: string): string | null {
   const m = /resets\s+([^·\n]+?)\s*$/i.exec(text.trim());
   return m ? m[1]!.slice(0, 60) : null;

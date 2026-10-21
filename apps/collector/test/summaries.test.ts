@@ -159,7 +159,7 @@ describe('updatePages', () => {
 
 describe('stopReason', () => {
   it('shows the reset time as Claude Code wrote it when it is not a timestamp', () => {
-    expect(stopReason(new UsageLimitError(null, '5:20pm (Asia/Jakarta)'))).toBe('Claude usage limit reached (resets 5:20pm (Asia/Jakarta))');
+    expect(stopReason(new UsageLimitError(null, '5:20pm (Europe/London)'))).toBe('Claude usage limit reached (resets 5:20pm (Europe/London))');
   });
 
   it('says only that the limit was reached when there is no reset time', () => {
