@@ -35,6 +35,16 @@ describe('writeDigest', () => {
     expect(llm.calls.map((c) => c.kind)).toEqual(['digest', 'digest', 'merge']);
   });
 
+  it('reports each part of a long session before writing it, and nothing for one that fits', async () => {
+    const parts: string[] = [];
+    const messages = [text(0, 'user', 'a'.repeat(100)), text(1, 'assistant', 'b'.repeat(100))];
+    await writeDigest(new FakeLlm(), { project: 'p', title: 't', messages }, 150, (i, n) => parts.push(`${i}/${n}`));
+    expect(parts).toEqual(['1/2', '2/2']);
+    parts.length = 0;
+    await writeDigest(new FakeLlm(), { project: 'p', title: 't', messages: [text(0, 'user', 'hi')] }, 1000, (i, n) => parts.push(`${i}/${n}`));
+    expect(parts).toEqual([]);
+  });
+
   it('makes one call for a session that fits', async () => {
     const llm = new FakeLlm();
     await writeDigest(llm, { project: 'p', title: 't', messages: [text(0, 'user', 'hi')] }, 1000);

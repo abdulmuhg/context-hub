@@ -218,10 +218,12 @@ export function buildLlm(cfg: Config): Llm | null {
 
 /** One step of a sync, for a progress line: reading sessions, summarizing them, uploading without a summary, building pages. */
 export interface SyncProgress {
-  step: 'read' | 'summarize' | 'upload' | 'page';
+  step: 'read' | 'owed' | 'summarize' | 'upload' | 'page';
   done: number;
   total: number;
   project: string;
+  /** Set while a long session is summarized in parts. */
+  part?: { index: number; total: number };
 }
 
 export async function runSync(opts: SyncOptions): Promise<SyncReport> {
@@ -387,7 +389,10 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   if (llm && status && (status.summaries_owed ?? 0) > 0 && !opts.session && !stopped) {
     const projects = s.cfg.tracked.filter((key) => !opts.project || projectMatches(opts.project, key));
     try {
-      const owed = await catchUpOwed(remote!, llm, projects, budget);
+      const owedTotal = status.summaries_owed ?? 0;
+      const owed = await catchUpOwed(remote!, llm, projects, budget, (p) =>
+        opts.onProgress?.({ step: 'owed', done: p.done, total: Math.max(owedTotal, p.done), project: p.project, part: p.part }),
+      );
       report.summarized.push(...owed.written);
       waiting += owed.waiting;
       failure = owed.failure ?? failure;
@@ -445,7 +450,10 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
         opts.onProgress?.({ step: 'summarize', done: ++summaryDone, total: summaryTotal, project: w.ref.project });
       }
       try {
-        digest = await summarize(llm, w.session);
+        const n = summaryDone;
+        digest = await summarize(llm, w.session, MAX_CHARS, (index, total) =>
+          opts.onProgress?.({ step: 'summarize', done: n, total: summaryTotal, project: w.ref.project, part: { index, total } }),
+        );
       } catch (e) {
         const stop = stopReason(e);
         if (stop !== null) {

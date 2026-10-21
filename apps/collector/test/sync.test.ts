@@ -772,6 +772,16 @@ describe('runSync: summaries', () => {
     expect(steps).toEqual(['read 1/1', 'upload 1/1']);
   });
 
+  it('reports owed summaries on the progress line before new work', async () => {
+    track(KEY_A);
+    hubStatus = { server_summaries: false, pages_needed: [], summaries_owed: 1 };
+    owedList = [{ source: 'claude-code', id: S3, content_hash: 'a'.repeat(64), last_activity_at: at(2), status: 'pending', model: null, written_by: null, summary_to_follow: true }];
+    stored[`claude-code/${S3}`] = { source: 'claude-code', source_session_id: S3, project_key: KEY_A, parent: null, title: 'Owed', content_hash: 'a'.repeat(64), messages: [{ seq: 0, role: 'user', kind: 'text', ts: null, text: 'hello' }] };
+    const steps: string[] = [];
+    await runSync(opts({ onProgress: (p) => steps.push(`${p.step} ${p.done}/${p.total}`) }));
+    expect(steps).toEqual(['read 1/1', 'owed 1/1', 'summarize 1/1']);
+  });
+
   it('counts a catch-up digest toward the cap', async () => {
     track(KEY_A);
     manySessions(20);

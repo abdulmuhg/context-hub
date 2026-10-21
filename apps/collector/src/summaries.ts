@@ -42,9 +42,14 @@ export function stopReason(e: unknown): string | null {
  * Writes the summary to send with a session. A refusal does not change on
  * retry, so it is returned as the outcome. Every other failure is thrown.
  */
-export async function summarize(llm: Llm, session: HashedSession, maxChars: number = MAX_CHARS): Promise<UploadDigest> {
+export async function summarize(
+  llm: Llm,
+  session: HashedSession,
+  maxChars: number = MAX_CHARS,
+  onPart?: (index: number, total: number) => void,
+): Promise<UploadDigest> {
   try {
-    const body = await writeDigest(llm, { project: session.project_key, title: session.title, messages: session.messages }, maxChars);
+    const body = await writeDigest(llm, { project: session.project_key, title: session.title, messages: session.messages }, maxChars, onPart);
     return { body, model: llm.model };
   } catch (e) {
     if (e instanceof LlmRefusal) return { refused: e.category, model: llm.model };
@@ -66,7 +71,10 @@ export async function catchUpOwed(
   llm: Llm,
   projects: string[],
   budget: Budget,
+  /** For a progress line: called before each owed summary, and before each part of a long one. */
+  onProgress?: (p: { done: number; project: string; part?: { index: number; total: number } }) => void,
 ): Promise<{ written: SessionRef[]; waiting: number; failure: string | null; stillOwed: string[] }> {
+  let done = 0;
   const written: SessionRef[] = [];
   const stillOwed = new Set<string>();
   let failure: string | null = null;
@@ -85,7 +93,9 @@ export async function catchUpOwed(
       try {
         const session = await getSession(remote, ref);
         if (session.messages.length > 0) spend(budget);
-        const digest = await summarize(llm, session);
+        const n = ++done;
+        onProgress?.({ done: n, project });
+        const digest = await summarize(llm, session, MAX_CHARS, (index, total) => onProgress?.({ done: n, project, part: { index, total } }));
         // 'moved' means the session changed since; its own upload brings a fresh summary.
         if ((await putDigest(remote, ref, session.content_hash, digest)) === 'saved' && 'body' in digest) written.push({ project, session: `${entry.source}:${entry.id}` });
       } catch (e) {

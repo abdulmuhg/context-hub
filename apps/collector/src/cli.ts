@@ -139,6 +139,7 @@ function plural(n: number, word: string): string {
 /** What each step of a sync is called on the progress line. */
 const PROGRESS_STEP: Record<SyncProgress['step'], string> = {
   read: 'Reading',
+  owed: 'Summarizing owed',
   summarize: 'Summarizing',
   upload: 'Uploading',
   page: 'Updating project page',
@@ -480,7 +481,8 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
           progress &&
           ((p) => {
             shown = true;
-            progress(`${PROGRESS_STEP[p.step]} ${p.done}/${p.total}  ${shortName(p.project)}`);
+            const part = p.part ? ` (part ${p.part.index}/${p.part.total})` : '';
+            progress(`${PROGRESS_STEP[p.step]} ${p.done}/${p.total}  ${shortName(p.project)}${part}`);
           }),
       });
       if (progress && shown) progress('');
