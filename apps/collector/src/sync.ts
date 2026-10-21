@@ -30,6 +30,8 @@ export interface SyncOptions {
   exists?: (path: string) => boolean;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  /** Called before each session or document that has to be read and possibly uploaded. */
+  onProgress?: (p: { done: number; total: number; project: string }) => void;
 }
 
 export interface SessionRef {
@@ -202,6 +204,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   }
 
   let stopped = false; // set after the first failed upload
+  const total = s.items.filter((i) => isSelected(i, s.cfg, opts) && !(s.state.files[i.file.path]?.hash != null && i.same)).length;
+  let done = 0;
 
   for (const item of s.items) {
     const { file, sessionKey, projectKey } = item;
@@ -222,6 +226,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
       continue;
     }
     if (stopped) continue;
+    opts.onProgress?.({ done: ++done, total, project: projectKey });
 
     let raw: RawSession;
     try {

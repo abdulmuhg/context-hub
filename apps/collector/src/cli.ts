@@ -32,6 +32,8 @@ export interface Io {
   hostname?: () => string;
   /** True when stdin and stdout are a terminal, so it is safe to ask questions. */
   interactive?: boolean;
+  /** Rewrites one status line in place; an empty line clears it. Only set for a terminal. */
+  progress?: (line: string) => void;
   /** For `hub auto` and `hub sync --auto`: the node binary and the running hub script. */
   execPath?: string;
   bundlePath?: string;
@@ -309,6 +311,8 @@ async function offerNewProjects(io: Io): Promise<void> {
     io.out(`${fresh.length} new project(s) not uploaded: ${names.join(', ')}${more}. Run hub sync in a terminal to choose.`);
     return;
   }
+  const added: string[] = [];
+  const skipped: string[] = [];
   for (const r of fresh) {
     const n = mainSessions(r);
     const answer = (await io.ask(`New project "${displayName(r.key)}" (${plural(n, 'session')}). Upload it to the hub? [y/N] `)).trim().toLowerCase();
@@ -317,6 +321,12 @@ async function offerNewProjects(io: Io): Promise<void> {
         if (!cfg.tracked.includes(r.key)) cfg.tracked.push(r.key);
       } else if (!cfg.declined.includes(r.key)) cfg.declined.push(r.key);
     });
+    (answer === 'y' ? added : skipped).push(shortName(r.key));
+  }
+  if (added.length > 0) io.out(`Will upload: ${added.join(', ')}.`);
+  if (skipped.length > 0) {
+    const how = skipped.length === 1 ? `hub track ${skipped[0]}` : 'hub track <name>';
+    io.out(`Not uploading: ${skipped.join(', ')}. Add it later with: ${how}`);
   }
 }
 
@@ -432,7 +442,24 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       if (wanted && !values.session && !loadConfig(io.hubDir).tracked.some((k) => projectMatches(wanted, k))) {
         throw new Fail(`"${wanted}" is not tracked, so nothing would be uploaded. Run \`hub track ${wanted}\` first.`);
       }
-      const report = await runSync({ ...scanOpts(io), fetchImpl: io.fetchImpl, dryRun, project: values.project, session: values.session });
+      // In a terminal, say what is happening: an upload of many sessions can take a while.
+      const progress = io.interactive && !dryRun ? io.progress : undefined;
+      let shown = false;
+      if (io.interactive && !dryRun) io.out(`Syncing ${plural(loadConfig(io.hubDir).tracked.length, 'tracked project')}…`);
+      const report = await runSync({
+        ...scanOpts(io),
+        fetchImpl: io.fetchImpl,
+        dryRun,
+        project: values.project,
+        session: values.session,
+        onProgress:
+          progress &&
+          ((p) => {
+            shown = true;
+            progress(`Uploading ${p.done}/${p.total}  ${shortName(p.project)}`);
+          }),
+      });
+      if (progress && shown) progress('');
       printReport(io, report, dryRun);
       return report.errors.length > 0 ? 1 : 0;
     }

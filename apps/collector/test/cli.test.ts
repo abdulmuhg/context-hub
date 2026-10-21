@@ -421,6 +421,34 @@ describe('hub sync: new projects', () => {
     expect(loadConfig(io.hubDir)).toMatchObject({ tracked: [], declined: [] });
   });
 
+  it('says what it will do with the answers, then shows progress in a terminal', async () => {
+    io.interactive = true;
+    const shown: string[] = [];
+    io.progress = (line) => shown.push(line);
+    answers = ['y'];
+    expect(await run(['sync'], io)).toBe(0);
+    expect(out.slice(0, 2)).toEqual(['Will upload: alpha.', 'Syncing 1 tracked project…']);
+    expect(shown).toEqual(['Uploading 1/1  alpha', '']);
+    expect(out.at(-1)).toMatch(/^Up to date: 1 uploaded/);
+  });
+
+  it('names a declined project and how to add it later', async () => {
+    io.interactive = true;
+    answers = ['n'];
+    await run(['sync'], io);
+    expect(out[0]).toBe('Not uploading: alpha. Add it later with: hub track alpha');
+  });
+
+  it('shows no progress outside a terminal', async () => {
+    const shown: string[] = [];
+    io.progress = (line) => shown.push(line);
+    await run(['track', 'alpha'], io);
+    out = [];
+    await run(['sync'], io);
+    expect(shown).toEqual([]);
+    expect(out.some((l) => l.startsWith('Syncing'))).toBe(false);
+  });
+
   it('does not offer a tracked project', async () => {
     io.interactive = true;
     await run(['track', 'alpha'], io);
