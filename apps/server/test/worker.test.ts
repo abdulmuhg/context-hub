@@ -161,6 +161,19 @@ describe('runOnce: project state', () => {
     expect(second.digests.map((d) => d.session_id)).toEqual(['claude-code:b']);
   });
 
+  it('merges a computer digest not yet on the page along with its own fallback digest', async () => {
+    add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
+    await runOnce(deps()); // the page now covers a
+    // A computer's digest reaches the hub, but its page update has not happened yet.
+    add('c', { last_activity_at: '2026-10-02T00:00:00.000Z' });
+    saveDigest(db, { sessionRowId: rowId('c'), hash: contentHashOf('c'), model: 'claude-sonnet-5-5', body: BODY, text: 'from a computer', now: iso(), writtenBy: 'laptop' });
+    add('b', { last_activity_at: '2026-10-03T00:00:00.000Z' });
+    await runOnce(deps()); // the fallback writes b, then merges the page
+    const merge = llm.calls.filter((c) => c.kind === 'state').at(-1)!.req as { mode: string; digests: { session_id: string }[] };
+    expect(merge.mode).toBe('merge');
+    expect(merge.digests.map((d) => d.session_id)).toEqual(['claude-code:c', 'claude-code:b']);
+  });
+
   it('rebuilds from all digests once the last full rebuild is more than 7 days old', async () => {
     add('a', { last_activity_at: '2026-10-01T00:00:00.000Z' });
     await runOnce(deps());

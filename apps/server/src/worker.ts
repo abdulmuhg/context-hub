@@ -104,13 +104,15 @@ async function updatePage(c: Ctx, projectId: number, fresh: PageDigest[], forceR
 
 const rebuildState = (c: Ctx, projectId: number): Promise<void> => updatePage(c, projectId, [], true);
 
-async function updateStateAfterDigest(c: Ctx, due: DueDigest, text: string): Promise<void> {
+async function updateStateAfterDigest(c: Ctx, due: DueDigest): Promise<void> {
   // The page failed recently and is waiting. Do not spend a call per digest on it;
   // it stays queued and the state pass rebuilds it with every digest once the wait is over.
   if (stateIsWaiting(c.db, due.project_id, c.now())) return;
-  const session = c.db.prepare('SELECT last_activity_at FROM sessions WHERE id = ?').get(due.session_id) as { last_activity_at: string | null } | undefined;
-  const fresh = { session_id: `${due.source}:${due.source_session_id}`, title: due.title, date: session?.last_activity_at ?? null, text };
-  await updatePage(c, due.project_id, [fresh], false);
+  // Every digest saved since the page was built, not only this one: a computer's
+  // digest may be on the hub before its page update, and saving this page marks it as covered.
+  const seen = getProjectState(c.db, due.project_id)?.digests_through ?? 0;
+  const fresh = pageDigests(okDigestsForProject(c.db, due.project_id).filter((d) => d.saved_seq > seen));
+  await updatePage(c, due.project_id, fresh, false);
 }
 
 async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
@@ -148,7 +150,7 @@ async function digestOne(c: Ctx, due: DueDigest): Promise<'digest' | 'error'> {
   if (projectHasDueDigest(c.db, due.project_id, c.now())) return 'digest';
 
   try {
-    await updateStateAfterDigest(c, due, text);
+    await updateStateAfterDigest(c, due);
   } catch (e) {
     // The digest is safe. The page stays queued for the state pass.
     const r = failState(c.db, due.project_id, message(e), c.now());
