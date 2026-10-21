@@ -6,7 +6,7 @@ import { installScript } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
 import { AuthLimiter } from './ratelimit.js';
-import { projectsNeedingPage, saveComputerOutcome } from './digest-store.js';
+import { deleteProjectState, okDigestsForProject, pageInputs, projectsNeedingPage, saveComputerOutcome, savePageIfVersion } from './digest-store.js';
 import { deleteProject, deleteSession, getStoredSession, listProjectDigests, status, storeUpload } from './store.js';
 import { resourceUrl, type OAuthConfig } from './oauth/config.js';
 import { handleOAuth } from './oauth/routes.js';
@@ -324,6 +324,43 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       const sessions = listProjectDigests(db, decodePart(projectDigests[1]!));
       if (!sessions) throw new HttpError(404, 'No such project');
       return send(res, 200, { sessions });
+    }
+
+    const projectPage = /^\/api\/projects\/([^/]+)\/(page-inputs|page)$/.exec(path);
+    if (projectPage && (method === 'GET' || method === 'PUT' || method === 'DELETE')) {
+      const actor = actorFor(authorise(req, res, ['ingest']));
+      const row = db.prepare('SELECT id FROM projects WHERE key = ?').get(decodePart(projectPage[1]!)) as { id: number } | undefined;
+      if (!row) throw new HttpError(404, 'No such project');
+      if (projectPage[2] === 'page-inputs' && method === 'GET') return send(res, 200, pageInputs(db, row.id));
+      if (projectPage[2] === 'page' && method === 'DELETE') {
+        // A page with digests behind it is rebuilt, not removed.
+        if (okDigestsForProject(db, row.id).length > 0) return send(res, 409, { error: 'The project still has summaries' });
+        deleteProjectState(db, row.id);
+        res.writeHead(204);
+        return void res.end();
+      }
+      if (projectPage[2] === 'page' && method === 'PUT') {
+        const body = await readJson(req);
+        const o = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+        const text = (field: string): string => {
+          const v = o[field];
+          if (typeof v !== 'string' || v === '') throw new HttpError(400, `Invalid page: ${field} must be a non-empty string`);
+          return v;
+        };
+        const base = o.base_version;
+        if (base !== null && !(typeof base === 'number' && Number.isInteger(base) && base >= 0)) throw new HttpError(400, 'Invalid page: base_version must be a whole number or null');
+        const through = o.through;
+        if (typeof through !== 'number' || !Number.isInteger(through) || through < 0) throw new HttpError(400, 'Invalid page: through must be a whole number');
+        if (typeof o.full_rebuild !== 'boolean') throw new HttpError(400, 'Invalid page: full_rebuild must be true or false');
+        const saved = savePageIfVersion(
+          db,
+          row.id,
+          { summary: text('summary'), body: text('body'), model: text('model') },
+          { baseVersion: base as number | null, through, fullRebuild: o.full_rebuild, writtenBy: actor, now: now().toISOString() },
+        );
+        if (!saved.ok) return send(res, 409, { error: 'The page changed; fetch it again' });
+        return send(res, 200, { version: saved.version });
+      }
     }
 
     const projectPath = /^\/api\/projects\/(.+)$/.exec(path);

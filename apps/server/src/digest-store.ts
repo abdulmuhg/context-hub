@@ -335,3 +335,24 @@ export function okDigestsForProject(
     .all(projectId) as { source: string; source_session_id: string; title: string; last_activity_at: string | null; text: string; saved_seq: number }[];
   return rows.map((r) => ({ session_id: `${r.source}:${r.source_session_id}`, title: r.title, last_activity_at: r.last_activity_at, text: r.text, saved_seq: r.saved_seq }));
 }
+
+export interface PageInputsResult {
+  page: { summary: string; body: string; version: number; rebuilt_at: string; dirty: boolean; digests_through: number } | null;
+  /** Every ok digest of the project, oldest first. */
+  digests: { session_id: string; title: string; date: string | null; text: string; saved_seq: number }[];
+  /** The newest saved_seq among the digests, or 0. A page saved with it covers all of them. */
+  through: number;
+}
+
+/** What a computer needs to write a project's state page. */
+export function pageInputs(db: Db, projectId: number): PageInputsResult {
+  const state = getProjectState(db, projectId);
+  const digests = okDigestsForProject(db, projectId).map((d) => ({ session_id: d.session_id, title: d.title, date: d.last_activity_at, text: d.text, saved_seq: d.saved_seq }));
+  return {
+    page: state
+      ? { summary: state.summary, body: state.body, version: state.version, rebuilt_at: state.rebuilt_at, dirty: state.dirty, digests_through: state.digests_through }
+      : null,
+    digests,
+    through: Math.max(0, ...digests.map((d) => d.saved_seq)),
+  };
+}
