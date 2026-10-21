@@ -1,4 +1,3 @@
-import type { Message } from '@context-hub/core';
 import type { Db } from './db.js';
 import {
   clearStateRetry,
@@ -21,6 +20,7 @@ import {
   type DueDigest,
 } from './digest-store.js';
 import { buildStatePage, CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, renderDigest, writeDigest, type Llm, type PageDigest } from '@context-hub/core';
+import { loadMessages } from './store.js';
 import { budgetReached } from './usage.js';
 
 export { CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, REBUILD_AFTER_MS } from '@context-hub/core';
@@ -55,34 +55,6 @@ function context(deps: WorkerDeps): Ctx {
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-function loadMessages(db: Db, sessionRowId: number): Message[] {
-  const rows = db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY seq').all(sessionRowId) as {
-    seq: number;
-    role: 'user' | 'assistant';
-    kind: 'text' | 'tool_call';
-    ts: string | null;
-    text: string | null;
-    tool_name: string | null;
-    tool_input: string | null;
-    tool_result: string | null;
-    tool_status: 'ok' | 'error' | null;
-  }[];
-  return rows.map((r) =>
-    r.kind === 'text'
-      ? { seq: r.seq, role: r.role, kind: 'text', ts: r.ts, text: r.text ?? '' }
-      : {
-          seq: r.seq,
-          role: 'assistant',
-          kind: 'tool_call',
-          ts: r.ts,
-          tool_name: r.tool_name ?? '',
-          tool_input: r.tool_input ?? '',
-          tool_result: r.tool_result ?? '',
-          tool_status: r.tool_status ?? 'ok',
-        },
-  );
-}
 
 /** The sessions a page is built from. A change during a model call means the page is already out of date. */
 const pageSources = (db: Db, projectId: number): string =>

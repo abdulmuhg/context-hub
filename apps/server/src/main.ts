@@ -36,7 +36,7 @@ const web: WebConfig = {
 
 const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };
 
-const server = createServer(createHandler({ db, mcp: handleMcp(db), web, client, ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
+const server = createServer(createHandler({ db, mcp: handleMcp(db), web, client, serverSummaries: Boolean(process.env.ANTHROPIC_API_KEY), ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
 console.log(publicUrl ? `oauth: on, ${publicUrl}` : 'oauth: off, no PUBLIC_URL');
 console.log(`client bundle: ${client.bundle === null ? 'off' : 'on'}`);
 console.log(`dashboard: on, secure cookies ${web.secureCookies ? 'on' : 'off'}, backup status ${web.backupStatusPath ?? 'none'}`);

@@ -1,6 +1,6 @@
-import type { HashedSession, Message } from '@context-hub/core';
+import type { HashedSession, Message, UploadDigest } from '@context-hub/core';
 import type { Db } from './db.js';
-import { digestCounts, getDigest, getProjectState, markDigestPending, markStateDirty, type DigestStatus } from './digest-store.js';
+import { digestCounts, getDigest, getProjectState, markDigestPending, markStateDirty, saveComputerOutcome, type DigestStatus } from './digest-store.js';
 
 export function publicId(source: string, id: string): string {
   return `${source}:${id}`;
@@ -373,4 +373,85 @@ export function getSessionPage(db: Db, source: string, id: string, fromSeq: numb
     messages,
     next_seq: next,
   };
+}
+
+/** The cleaned messages of a stored session, in order. */
+export function loadMessages(db: Db, sessionRowId: number): Message[] {
+  const rows = db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY seq').all(sessionRowId) as {
+    seq: number;
+    role: 'user' | 'assistant';
+    kind: 'text' | 'tool_call';
+    ts: string | null;
+    text: string | null;
+    tool_name: string | null;
+    tool_input: string | null;
+    tool_result: string | null;
+    tool_status: 'ok' | 'error' | null;
+  }[];
+  return rows.map((r) =>
+    r.kind === 'text'
+      ? { seq: r.seq, role: r.role, kind: 'text', ts: r.ts, text: r.text ?? '' }
+      : {
+          seq: r.seq,
+          role: 'assistant',
+          kind: 'tool_call',
+          ts: r.ts,
+          tool_name: r.tool_name ?? '',
+          tool_input: r.tool_input ?? '',
+          tool_result: r.tool_result ?? '',
+          tool_status: r.tool_status ?? 'ok',
+        },
+  );
+}
+
+/** Stores an upload and the summary that came with it, in one transaction. */
+export function storeUpload(db: Db, s: HashedSession, digest: UploadDigest | undefined, writtenBy: string, now: string): { changed: boolean } {
+  return db.transaction((): { changed: boolean } => {
+    const { changed } = upsertSession(db, s, now);
+    // A summary only belongs to a main session. A retry after a network error sends it again for an unchanged one.
+    if (digest !== undefined && s.parent === null && s.source !== 'doc') {
+      const row = db.prepare('SELECT id FROM sessions WHERE source = ? AND source_session_id = ?').get(s.source, s.source_session_id) as { id: number };
+      saveComputerOutcome(db, row.id, s.content_hash, digest, writtenBy, now);
+    }
+    return { changed };
+  })();
+}
+
+/** A stored session as the collector uploaded it, or null. */
+export function getStoredSession(db: Db, source: string, id: string): HashedSession | null {
+  const row = db
+    .prepare(
+      `SELECT s.id, s.account_id, s.parent, s.title, s.cwd, s.git_branch, s.started_at, s.last_activity_at, s.content_hash, p.key AS project_key
+       FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.source = ? AND s.source_session_id = ?`,
+    )
+    .get(source, id) as (Omit<HashedSession, 'source' | 'source_session_id' | 'messages'> & { id: number }) | undefined;
+  if (!row) return null;
+  const { id: rowId, ...rest } = row;
+  return { source: source as HashedSession['source'], source_session_id: id, ...rest, messages: loadMessages(db, rowId) };
+}
+
+export interface ProjectDigestRow {
+  source: string;
+  id: string;
+  content_hash: string;
+  last_activity_at: string | null;
+  status: DigestStatus | null;
+  model: string | null;
+  written_by: string | null;
+  summary_to_follow: boolean;
+}
+
+/** The main sessions of a project with who wrote each digest, for deciding what to rewrite. Null for an unknown project. */
+export function listProjectDigests(db: Db, key: string): ProjectDigestRow[] | null {
+  const project = db.prepare('SELECT id FROM projects WHERE key = ?').get(key) as { id: number } | undefined;
+  if (!project) return null;
+  const rows = db
+    .prepare(
+      `SELECT s.source, s.source_session_id AS id, s.content_hash, s.last_activity_at, d.status, d.model, d.written_by, d.summary_to_follow
+       FROM sessions s LEFT JOIN digests d ON d.session_id = s.id
+       WHERE s.project_id = ? AND s.parent IS NULL AND s.source NOT IN ('doc', 'note')
+       ORDER BY s.last_activity_at DESC, s.id`,
+    )
+    .all(project.id) as (Omit<ProjectDigestRow, 'summary_to_follow'> & { summary_to_follow: number | null })[];
+  return rows.map((r) => ({ ...r, summary_to_follow: r.summary_to_follow === 1 }));
 }

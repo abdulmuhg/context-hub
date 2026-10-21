@@ -1,4 +1,4 @@
-import type { HashedSession, Message } from '@context-hub/core';
+import { DigestSchema, type HashedSession, type Message, type UploadDigest } from '@context-hub/core';
 
 export class HttpError extends Error {
   constructor(
@@ -94,4 +94,28 @@ export function parseSession(body: unknown, source: string, id: string): HashedS
     messages,
     content_hash: hash,
   };
+}
+
+function digestText(o: Record<string, unknown>, field: string): string {
+  const v = o[field];
+  if (typeof v !== 'string' || v === '' || v.length > 500) throw new HttpError(400, `Invalid digest: ${field} must be a text of 1 to 500 characters`);
+  return v;
+}
+
+/** Checks the summary a computer sends with a session, or on its own. Undefined when there is none. */
+export function parseUploadDigest(value: unknown): UploadDigest | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Invalid digest: it must be a JSON object');
+  const o = value as Record<string, unknown>;
+  if (o.summary_to_follow === true) return { summary_to_follow: true };
+  if ('body' in o) {
+    const parsed = DigestSchema.safeParse(o.body);
+    if (!parsed.success) {
+      throw new HttpError(400, `Invalid digest: the body does not match the digest format (${parsed.error.issues[0]?.path.join('.') || 'body'})`);
+    }
+    return { body: parsed.data, model: digestText(o, 'model') };
+  }
+  if ('refused' in o) return { refused: digestText(o, 'refused'), model: digestText(o, 'model') };
+  if ('failed' in o) return { failed: digestText(o, 'failed') };
+  throw new HttpError(400, 'Invalid digest: it needs a body, refused, failed or summary_to_follow');
 }

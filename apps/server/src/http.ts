@@ -6,13 +6,14 @@ import { installScript } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
 import { AuthLimiter } from './ratelimit.js';
-import { deleteProject, deleteSession, status, upsertSession } from './store.js';
+import { projectsNeedingPage, saveComputerOutcome } from './digest-store.js';
+import { deleteProject, deleteSession, getStoredSession, listProjectDigests, status, storeUpload } from './store.js';
 import { resourceUrl, type OAuthConfig } from './oauth/config.js';
 import { handleOAuth } from './oauth/routes.js';
 import { createConnectCode, touchGrant } from './oauth/store.js';
 import type { McpCaller } from './mcp.js';
 import { actorFor, checkCredential, type Credential, type Scope } from './tokens.js';
-import { HttpError, parseSession } from './validate.js';
+import { HttpError, parseSession, parseUploadDigest } from './validate.js';
 import { handleWeb, type WebConfig } from './web/routes.js';
 
 export const MAX_BODY = 20 * 1024 * 1024;
@@ -32,6 +33,8 @@ export interface AppDeps {
   web?: WebConfig;
   /** The collector's single-file bundle served at /hub.mjs. Wired in main.ts. */
   client?: { bundle: string | null };
+  /** True when the server has a model key and writes summaries for computers that cannot. Reported by /api/status. */
+  serverSummaries?: boolean;
 }
 
 /**
@@ -192,7 +195,8 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
 
     if (path === '/api/status' && method === 'GET') {
       authorise(req, res, ['ingest', 'read']);
-      return send(res, 200, status(db));
+      const owed = (db.prepare('SELECT COUNT(*) AS n FROM digests WHERE summary_to_follow = 1').get() as { n: number }).n;
+      return send(res, 200, { ...status(db), server_summaries: deps.serverSummaries ?? false, pages_needed: projectsNeedingPage(db), summaries_owed: owed });
     }
 
     if (path === '/api/connect-code' && method === 'POST') {
@@ -236,6 +240,36 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       return void res.end();
     }
 
+    // Ids and keys are URL-encoded, so these never contain a raw slash. They come before the catch-all below.
+    const digestPath = /^\/api\/sessions\/([^/]+)\/([^/]+)\/digest$/.exec(path);
+    if (digestPath && method === 'PUT') {
+      const actor = actorFor(authorise(req, res, ['ingest']));
+      const source = decodePart(digestPath[1]!);
+      const id = decodePart(digestPath[2]!);
+      const body = await readJson(req);
+      const o = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+      if (typeof o.hash !== 'string') throw new HttpError(400, 'hash must be a string');
+      const digest = parseUploadDigest(o.digest);
+      if (digest === undefined) throw new HttpError(400, 'Invalid digest: it is required');
+      const row = db
+        .prepare("SELECT id FROM sessions WHERE source = ? AND source_session_id = ? AND parent IS NULL AND source <> 'doc'")
+        .get(source, id) as { id: number } | undefined;
+      if (!row) throw new HttpError(404, 'No such session');
+      if (!saveComputerOutcome(db, row.id, o.hash, digest, actor, now().toISOString())) {
+        return send(res, 409, { error: 'The session changed since this summary was written' });
+      }
+      res.writeHead(204);
+      return void res.end();
+    }
+
+    const storedPath = /^\/api\/sessions\/([^/]+)\/([^/]+)$/.exec(path);
+    if (storedPath && method === 'GET') {
+      authorise(req, res, ['ingest']);
+      const session = getStoredSession(db, decodePart(storedPath[1]!), decodePart(storedPath[2]!));
+      if (!session) throw new HttpError(404, 'No such session');
+      return send(res, 200, { session });
+    }
+
     const sessionPath = /^\/api\/sessions\/([^/]+)\/(.+)$/.exec(path);
     if (sessionPath && (method === 'PUT' || method === 'DELETE')) {
       const actor = actorFor(authorise(req, res, ['ingest']));
@@ -260,10 +294,12 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         );
         return send(res, 200, { deleted });
       }
-      const parsed = parseSession(await readJson(req), source, id);
+      const parsedBody = await readJson(req);
+      const parsed = parseSession(parsedBody, source, id);
+      const digest = parseUploadDigest((parsedBody as Record<string, unknown>).digest);
       const { session, redactions } = stripAgain(parsed);
       if (redactions > 0) log(`${source}:${id}: server stripped ${redactions} secret(s); the collector may be out of date`);
-      const { changed } = upsertSession(db, session, now().toISOString());
+      const { changed } = storeUpload(db, session, digest, actor, now().toISOString());
       if (changed) {
         logActivitySafe(
           db,
@@ -280,6 +316,14 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         );
       }
       return send(res, 200, { stored: true, changed, server_redactions: redactions });
+    }
+
+    const projectDigests = /^\/api\/projects\/([^/]+)\/digests$/.exec(path);
+    if (projectDigests && method === 'GET') {
+      authorise(req, res, ['ingest']);
+      const sessions = listProjectDigests(db, decodePart(projectDigests[1]!));
+      if (!sessions) throw new HttpError(404, 'No such project');
+      return send(res, 200, { sessions });
     }
 
     const projectPath = /^\/api\/projects\/(.+)$/.exec(path);
