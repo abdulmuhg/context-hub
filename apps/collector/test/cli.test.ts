@@ -758,7 +758,7 @@ describe('hub status', () => {
 describe('hub summaries', () => {
   it('shows the model and effort in use', async () => {
     expect(await run(['summaries'], io)).toBe(0);
-    expect(out.join('\n')).toMatch(/model: claude-sonnet-5-5/);
+    expect(out.join('\n')).toMatch(/model: claude-haiku-5-5/);
     expect(out.join('\n')).toMatch(/effort: low/);
   });
 
@@ -800,7 +800,7 @@ describe('hub doctor: summaries', () => {
     io.runClaude = signedIn;
     out = [];
     await run(['doctor'], io);
-    expect(out.join('\n')).toMatch(/✓ Summaries\s+Claude Code signed in, model claude-sonnet-5-5, effort low/);
+    expect(out.join('\n')).toMatch(/✓ Summaries\s+Claude Code signed in, model claude-haiku-5-5, effort low/);
   });
 
   it('asks Claude Code for its sign-in with the auth status command', async () => {

@@ -707,6 +707,16 @@ describe('state pages written on the computer', () => {
     expect((await inputs()).page).toMatchObject({ version: 1, digests_through: 2, dirty: false });
   });
 
+  it('strips a secret from a page a computer saves, and logs only the count', async () => {
+    const secret = 'gh' + 'p_' + 'b'.repeat(36);
+    await withDigest('a', '2026-10-01T00:00:00.000Z');
+    expect((await savePage({ summary: `uses ${secret}`, body: `## Current state\n- token ${secret}`, through: 1 })).status).toBe(200);
+    const dump = JSON.stringify(db.prepare('SELECT * FROM project_states').all());
+    expect(dump).not.toContain(secret);
+    expect(dump).toContain('[REDACTED:github]');
+    expect(logs.join('\n')).toMatch(/server stripped 2 secret\(s\) from its page/);
+  });
+
   it('saving with an old version answers 409', async () => {
     await withDigest('a', '2026-10-01T00:00:00.000Z');
     await savePage({ through: 1 });

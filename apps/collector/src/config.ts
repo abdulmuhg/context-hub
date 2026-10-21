@@ -34,7 +34,7 @@ export interface Config {
   summaries?: { model?: string; effort?: Effort };
 }
 
-export const DEFAULT_SUMMARY_MODEL = 'claude-sonnet-5-5';
+export const DEFAULT_SUMMARY_MODEL = 'claude-haiku-5-5';
 export const DEFAULT_SUMMARY_EFFORT: Effort = 'low';
 /** The most summaries one sync writes, unless it is run with --all. */
 export const SUMMARY_CAP = 20;

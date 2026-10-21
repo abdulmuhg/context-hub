@@ -1,8 +1,9 @@
 # context-hub
 
 One private place for the AI-assistant history of the projects you choose.
-Your sessions from Claude Code, Codex and Antigravity are uploaded (secrets
-stripped), summarised, and kept as a short briefing per project, so any
+Your sessions from Claude Code, Codex and Antigravity are summarised on your
+own computer, uploaded (secrets stripped), and kept as a short briefing per
+project, so any
 assistant on any account or machine can pick up where the last one stopped:
 ask "where did we leave off on jsonroom?" and it reads the briefing instead
 of you explaining it again.
@@ -10,9 +11,10 @@ of you explaining it again.
 It has three parts:
 
 - **The hub**, a small server you or someone else hosts. It stores sessions,
-  writes summaries and project briefings, and answers assistants over MCP.
+  summaries and project briefings, and answers assistants over MCP.
 - **The `hub` command** on each computer you work on. It finds your local AI
-  sessions and uploads the projects you choose.
+  sessions, has Claude Code on that computer summarise them, and uploads the
+  projects you choose.
 - **The dashboard**, the hub's own web pages: health, activity, projects and
   every connection, behind a sign-in.
 
@@ -155,8 +157,8 @@ hub sync --dry-run           # see what would be sent
 - `hub personal add phone` adds one of your own values, such as a phone
   number, to a personal-data list. The default is `warn`: it is reported but
   still uploaded. Raise it with `hub personal level list partial` or `full`.
-- Syncing is manual on purpose: run `hub sync` after a working session, or
-  use `/hub-sync` in Claude Code.
+- Syncing is manual unless you turn on [automatic sync](#sync-automatically-claude-code):
+  run `hub sync` after a working session, or use `/hub-sync` in Claude Code.
 - `hub forget <project>` or `hub forget --session <source>:<id>` deletes from
   the hub. Local files are never touched.
 
@@ -191,25 +193,43 @@ find them with `search` (source `doc`), and read them whole with
 #### Summaries come from Claude Code on your computer
 
 `hub sync` writes each session's summary, and each project's briefing page,
-with Claude Code (`claude -p`) on your own computer, using your Claude plan.
-The hub only stores, searches and serves them, so it needs no model key. A
-session is uploaded together with its summary; if the summary cannot be
-written (usage limit reached, Claude Code not signed in), the session waits on
-the computer and the next sync tries again.
+with Claude Code (`claude -p`) on your own computer, using the Claude plan that
+Claude Code is signed in to there. The hub only stores, searches and serves
+them, so it needs no model key. A session is uploaded together with its
+summary; if the summary cannot be written (usage limit reached, Claude Code
+signed out), the session waits on the computer, is not on the hub yet, and the
+next sync tries again.
 
-- The model is `claude-sonnet-5-5` at low effort. `hub summaries` shows the
-  settings; `hub summaries model <id>` and `hub summaries effort <level>`
-  change them for this computer.
-- One sync writes at most 20 new summaries, newest first, so a sync cannot use
-  up your plan. `hub sync --all` lifts the cap, for catching up on a backlog.
+What this computer needs: Claude Code installed and signed in
+(`claude auth login`). `hub doctor` checks it. Without Claude Code, a hub that
+has a model key summarises this computer's sessions itself; a hub without one
+leaves them waiting here.
+
+- The model is `claude-haiku-5-5` at low effort, the same model the hub has
+  always used. `hub summaries` shows the settings; `hub summaries model <id>`
+  and `hub summaries effort <level>` change them for this computer.
+- **Summaries use your Claude plan's usage limits**, the same ones your own
+  Claude Code work uses. One sync writes at most 20 new summaries, newest
+  first, so a sync cannot use up your plan. `hub sync --all` lifts the cap,
+  for catching up on a backlog. A usage limit, a sign-out or a timeout stops
+  summary work for that run.
+- **Your sessions go through your Claude account**, so they follow that
+  account's privacy settings, including whether chats may be used to improve
+  the models (claude.ai, **Settings > Privacy**). The hub's fallback key is an
+  API key, which is never used for training.
 - `hub status` and `hub doctor` show how many sessions are waiting and why.
-- `hub resummarize [<project>]` rewrites older summaries (Haiku ones the hub
-  wrote, pending, failed or refused ones) from the transcripts stored on the
-  hub, then rebuilds the project pages. Add `--model-not <id>` to rewrite
-  other computers' summaries that were not written with that model.
-- Claude Code is started with every `ANTHROPIC_*` and `CLAUDE*` variable
-  removed, so it always signs in with your stored Claude login and never bills
-  an API account.
+- `hub resummarize [<project>]` rewrites summaries the hub's own key wrote
+  (and pending, failed or refused ones) from the transcripts stored on the
+  hub, then rebuilds the project pages. Add `--model-not <id>` to also rewrite
+  other computers' summaries that were not written with that model. It counts
+  against your plan like a sync, so run it per project rather than with
+  `--all` unless you mean to.
+- Claude Code is started from an empty folder, with every `ANTHROPIC_*` and
+  `CLAUDE*` variable removed (except `CLAUDE_CONFIG_DIR`) and without your
+  user settings (`--setting-sources project`), so it always uses your stored
+  Claude login. A proxy or another account set in `~/.claude/settings.json`
+  does not apply, and an API account is never billed. These runs leave no
+  transcripts behind.
 
 #### Sync automatically (Claude Code)
 
@@ -262,7 +282,7 @@ the browser stays signed in for 30 days.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Healthy or Needs attention, counts, the last sync, the last backup (and whether it reached off-site storage), anything wrong right now, recent activity, and the running version. A **Model spend** card shows today's spend (UTC day), the calls made today and the last 30 days, and the daily limit when one is set. `hub-admin usage [--days N]` gives the same per day, by kind and by project. |
+| **Overview** | Healthy or Needs attention, counts, the last sync, the last backup (and whether it reached off-site storage), anything wrong right now, recent activity, and the running version. A **Model spend** card shows what the hub's own fallback key spent today (UTC day), the calls made today and the last 30 days, and the daily limit when one is set. `hub-admin usage [--days N]` gives the same per day, by kind and by project. |
 | **Activity** | Everything saved into the hub and read from it over the last 30 days, and by whom. |
 | **Projects** | Every project and its summary; open one for its full briefing, recent sessions and notes, and its documents. |
 | **Sign-ins** | Every way in: Claude apps, tokens and browsers, each with a **Disconnect** that asks once and says what breaks. |
@@ -327,12 +347,12 @@ A minimal run without the `deploy/` folder:
 docker run -d --name context-hub \
   -v context_hub_data:/data \
   -e PUBLIC_URL=https://hub.example.com \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
   -p 127.0.0.1:3000:3000 \
   context-hub
 ```
 
-Point your HTTPS proxy at port 3000. Keep the container off the public
+Add `-e ANTHROPIC_API_KEY=...` only if you want the fallback for computers
+without Claude Code (see Settings). Point your HTTPS proxy at port 3000. Keep the container off the public
 interface; only the proxy should reach it.
 
 ### Settings
@@ -441,7 +461,7 @@ Live at https://hub.abdulmughnialfikri.com, used by its owner. Every push to
 | Built | Planned or parked |
 |---|---|
 | Collector for Claude Code, Codex and Antigravity; secret stripping and a personal-data filter | Windows installer |
-| Summaries and per-project briefings, with a review step that drops settled items | Importer for claude.ai export files (waits on a real export) |
+| Summaries and per-project briefings written on your computer by Claude Code (the hub's key as a fallback), with a review step that drops settled items | Importer for claude.ai export files (waits on a real export) |
 | MCP lookups for Claude Code and other tools | ChatGPT and Gemini sign-in |
 | Sign-in for claude.ai, desktop and mobile; `save_note` | A hub for more than one person |
 | Dashboard, activity log, sync reports, off-site backups | |
