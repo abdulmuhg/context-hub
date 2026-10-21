@@ -319,7 +319,7 @@ interface; only the proxy should reach it.
 | `ANTHROPIC_API_KEY` | for summaries | Writes session summaries and project briefings with Claude. Without it, uploads and lookups still work and summaries wait in a queue. Billed separately from a Claude subscription. |
 | `DIGEST_MODEL` | no | Default `claude-haiku-5-5`. |
 | `DIGEST_EFFORT` | no | Default `low`. |
-| `DIGEST_MAX_INPUT_TOKENS` | no | Default `80000`. Long sessions are summarised in parts of this size. |
+| `DIGEST_MAX_INPUT_TOKENS` | no | Default `60000`, counted at 2 characters per token so a prompt stays under the 100K-token price step. Long sessions are summarised in parts of this size. |
 | `IMAGE_TAG` | no | Shown on the dashboard as the running version. The reference deploy sets it. |
 | `BACKUP_STATUS_PATH` | no | A JSON file the backup job writes; the dashboard shows it. Default `/backup-status/context-hub.json` when it exists. |
 | `DATABASE_PATH`, `PORT` | no | Defaults `/data/hub.sqlite` and `3000` in the image. |

@@ -22,8 +22,8 @@ import { LlmRefusal, type Llm, type StatePage } from './llm.js';
 import { applyReview } from './page-review.js';
 import { renderDigest, renderLines, splitParts } from './transcript.js';
 
-export const CHARS_PER_TOKEN = 3;
-export const DEFAULT_MAX_INPUT_TOKENS = 80000;
+export const CHARS_PER_TOKEN = 2;
+export const DEFAULT_MAX_INPUT_TOKENS = 60000;
 export const REBUILD_AFTER_MS = 7 * 24 * 60 * 60_000;
 
 export interface WorkerDeps {

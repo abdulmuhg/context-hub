@@ -324,6 +324,26 @@ describe('runOnce: one page build per batch', () => {
   });
 });
 
+describe('default prompt size', () => {
+  it('splits a 300,000-character session into 3 parts of at most 120,000 characters', async () => {
+    add('huge', { messages: Array.from({ length: 30 }, (_, i) => text(i, 'user', 'x'.repeat(10_000))) });
+    await runOnce(deps());
+    const parts = llm.calls.filter((c) => c.kind === 'digest').map((c) => (c.req as { transcript: string }).transcript);
+    expect(parts).toHaveLength(3);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(120_000);
+  });
+
+  it('keeps a review window over many large digests at 120,000 characters of digest text', async () => {
+    llm.digest = async (req) => ({ goal: `digest of ${req.title}`, done: [{ text: 'd'.repeat(20_000), seq: 0 }], decisions: [], open_items: [], key_refs: [] });
+    for (let i = 1; i <= 9; i++) add(`s${i}`, { last_activity_at: `2026-10-0${i}T00:00:00.000Z` });
+    await drain();
+    const window = llm.reviews.at(-1)!.digests;
+    expect(window.length).toBeGreaterThan(1);
+    expect(window.length).toBeLessThan(9);
+    expect(window.reduce((n, d) => n + d.text.length, 0)).toBeLessThanOrEqual(120_000);
+  });
+});
+
 describe('startWorker', () => {
   it('drains the queue in the background and stops cleanly', async () => {
     add('a');

@@ -46,6 +46,9 @@ if (process.env.ANTHROPIC_API_KEY) {
   if (!EFFORTS.includes(effort)) throw new Error(`DIGEST_EFFORT must be one of: ${EFFORTS.join(', ')}`);
   const maxInputTokens = Number(process.env.DIGEST_MAX_INPUT_TOKENS ?? DEFAULT_MAX_INPUT_TOKENS);
   if (!Number.isInteger(maxInputTokens) || maxInputTokens < 1000) throw new Error('DIGEST_MAX_INPUT_TOKENS must be a whole number of at least 1000');
+  if (maxInputTokens > 80000) {
+    console.warn(`DIGEST_MAX_INPUT_TOKENS is ${maxInputTokens}: with 2 characters per token, a full prompt can pass 100K tokens, which some models bill at a higher rate.`);
+  }
   const model = process.env.DIGEST_MODEL ?? DEFAULT_MODEL;
   worker = startWorker({ db, llm: new AnthropicLlm({ model, effort }), maxInputTokens });
   console.log(`digests: on, model ${model}, effort ${effort}`);
