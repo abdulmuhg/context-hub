@@ -567,6 +567,22 @@ describe('summaries written on the computer', () => {
     expect(nextDueDigest(db, NOW.toISOString())).toBeNull();
   });
 
+  it('strips a secret from a digest that came with an upload, and from one sent alone', async () => {
+    const secret = 'gh' + 'p_' + 'b'.repeat(36);
+    await putWith(makeSession(), {
+      body: { ...BODY, goal: `use ${secret}`, decisions: [{ what: 'Keep it', why: `it is ${secret}`, seq: 0 }], key_refs: [secret] },
+      model: 'claude-sonnet-5-5',
+    });
+    const s2 = makeSession({ source_session_id: 's2' });
+    await put(s2);
+    await call('PUT', `${sessionPath(s2)}/digest`, { token: ingest, body: JSON.stringify({ hash: s2.content_hash, digest: { body: { ...BODY, goal: secret }, model: 'm' } }) });
+    await putWith(makeSession({ source_session_id: 's3' }), { refused: `because ${secret}`, model: 'm' });
+    const dump = JSON.stringify([db.prepare('SELECT * FROM digests').all(), db.prepare('SELECT * FROM search_index').all()]);
+    expect(dump).not.toContain(secret);
+    expect(dump).toContain('[REDACTED:github]');
+    expect(logs.join('\n')).toMatch(/server stripped \d+ secret\(s\) from its summary/);
+  });
+
   it('rejects a digest body that does not match the schema with 400', async () => {
     const res = await putWith(makeSession(), { body: { goal: 'x' }, model: 'm' });
     expect(res.status).toBe(400);

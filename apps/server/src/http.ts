@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
-import { stripSecrets, type HashedSession } from '@context-hub/core';
+import { stripSecrets, type DigestBody, type HashedSession, type UploadDigest } from '@context-hub/core';
 import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun } from './activity.js';
 import { installScript } from './client-dist.js';
 import type { Db } from './db.js';
@@ -119,6 +119,30 @@ function stripAgain(session: HashedSession): { session: HashedSession; redaction
     m.kind === 'text' ? { ...m, text: clean(m.text) } : { ...m, tool_input: clean(m.tool_input), tool_result: clean(m.tool_result) },
   );
   return { session: { ...session, title: clean(session.title), messages }, redactions };
+}
+
+/** The same safety net for the summary a computer sends: every text in it is stripped again. */
+function stripDigestAgain(digest: UploadDigest): { digest: UploadDigest; redactions: number } {
+  let redactions = 0;
+  const clean = (s: string): string => {
+    const out = stripSecrets(s);
+    for (const n of Object.values(out.counts)) redactions += n;
+    return out.text;
+  };
+  if ('body' in digest) {
+    const b = digest.body;
+    const body: DigestBody = {
+      goal: clean(b.goal),
+      done: b.done.map((d) => ({ ...d, text: clean(d.text) })),
+      decisions: b.decisions.map((d) => ({ ...d, what: clean(d.what), why: clean(d.why) })),
+      open_items: b.open_items.map((d) => ({ ...d, text: clean(d.text) })),
+      key_refs: b.key_refs.map(clean),
+    };
+    return { digest: { ...digest, body }, redactions };
+  }
+  if ('refused' in digest) return { digest: { ...digest, refused: clean(digest.refused) }, redactions };
+  if ('failed' in digest) return { digest: { ...digest, failed: clean(digest.failed) }, redactions };
+  return { digest, redactions };
 }
 
 export function createHandler(deps: AppDeps): (req: IncomingMessage, res: ServerResponse) => void {
@@ -249,8 +273,10 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       const body = await readJson(req);
       const o = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
       if (typeof o.hash !== 'string') throw new HttpError(400, 'hash must be a string');
-      const digest = parseUploadDigest(o.digest);
-      if (digest === undefined) throw new HttpError(400, 'Invalid digest: it is required');
+      const parsedDigest = parseUploadDigest(o.digest);
+      if (parsedDigest === undefined) throw new HttpError(400, 'Invalid digest: it is required');
+      const { digest, redactions } = stripDigestAgain(parsedDigest);
+      if (redactions > 0) log(`${source}:${id}: server stripped ${redactions} secret(s) from its summary; the collector may be out of date`);
       const row = db
         .prepare("SELECT id FROM sessions WHERE source = ? AND source_session_id = ? AND parent IS NULL AND source <> 'doc'")
         .get(source, id) as { id: number } | undefined;
@@ -296,9 +322,14 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       }
       const parsedBody = await readJson(req);
       const parsed = parseSession(parsedBody, source, id);
-      const digest = parseUploadDigest((parsedBody as Record<string, unknown>).digest);
+      const uploaded = parseUploadDigest((parsedBody as Record<string, unknown>).digest);
       const { session, redactions } = stripAgain(parsed);
       if (redactions > 0) log(`${source}:${id}: server stripped ${redactions} secret(s); the collector may be out of date`);
+      const strippedDigest = uploaded === undefined ? undefined : stripDigestAgain(uploaded);
+      if (strippedDigest && strippedDigest.redactions > 0) {
+        log(`${source}:${id}: server stripped ${strippedDigest.redactions} secret(s) from its summary; the collector may be out of date`);
+      }
+      const digest = strippedDigest?.digest;
       const { changed } = storeUpload(db, session, digest, actor, now().toISOString());
       if (changed) {
         logActivitySafe(
