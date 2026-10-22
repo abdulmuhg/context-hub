@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { hookCommand } from '../src/auto.js';
 import { run, type Io } from '../src/cli.js';
 import { DEFAULT_SUMMARY_EFFORT, DEFAULT_SUMMARY_MODEL, loadConfig, loadToken, saveConfig, saveToken } from '../src/config.js';
-import { tempDir, writeRaw } from './helpers.js';
+import { setupCase, parsePicks } from '../src/setup.js';
+import { tempDir, writeJsonl, writeRaw } from './helpers.js';
 
 const SUMMARIES = `✓ Claude Code signed in, model ${DEFAULT_SUMMARY_MODEL}, effort ${DEFAULT_SUMMARY_EFFORT}`;
 const NEW_LINE = 'Get a new line from Sign-ins → Add a computer and paste it.';
@@ -162,5 +163,132 @@ describe('hub setup', () => {
   it('needs the hub address', async () => {
     expect(await run(['setup'], io)).toBe(1);
     expect(err.join('\n')).toContain('hub setup --url');
+  });
+});
+
+describe('parsePicks', () => {
+  it('reads numbers, all, and nothing', () => {
+    expect(parsePicks('1 3', 6)).toEqual([1, 3]);
+    expect(parsePicks('1,3', 6)).toEqual([1, 3]);
+    expect(parsePicks('all', 6)).toBe('all');
+    expect(parsePicks('', 6)).toEqual([]);
+    expect(parsePicks('7', 6)).toBeNull();
+    expect(parsePicks('x', 6)).toBeNull();
+  });
+});
+
+describe('hub setup: picking projects', () => {
+  const NOW = new Date().toISOString();
+  const session = (id: string, cwd: string, at: string) => ({
+    type: 'user',
+    sessionId: id,
+    cwd,
+    timestamp: at,
+    message: { role: 'user', content: 'hello' },
+  });
+  let answers: string[];
+  let prompts: string[];
+  let syncs: number;
+
+  beforeEach(() => {
+    answers = [];
+    prompts = [];
+    syncs = 0;
+    const seed = (file: string, id: string, cwd: string, at: string): void =>
+      writeJsonl(join(io.home, '.claude', 'projects', 'p', file), [session(id, cwd, at)]);
+    seed('a1.jsonl', '11111111-1111-4111-8111-111111111111', '/work/alpha', '2026-01-01T10:00:00.000Z');
+    seed('a2.jsonl', '11111111-1111-4111-8111-111111111112', '/work/alpha', '2026-01-02T10:00:00.000Z');
+    seed('b1.jsonl', '22222222-2222-4222-8222-222222222222', '/work/beta', NOW);
+    seed('g1.jsonl', '33333333-3333-4333-8333-333333333333', '/work/gamma', '2026-01-03T10:00:00.000Z');
+    io.git = (cwd, args) => (args[0] === 'remote' ? `git@github.com:me/${cwd.split('/').pop()}.git` : cwd);
+    io.interactive = true;
+    io.ask = async (q) => {
+      prompts.push(q);
+      return answers.shift() ?? '';
+    };
+  });
+
+  const sync = async (): Promise<number> => {
+    syncs++;
+    return 0;
+  };
+  const go = (): Promise<number> => setupCase(io, ['--url', 'https://hub.test', '--code', 'ABCD-EFGH'], sync);
+  const PROMPT = 'Which should go to the hub? Numbers (e.g. 1 3), "all", or Enter for none: ';
+
+  it('lists undecided projects newest first and tracks the picks, declining the rest', async () => {
+    answers = ['1'];
+    expect(await go()).toBe(0);
+    expect(out).toContain('Found 3 projects on this computer:');
+    const rows = out.filter((l) => /^\s+\d\s+github\.com/.test(l));
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatch(/1\s+github\.com\/me\/beta\s+1 session\s+today/);
+    expect(rows[2]).toMatch(/3\s+github\.com\/me\/alpha\s+2 sessions\s+\d+ days ago/);
+    const cfg = loadConfig(io.hubDir);
+    expect(cfg.tracked).toEqual(['github.com/me/beta']);
+    expect(cfg.declined.sort()).toEqual(['github.com/me/alpha', 'github.com/me/gamma']);
+    expect(prompts).toEqual([PROMPT]);
+    expect(syncs).toBe(1);
+  });
+
+  it('an unreadable answer asks once more, then picks nothing', async () => {
+    answers = ['x', 'x'];
+    expect(await go()).toBe(0);
+    expect(prompts).toEqual([PROMPT, PROMPT]);
+    expect(loadConfig(io.hubDir).tracked).toEqual([]);
+    expect(loadConfig(io.hubDir).declined).toEqual([]);
+    expect(syncs).toBe(0);
+  });
+
+  it('Enter decides nothing and runs no sync', async () => {
+    answers = [''];
+    expect(await go()).toBe(0);
+    expect(loadConfig(io.hubDir).tracked).toEqual([]);
+    expect(loadConfig(io.hubDir).declined).toEqual([]);
+    expect(syncs).toBe(0);
+  });
+
+  it('without a terminal it picks nothing and says how to choose later', async () => {
+    io.interactive = false;
+    expect(await go()).toBe(0);
+    expect(prompts).toEqual([]);
+    expect(out.at(-1)).toBe('Run hub sync in a terminal to choose which projects to upload.');
+    expect(syncs).toBe(0);
+  });
+
+  it("the first sync's last line", async () => {
+    answers = ['all'];
+    await go();
+    expect(out.at(-1)).toBe('Done. This computer syncs when a Claude Code session ends; run hub sync any time.');
+    expect(loadConfig(io.hubDir).tracked).toHaveLength(3);
+  });
+
+  it('Ctrl+C during the first sync prints how the rest uploads', async () => {
+    answers = ['1'];
+    let handler: (() => void) | undefined;
+    let removed = false;
+    io.onInterrupt = (h) => {
+      handler = h;
+      return () => {
+        removed = true;
+      };
+    };
+    await setupCase(io, ['--url', 'https://hub.test', '--code', 'ABCD-EFGH'], async () => {
+      handler!();
+      expect(removed).toBe(false);
+      return 0;
+    });
+    expect(out).toContain('Stopped. The rest uploads on the next sync, or run hub sync.');
+    expect(removed).toBe(true);
+  });
+
+  it('already-decided projects are not offered again on a re-run', async () => {
+    answers = ['1'];
+    await go();
+    out.length = 0;
+    prompts.length = 0;
+    answers = [];
+    expect(await go()).toBe(0);
+    expect(prompts).toEqual([]);
+    expect(out.join('\n')).not.toContain('Found');
   });
 });

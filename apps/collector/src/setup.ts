@@ -4,10 +4,11 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { autoOn, autoStatus, hookCommand, repointHook } from './auto.js';
 import { printRows, runClaudeCommand, summariesRow, type Row } from './checks.js';
-import { connectWithCode, type Io } from './cli.js';
+import { connectWithCode, mainSessions, newProjects, plural, scanOpts, type Io } from './cli.js';
 import { SLASH_COMMANDS } from './commands.js';
 import { loadConfig, loadToken, saveConfig } from './config.js';
 import { Fail, friendlyMessage } from './errors.js';
+import { listProjects, type ProjectRow } from './sync.js';
 import { getStatus } from './upload.js';
 import { HUB_VERSION } from './version.js';
 
@@ -126,6 +127,86 @@ export async function setupCase(io: Io, args: string[], sync: Sync): Promise<num
   }
   for (const warning of values.warn ?? []) rows.push(['!', warning]);
   printRows(io, rows);
-  void sync;
-  return failed ? 1 : 0;
+  if (failed) return 1;
+  return connected ? pickAndSync(io, sync) : 0;
+}
+
+/**
+ * Reads the answer to "which projects": 1-based numbers separated by spaces or commas, "all", or nothing
+ * (an empty list). Null for anything else, or a number that is not in the list.
+ */
+export function parsePicks(answer: string, count: number): number[] | 'all' | null {
+  const text = answer.trim().toLowerCase();
+  if (text === '') return [];
+  if (text === 'all') return 'all';
+  const picks: number[] = [];
+  for (const part of text.split(/[s,]+/)) {
+    if (!/^d+$/.test(part)) return null;
+    const n = Number(part);
+    if (n < 1 || n > count) return null;
+    if (!picks.includes(n)) picks.push(n);
+  }
+  return picks;
+}
+
+const DAY_MS = 86_400_000;
+
+function when(iso: string, now: number): string {
+  const days = Math.floor((now - Date.parse(iso)) / DAY_MS);
+  if (!(days >= 1)) return 'today';
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+}
+
+/** Asks which of the undecided projects to upload, then runs the first sync in the foreground. */
+async function pickAndSync(io: Io, sync: Sync): Promise<number> {
+  const fresh = newProjects(listProjects(scanOpts(io)), loadConfig(io.hubDir)).sort((a: ProjectRow, b: ProjectRow) =>
+    b.last_activity.localeCompare(a.last_activity),
+  );
+  if (fresh.length === 0) return 0;
+  if (!io.interactive) {
+    io.out('Run hub sync in a terminal to choose which projects to upload.');
+    return 0;
+  }
+  const now = Date.now();
+  io.out('');
+  io.out(`Found ${plural(fresh.length, 'project')} on this computer:`);
+  const width = Math.max(...fresh.map((r) => r.key.length));
+  const numberWidth = String(fresh.length).length;
+  fresh.forEach((r, i) => {
+    const sessions = plural(mainSessions(r), 'session');
+    io.out(`  ${String(i + 1).padStart(numberWidth)}  ${r.key.padEnd(width)}  ${sessions.padEnd(12)}  ${when(r.last_activity, now)}`);
+  });
+  const prompt = 'Which should go to the hub? Numbers (e.g. 1 3), "all", or Enter for none: ';
+  let picks = parsePicks(await io.ask(prompt), fresh.length);
+  if (picks === null) {
+    io.out("That wasn't a list of numbers from above.");
+    picks = parsePicks(await io.ask(prompt), fresh.length);
+  }
+  if (picks === null) {
+    io.out('Nothing chosen. Run hub sync to choose which projects to upload.');
+    return 0;
+  }
+  if (picks === 'all') picks = fresh.map((_, i) => i + 1);
+  if (picks.length === 0) {
+    io.out('Nothing chosen. Run hub sync to choose which projects to upload.');
+    return 0;
+  }
+  const cfg = loadConfig(io.hubDir);
+  fresh.forEach((r, i) => {
+    if (picks.includes(i + 1)) {
+      if (!cfg.tracked.includes(r.key)) cfg.tracked.push(r.key);
+    } else if (!cfg.declined.includes(r.key)) cfg.declined.push(r.key);
+  });
+  saveConfig(io.hubDir, cfg);
+
+  io.out('');
+  const stopListening = io.onInterrupt?.(() => io.out('Stopped. The rest uploads on the next sync, or run hub sync.'));
+  let code: number;
+  try {
+    code = await sync();
+  } finally {
+    stopListening?.();
+  }
+  if (code === 0) io.out('Done. This computer syncs when a Claude Code session ends; run hub sync any time.');
+  return code;
 }

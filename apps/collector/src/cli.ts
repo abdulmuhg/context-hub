@@ -110,7 +110,7 @@ function update(io: Io, change: (cfg: Config) => void): void {
   saveConfig(io.hubDir, cfg);
 }
 
-function scanOpts(io: Io) {
+export function scanOpts(io: Io) {
   return { home: io.home, hubDir: io.hubDir, git: io.git, exists: io.exists };
 }
 
@@ -130,7 +130,7 @@ function triggerOf(io: Io, given?: string): Trigger {
 
 const NEVER_OFFERED = 'unfiled';
 
-function mainSessions(row: ProjectRow): number {
+export function mainSessions(row: ProjectRow): number {
   return Object.values(row.sessions).reduce((a, b) => a + b, 0);
 }
 
@@ -141,7 +141,7 @@ export function newProjects(rows: ProjectRow[], cfg: Config): ProjectRow[] {
   );
 }
 
-function shortName(key: string): string {
+export function shortName(key: string): string {
   return key.split(/[/\\]/).filter(Boolean).pop() ?? key;
 }
 
@@ -150,7 +150,7 @@ function displayName(key: string): string {
   return name === key ? key : `${name} — ${key}`;
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
