@@ -87,3 +87,25 @@ export function applyReview(page: StatePage, review: PageReview, shown: Readonly
   const summary = review.summary.trim() === '' ? page.summary : review.summary.trim();
   return { summary, body };
 }
+
+export const GIT_HEADING = 'Git';
+
+/**
+ * Splits the collector's "## Git" section off a page body. The section runs to
+ * the next "## " heading or the end; the rest keeps its order, without trailing
+ * blank lines. Models never see the section, so it is taken off before they do.
+ */
+export function splitGitSection(body: string): { body: string; section: string | null } {
+  const lines = body.split('\n');
+  const heading = new RegExp(String.raw`^## ${GIT_HEADING}\b`);
+  const start = lines.findIndex((l) => heading.test(l));
+  if (start === -1) return { body, section: null };
+  let end = start + 1;
+  while (end < lines.length && !lines[end]!.startsWith('## ')) end++;
+  const trim = (ls: string[]) => {
+    const out = [...ls];
+    while (out.length > 0 && out[out.length - 1]!.trim() === '') out.pop();
+    return out.join('\n');
+  };
+  return { body: trim([...lines.slice(0, start), ...lines.slice(end)]), section: trim(lines.slice(start, end)) };
+}
