@@ -1,4 +1,5 @@
 import { countActivity, listActivity, type Action, type ActivityRow, type Direction } from '../activity.js';
+import { installLines } from '../client-dist.js';
 import type { Db } from '../db.js';
 import type { HubScope } from '../oauth/config.js';
 import { listGrants, type CodePurpose } from '../oauth/store.js';
@@ -514,18 +515,33 @@ export function signInsPage(db: Db, csrf: string, currentSessionId: number): str
   });
 }
 
+/** One pasteable line with its Copy button; the button copies the data-copy text. */
+function lineBlock(heading: string, line: string): string {
+  return (
+    `<h2 class="line-heading">${heading}</h2>` +
+    `<div class="copyrow"><pre class="copyline">${escapeHtml(line)}</pre>` +
+    `<button type="button" class="copybtn" data-copy="${escapeHtml(line)}">Copy</button></div>`
+  );
+}
+
+/** The line for the browser's own OS first, the other one below it. */
+function installBlock(lines: { unix: string; windows: string }, os: 'windows' | 'unix'): string {
+  const windows = lineBlock('Windows (PowerShell)', lines.windows);
+  const unix = lineBlock('macOS / Linux', lines.unix);
+  return `<p>Paste one line in a terminal on the new computer:</p>${os === 'windows' ? windows + unix : unix + windows}`;
+}
+
 /**
  * The page a new one-time code is shown on, once. `hubUrl` is the hub's own origin, or null when
  * none is configured, in which case the install line is left out.
  */
-export function codePage(purpose: CodePurpose, code: string, hubUrl: string | null, csrf: string): string {
+export function codePage(purpose: CodePurpose, code: string, hubUrl: string | null, csrf: string, os: 'windows' | 'unix' = 'unix'): string {
   const steps =
     purpose === 'device'
       ? (hubUrl === null
-          ? `<p>Run <code>hub login --url &lt;this hub's address&gt;</code> on the new computer.</p>`
-          : `<p>Run these on the new computer:</p>` +
-            `<pre class="copyline">curl -fsSL ${escapeHtml(hubUrl)}/install | sh</pre><pre class="copyline">hub login</pre>`) +
-        `<p>Enter this code when hub login asks for it.</p>`
+          ? `<p>Run <code>hub login --url &lt;this hub's address&gt;</code> on the new computer.</p>` +
+            `<p>Enter this code when hub login asks for it.</p>`
+          : installBlock(installLines(hubUrl, code), os) + `<p class="muted">Or run <code>hub login</code> and enter this code.</p>`)
       : `<p>Enter it where claude.ai or another browser asks for a sign-in code.</p>`;
   return pageShell({
     title: purpose === 'device' ? 'Add a computer' : 'New sign-in code',

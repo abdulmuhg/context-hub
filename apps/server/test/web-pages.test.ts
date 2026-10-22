@@ -6,6 +6,9 @@ import { markDigestPending, refuseDigest, saveDigest, saveProjectState } from '.
 import { createConnectCode } from '../src/oauth/store.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import type { WebConfig } from '../src/web/routes.js';
+import { installLines } from '../src/client-dist.js';
+import { escapeHtml } from '../src/web/html.js';
+import { codePage } from '../src/web/pages.js';
 import { startServer } from './helpers.js';
 
 const START = new Date('2026-10-20T12:00:00.000Z');
@@ -401,5 +404,48 @@ describe('who wrote a summary', () => {
     expect(html).toContain('<td>ok &middot; by my-pc</td>');
     expect(html).toContain('<td>ok &middot; by the server</td>');
     expect(html.match(/<td>ok<\/td>/g)).toHaveLength(1);
+  });
+});
+
+describe('the Add a computer page', () => {
+  const lines = installLines('https://hub.test/', 'ABCD-EFGH');
+  const page = (os: 'windows' | 'unix', hubUrl: string | null = 'https://hub.test') => codePage('device', 'ABCD-EFGH', hubUrl, 'csrf-token', os);
+
+  it('installLines gives exactly the two lines', () => {
+    expect(lines.unix).toBe('curl -fsSL https://hub.test/install | sh -s -- --code ABCD-EFGH');
+    expect(lines.windows).toBe("$env:HUB_CODE='ABCD-EFGH'; irm https://hub.test/install.ps1 | iex");
+  });
+
+  it('a device code page shows both lines with the code, the reported OS first', () => {
+    const windowsFirst = page('windows');
+    const unixFirst = page('unix');
+    for (const html of [windowsFirst, unixFirst]) {
+      expect(html).toContain('Windows (PowerShell)');
+      expect(html).toContain('macOS / Linux');
+      expect(html).toContain(escapeHtml(lines.windows));
+      expect(html).toContain(escapeHtml(lines.unix));
+      expect(html).toContain('>ABCD-EFGH<');
+      expect(html).toContain('Or run <code>hub login</code> and enter this code.');
+    }
+    expect(windowsFirst.indexOf(escapeHtml(lines.windows))).toBeLessThan(windowsFirst.indexOf(escapeHtml(lines.unix)));
+    expect(unixFirst.indexOf(escapeHtml(lines.unix))).toBeLessThan(unixFirst.indexOf(escapeHtml(lines.windows)));
+  });
+
+  it('each line has a copy button', () => {
+    const html = page('windows');
+    expect(html).toContain(`data-copy="${escapeHtml(lines.windows)}"`);
+    expect(html).toContain(`data-copy="${escapeHtml(lines.unix)}"`);
+  });
+
+  it('without a public URL the page shows only the code and hub login', () => {
+    const html = page('windows', null);
+    expect(html).not.toContain('curl -fsSL');
+    expect(html).not.toContain('HUB_CODE');
+    expect(html).toContain('hub login --url');
+    expect(html).toContain('>ABCD-EFGH<');
+  });
+
+  it('a sign-in code page has no install lines', () => {
+    expect(codePage('signin', 'ABCD-EFGH', 'https://hub.test', 'csrf-token', 'windows')).not.toContain('data-copy');
   });
 });

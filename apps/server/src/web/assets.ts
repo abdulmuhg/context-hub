@@ -95,6 +95,11 @@ td time .ago::before, .stat time .ago::before { content: none; }
 .code-value { font-family: "Inter", system-ui, sans-serif; font-size: 28px; letter-spacing: 0.12em; font-weight: 600; margin: 0 0 8px; }
 .copyline { font-family: var(--font-mono); font-size: 12.5px; background: var(--chip); border-radius: 4px; padding: 8px 10px; margin: 0 0 8px; overflow-x: auto; user-select: all; }
 .muted { color: var(--muted); }
+.copyrow { display: flex; gap: 8px; align-items: flex-start; }
+.copyrow .copyline { flex: 1; min-width: 0; }
+.line-heading { font-size: 14px; margin: 16px 0 6px; }
+.copybtn { display: none; }
+html.js .copybtn { display: inline-block; }
 .ok { color: var(--success); }
 .bad { color: var(--danger); }
 .intro { color: var(--muted); margin: -12px 0 20px; }
@@ -370,6 +375,18 @@ const JS = `(function () {
       menuButton.addEventListener('click', function () {
         var open = document.body.classList.toggle('nav-open');
         menuButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    }
+    var copyButtons = document.querySelectorAll('[data-copy]');
+    for (var i = 0; i < copyButtons.length; i++) {
+      copyButtons[i].addEventListener('click', function (event) {
+        var button = event.currentTarget;
+        var text = button.getAttribute('data-copy') || '';
+        var done = function () {
+          button.textContent = 'Copied';
+          setTimeout(function () { button.textContent = 'Copy'; }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
       });
     }
     localiseTimes();

@@ -261,3 +261,12 @@ export function installScriptPs1(publicUrl: string): string {
   const url = publicUrl.replace(/\/+$/, '');
   return PS_INSTALLER.replace('@URL@', () => psQuote(url)).replace('@BUNDLE_URL@', () => psQuote(`${url}/hub.mjs`));
 }
+
+/** The two lines the Add a computer page shows, each carrying the one-time code. The code is never in a URL. */
+export function installLines(hubUrl: string, code: string): { unix: string; windows: string } {
+  const url = hubUrl.replace(/\/+$/, '');
+  return {
+    unix: `curl -fsSL ${url}/install | sh -s -- --code ${code}`,
+    windows: `$env:HUB_CODE='${code}'; irm ${url}/install.ps1 | iex`,
+  };
+}
