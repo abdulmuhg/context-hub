@@ -357,7 +357,7 @@ function autoCase(io: Io, sub: string | undefined): number {
     return 0;
   }
   if (sub === 'off') {
-    const { removed } = autoOff(settings, basename(bundleOf(io)));
+    const { removed } = autoOff(settings);
     io.out(removed > 0 ? 'Automatic sync is off.' : 'Automatic sync was not on.');
     return 0;
   }
