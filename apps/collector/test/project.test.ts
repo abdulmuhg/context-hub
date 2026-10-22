@@ -169,7 +169,7 @@ describe('projectMatches', () => {
 describe('checkoutFor', () => {
   /** A fake git: `common` maps a directory to what `--git-common-dir` prints, `top` to `--show-toplevel`. */
   const fake = (common: Record<string, string>, missing: string[] = [], remote: string | null = 'git@github.com:me/alpha.git'): ResolveDeps => {
-    const known = new Set([...Object.keys(common), ...Object.values(common).map((c) => c.replace(/[\/].git$/, ''))]);
+    const known = new Set([...Object.keys(common), ...Object.values(common).map((c) => c.replace(/[\\/]\.git$/, ''))]);
     return {
       exists: (p) => !missing.includes(p),
       git: (cwd, args) => {

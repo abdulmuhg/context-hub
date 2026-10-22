@@ -20,6 +20,7 @@ import {
   type Config,
 } from './config.js';
 import { runResummarize } from './resummarize.js';
+import type { CommandRunner } from './git-facts.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
 import { listProjects, runSync, type ProjectRow, type SyncProgress, type SyncReport } from './sync.js';
 import { deleteRemote, exchangeDeviceCode, getStatus, requestConnectCode, type Remote } from './upload.js';
@@ -36,6 +37,8 @@ export interface Io {
   git?: GitRunner;
   /** The folder the command was run in; `hub sync` remembers it as the project's checkout. */
   cwd?: string;
+  /** Runs git and gh to check pages against git. Tests pass a fake. */
+  runCommand?: CommandRunner;
   exists?: (path: string) => boolean;
   hostname?: () => string;
   /** True when stdin and stdout are a terminal, so it is safe to ask questions. */
@@ -167,6 +170,11 @@ function printReport(io: Io, report: SyncReport, dryRun: boolean): void {
   if (!dryRun && report.summarized.length > 0) io.out(`${report.summarized.length} ${report.summarized.length === 1 ? 'summary' : 'summaries'} written.`);
   if (report.waiting.count > 0) io.out(`${plural(report.waiting.count, 'session')} waiting${report.waiting.reason ? `: ${report.waiting.reason}` : ''}`);
   if (report.pages.left.length > 0) io.out(`${plural(report.pages.left.length, 'page')} left for the next sync`);
+  if (report.git.checked.length > 0) io.out(`Checked against git: ${plural(report.git.checked.length, 'project')}`);
+  else if (report.git.skipped.length > 0) {
+    io.out('Not checked against git:');
+    for (const s of report.git.skipped) io.out(`  ${shortName(s.project)}: ${s.reason}`);
+  }
   const gone = dryRun ? report.wouldDelete : report.deleted;
   if (gone.length > 0) io.out(`${dryRun ? 'Would remove' : 'Removed'} ${plural(gone.length, 'document')} whose file is gone:`);
   for (const ref of gone) io.out(`  ${ref.session}`);
@@ -491,6 +499,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         session: values.session,
         trigger,
         ...(io.cwd ? { cwd: io.cwd } : {}),
+        ...(io.runCommand ? { run: io.runCommand } : {}),
         onProgress:
           progress &&
           ((p) => {
