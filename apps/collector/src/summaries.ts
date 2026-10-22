@@ -1,6 +1,7 @@
 import { buildStatePage, CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, writeDigest, type HashedSession, type Llm, type UploadDigest } from '@context-hub/core';
 import { ClaudeSignInError, ClaudeTimeoutError, UsageLimitError } from './claude-llm.js';
 import { SUMMARY_CAP } from './config.js';
+import type { GitCheck } from './git-check.js';
 import { deletePage, getPageInputs, getSession, listProjectDigests, putDigest, putPage, type Remote } from './upload.js';
 
 /** A long session is digested in parts of this many characters, as the server does. */
@@ -130,9 +131,19 @@ export async function updatePages(
   llm: Llm,
   keys: string[],
   budget: Budget,
-  opts: { now: string; maxChars: number; forceRebuild?: boolean; onPage?: (done: number, total: number, key: string) => void },
-): Promise<{ updated: string[]; left: PageLeft[] }> {
+  opts: {
+    now: string;
+    maxChars: number;
+    forceRebuild?: boolean;
+    onPage?: (done: number, total: number, key: string) => void;
+    /** What each project's page is checked against, when its checkout is on this computer. */
+    git?: Map<string, GitCheck>;
+    /** Keys that are here only because git changed: with no page yet there is nothing to check, and they are never rebuilt for it. */
+    gitOnly?: Set<string>;
+  },
+): Promise<{ updated: string[]; left: PageLeft[]; /** Keys saved with git facts. */ checked: string[] }> {
   const updated: string[] = [];
+  const checked: string[] = [];
   const left: PageLeft[] = [];
   let done = 0;
   for (const key of keys) {
@@ -143,9 +154,16 @@ export async function updatePages(
     opts.onPage?.(++done, keys.length, key);
     try {
       let saved = false;
+      let skippedOnly = false;
       for (let attempt = 0; attempt <= PAGE_RETRIES && !saved; attempt++) {
         const inputs = await getPageInputs(remote, key);
+        const check = opts.git?.get(key);
         const seen = inputs.page?.digests_through ?? 0;
+        if (opts.gitOnly?.has(key) && (!inputs.page || inputs.digests.length === 0)) {
+          left.push({ project: key, reason: 'no page to check yet' });
+          skippedOnly = true;
+          break;
+        }
         const digests = inputs.digests.map(({ session_id, title, date, text }) => ({ session_id, title, date, text }));
         const fresh = inputs.digests.filter((d) => d.saved_seq > seen).map(({ session_id, title, date, text }) => ({ session_id, title, date, text }));
         const built = await buildStatePage(llm, {
@@ -156,6 +174,7 @@ export async function updatePages(
           now: opts.now,
           maxChars: opts.maxChars,
           forceRebuild: opts.forceRebuild,
+          ...(check ? { git: { facts: check.facts, as_of: check.as_of, section: check.section } } : {}),
         });
         if (built === null) {
           await deletePage(remote, key);
@@ -172,13 +191,16 @@ export async function updatePages(
         });
         saved = put.ok;
       }
-      if (saved) updated.push(key);
-      else left.push({ project: key, reason: 'another computer changed the page while this one was saving it' });
+      if (skippedOnly) continue;
+      if (saved) {
+        updated.push(key);
+        if (opts.git?.has(key)) checked.push(key);
+      } else left.push({ project: key, reason: 'another computer changed the page while this one was saving it' });
     } catch (e) {
       const stop = stopReason(e);
       if (stop !== null) budget.stopped = stop;
       left.push({ project: key, reason: stop ?? `page failed: ${(e as Error).message}` });
     }
   }
-  return { updated, left };
+  return { updated, left, checked };
 }

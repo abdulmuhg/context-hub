@@ -6,3 +6,9 @@ vi.mock('../src/claude-llm.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/claude-llm.js')>()),
   findClaude: () => null,
 }));
+
+// Likewise no test may run the real git or gh to gather facts. A test passes a fake runner.
+vi.mock('../src/git-facts.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/git-facts.js')>()),
+  realRunner: () => null,
+}));

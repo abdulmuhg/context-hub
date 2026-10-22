@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyReview, sectionBullets, type PageReview } from '../src/page-review.js';
+import { applyReview, GIT_EVIDENCE, sectionBullets, splitGitSection, type PageReview } from '../src/page-review.js';
 
 const BODY = [
   '## What this is',
@@ -79,5 +79,29 @@ describe('applyReview', () => {
   it('leaves a page without the sections unchanged', () => {
     const plain = { summary: 's', body: 'No sections here.' };
     expect(applyReview(plain, review({ drop_open: [{ item: 1, session_id: 'claude-code:a' }] }), shown)).toEqual(plain);
+  });
+
+  it('keeps a drop that cites git only when git was shown', () => {
+    const drop = review({ drop_open: [{ item: 1, session_id: GIT_EVIDENCE }] });
+    expect(sectionBullets(applyReview(page, drop, new Set([GIT_EVIDENCE])).body, 'Open items')).toHaveLength(2);
+    expect(applyReview(page, drop, shown).body).toBe(BODY);
+  });
+});
+
+describe('splitGitSection', () => {
+  const git = '## Git (checked on PC, 2026-10-22 11:30)\n\n- main at abc1234 (2026-10-22): x';
+
+  it('finds a section at the end', () => {
+    expect(splitGitSection(`${BODY}\n\n${git}`)).toEqual({ body: BODY, section: git });
+  });
+
+  it('finds a section in the middle and keeps the rest in order', () => {
+    const out = splitGitSection(`## A\n\n- a\n\n${git}\n\n## B\n\n- b`);
+    expect(out.section).toBe(git);
+    expect(out.body).toBe('## A\n\n- a\n\n## B\n\n- b');
+  });
+
+  it('returns no section when there is none', () => {
+    expect(splitGitSection(BODY)).toEqual({ body: BODY, section: null });
   });
 });

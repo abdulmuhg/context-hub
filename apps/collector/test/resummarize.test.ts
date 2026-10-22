@@ -130,7 +130,7 @@ describe('runResummarize', () => {
   it('fully rebuilds the touched pages', async () => {
     lists[KEY] = [entry('s1')];
     const out = await run();
-    expect(out.pages).toEqual({ updated: [KEY], left: [] });
+    expect(out.pages).toEqual({ updated: [KEY], left: [], checked: [] });
     expect(stateCalls()[0]!.mode).toBe('rebuild');
     expect(pagePuts).toHaveLength(1);
     expect(pagePuts[0]!.body).toMatchObject({ base_version: 4, full_rebuild: true });
@@ -139,7 +139,7 @@ describe('runResummarize', () => {
   it('leaves a project alone when none of its digests qualify', async () => {
     lists[KEY] = [entry('s1', { written_by: 'my-pc', model: 'claude-sonnet-5-5' })];
     const out = await run();
-    expect(out.pages).toEqual({ updated: [], left: [] });
+    expect(out.pages).toEqual({ updated: [], left: [], checked: [] });
     expect(llm.calls).toEqual([]);
   });
 

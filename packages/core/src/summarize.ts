@@ -1,5 +1,5 @@
 import type { Llm } from './llm.js';
-import { applyReview } from './page-review.js';
+import { applyReview, GIT_EVIDENCE, splitGitSection } from './page-review.js';
 import type { DigestBody, StatePage } from './summary-schema.js';
 import { renderLines, splitParts } from './transcript.js';
 import type { Message } from './types.js';
@@ -45,6 +45,8 @@ export interface PageInputs {
   now: string;
   maxChars: number;
   forceRebuild?: boolean;
+  /** Git facts for the review, and the "## Git" section to end the page with. Without it the page keeps its old section. */
+  git?: { facts: string; as_of: string; section: string };
   /** Told when the review pass fails and the page is kept as written. */
   onReviewSkipped?: (reason: string) => void;
 }
@@ -67,11 +69,21 @@ function newestWithin(all: PageDigest[], maxChars: number): PageDigest[] {
  * items and state lines a session already settled. A failed review keeps the
  * page as written: it is an improvement, not a reason to lose the update.
  */
-async function reviewPage(llm: Llm, project: string, page: StatePage, all: PageDigest[], maxChars: number, skipped?: (reason: string) => void): Promise<StatePage> {
+async function reviewPage(
+  llm: Llm,
+  project: string,
+  page: StatePage,
+  all: PageDigest[],
+  maxChars: number,
+  git: PageInputs['git'],
+  skipped?: (reason: string) => void,
+): Promise<StatePage> {
   const shown = newestWithin(all, maxChars);
   try {
-    const review = await llm.reviewState({ project, page, digests: shown });
-    return applyReview(page, review, new Set(shown.map((d) => d.session_id)));
+    const review = await llm.reviewState({ project, page, digests: shown, ...(git ? { git: { text: git.facts, as_of: git.as_of } } : {}) });
+    const ids = new Set(shown.map((d) => d.session_id));
+    if (git) ids.add(GIT_EVIDENCE);
+    return applyReview(page, review, ids);
   } catch (e) {
     skipped?.(e instanceof Error ? e.message : String(e));
     return page;
@@ -82,18 +94,31 @@ async function reviewPage(llm: Llm, project: string, page: StatePage, all: PageD
  * Writes a project's state page: merges the fresh digests into the current
  * page, or rebuilds it from all digests when there is no page, it is flagged
  * dirty, it is older than a week, or a rebuild is forced. Null when the
- * project has no digests, so the caller removes the page.
+ * project has no digests, so the caller removes the page. With git facts, a
+ * page with nothing new is still reviewed, against git alone. The "## Git"
+ * section never reaches a model: it is taken off first and a section is
+ * attached at the end, the new one or else the old one.
  */
 export async function buildStatePage(llm: Llm, inputs: PageInputs): Promise<{ page: StatePage; fullRebuild: boolean } | null> {
-  const { project, page: current, digests, fresh, now, maxChars } = inputs;
+  const { project, page: stored, digests, fresh, now, maxChars, git } = inputs;
   if (digests.length === 0) return null;
+  const split = stored ? splitGitSection(stored.body) : null;
+  const current = stored && split ? { ...stored, body: split.body } : null;
+  const attach = (page: StatePage): StatePage => {
+    const section = git?.section ?? split?.section ?? null;
+    return section === null ? page : { summary: page.summary, body: `${page.body}\n\n${section}` };
+  };
   const old = current ? Date.parse(now) - Date.parse(current.rebuilt_at) > REBUILD_AFTER_MS : false;
   const rebuild = !current || current.dirty || old || inputs.forceRebuild === true;
 
   if (current && !rebuild) {
-    if (fresh.length === 0) return { page: { summary: current.summary, body: current.body }, fullRebuild: false };
+    if (fresh.length === 0) {
+      if (!git) return { page: { summary: current.summary, body: stored!.body }, fullRebuild: false };
+      const reviewed = await reviewPage(llm, project, { summary: current.summary, body: current.body }, [], maxChars, git, inputs.onReviewSkipped);
+      return { page: attach(reviewed), fullRebuild: false };
+    }
     const merged = await llm.projectState({ project, mode: 'merge', previous: current.body, digests: fresh });
-    return { page: await reviewPage(llm, project, merged, digests, maxChars, inputs.onReviewSkipped), fullRebuild: false };
+    return { page: attach(await reviewPage(llm, project, merged, digests, maxChars, git, inputs.onReviewSkipped)), fullRebuild: false };
   }
 
   // Newest first until the limit is reached, then back into oldest-first order.
@@ -101,5 +126,5 @@ export async function buildStatePage(llm: Llm, inputs: PageInputs): Promise<{ pa
   const truncated = chosen.length < digests.length;
   const previous = truncated ? (current?.body ?? null) : null;
   const built = await llm.projectState({ project, mode: 'rebuild', previous, digests: chosen });
-  return { page: await reviewPage(llm, project, built, digests, maxChars, inputs.onReviewSkipped), fullRebuild: true };
+  return { page: attach(await reviewPage(llm, project, built, digests, maxChars, git, inputs.onReviewSkipped)), fullRebuild: true };
 }

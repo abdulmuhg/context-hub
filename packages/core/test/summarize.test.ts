@@ -112,3 +112,52 @@ describe('buildStatePage', () => {
     expect(req.previous).toBe('old body');
   });
 });
+
+describe('buildStatePage with a Git section', () => {
+  const OLD = '## Git (checked on PC, 2026-10-20 09:00)\n\n- main at aaaaaaa (2026-10-20): old';
+  const NEW = '## Git (checked on PC, 2026-10-22 11:30)\n\n- main at bbbbbbb (2026-10-22): new';
+  const PAGE = '## Open items\n\n- PR #17 is open.\n- Write docs.\n\n## Latest sessions\n\n- `a`';
+  const page = (body: string) => ({ summary: 's', body, rebuilt_at: NOW, dirty: false });
+  const git = { facts: 'PR #17 merged', as_of: NOW, section: NEW };
+
+  it('keeps the old section away from the models on a merge and attaches the new one', async () => {
+    const llm = new FakeLlm();
+    const out = await buildStatePage(llm, inputs({ page: page(`${PAGE}\n\n${OLD}`), git }));
+    expect((llm.calls.find((c) => c.kind === 'state')!.req as StateRequest).previous).toBe(PAGE);
+    expect(llm.reviews[0]!.page.body).not.toContain('## Git');
+    expect(llm.reviews[0]!.git).toEqual({ text: 'PR #17 merged', as_of: NOW });
+    expect(out!.page.body.endsWith(`\n\n${NEW}`)).toBe(true);
+    expect(out!.page.body).not.toContain('aaaaaaa');
+  });
+
+  it('reviews a current page against git alone, without a state call', async () => {
+    const llm = new FakeLlm();
+    llm.nextReview = { drop_open: [{ item: 1, session_id: 'git' }], drop_current: [], summary: 'Docs left.' };
+    const out = await buildStatePage(llm, inputs({ page: page(`${PAGE}\n\n${OLD}`), fresh: [], git }));
+    expect(llm.calls.length).toBe(0);
+    expect(llm.reviews.length).toBe(1);
+    expect(llm.reviews[0]!.digests).toEqual([]);
+    expect(out!.fullRebuild).toBe(false);
+    expect(out!.page.summary).toBe('Docs left.');
+    expect(out!.page.body).not.toContain('PR #17 is open');
+    expect(out!.page.body).toContain('Write docs.');
+    expect(out!.page.body.endsWith(`\n\n${NEW}`)).toBe(true);
+  });
+
+  it('returns the stored page as it is when nothing is fresh and there are no facts', async () => {
+    const llm = new FakeLlm();
+    const body = `${PAGE}\n\n${OLD}`;
+    const out = await buildStatePage(llm, inputs({ page: page(body), fresh: [] }));
+    expect(out!.page).toEqual({ summary: 's', body });
+    expect(llm.reviews.length).toBe(0);
+  });
+
+  it('keeps the old section unchanged on a merge without facts', async () => {
+    const llm = new FakeLlm();
+    const out = await buildStatePage(llm, inputs({ page: page(`${PAGE}\n\n${OLD}`) }));
+    expect((llm.calls.find((c) => c.kind === 'state')!.req as StateRequest).previous).toBe(PAGE);
+    expect(llm.reviews[0]!.page.body).not.toContain('## Git');
+    expect(llm.reviews[0]!.git).toBeUndefined();
+    expect(out!.page.body.endsWith(`\n\n${OLD}`)).toBe(true);
+  });
+});

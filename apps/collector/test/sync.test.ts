@@ -6,6 +6,7 @@ import { LlmRefusal } from '@context-hub/core';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
 import { ClaudeTimeoutError, UsageLimitError } from '../src/claude-llm.js';
 import { loadConfig, loadState, saveConfig, savePersonal, saveToken } from '../src/config.js';
+import type { CommandRunner } from '../src/git-facts.js';
 import { listProjects, runSync, type SyncOptions } from '../src/sync.js';
 import { tempDir, writeJsonl, writeRaw } from './helpers.js';
 
@@ -894,5 +895,109 @@ describe('runSync: state pages', () => {
     track(KEY_A);
     await runSync(opts({ dryRun: true }));
     expect(sent).toEqual([]);
+  });
+});
+
+describe('runSync: remembering checkouts', () => {
+  it('records where a tracked project is checked out', async () => {
+    track(KEY_A);
+    await runSync(opts());
+    expect(loadState(hub).repos).toEqual({ [KEY_A]: '/work/alpha' });
+  });
+
+  it('records nothing for a session whose repo is not its project', async () => {
+    track('local:beta');
+    saveConfig(hub, { ...loadConfig(hub), assignments: { [`claude-code:${S1}`]: 'local:beta' } });
+    await runSync(opts());
+    expect(loadState(hub).repos ?? {}).toEqual({});
+  });
+
+  it('records the folder sync runs in when it is inside a tracked repo', async () => {
+    track(KEY_A);
+    rmSync(join(proj(), `${S1}.jsonl`));
+    await runSync(opts({ cwd: '/work/alpha/src' }));
+    expect(loadState(hub).repos).toEqual({ [KEY_A]: '/work/alpha' });
+  });
+
+  it('does not record a folder of an untracked project', async () => {
+    await runSync(opts({ cwd: '/work/alpha' }));
+    expect(loadState(hub).repos ?? {}).toEqual({});
+  });
+
+  it('records nothing in a dry run', async () => {
+    track(KEY_A);
+    await runSync(opts({ dryRun: true, cwd: '/work/alpha' }));
+    expect(existsSync(join(hub, 'state.json'))).toBe(false);
+  });
+});
+
+describe('runSync: git check', () => {
+  const pageDigest = { session_id: `claude-code:${S1}`, title: 'T', date: '2026-10-01T10:00:00.000Z', text: 'Goal: x', saved_seq: 1 };
+  const pagePuts = () => sent.filter((r) => r.method === 'PUT' && r.url.endsWith('/page'));
+  let prState: string;
+  let runs: string[];
+  const run: CommandRunner = (cmd, _cwd, args) => {
+    const k = `${cmd} ${args.join(' ')}`;
+    runs.push(k);
+    if (k === 'git symbolic-ref --short refs/remotes/origin/HEAD') return 'origin/main';
+    if (k.startsWith('git log')) return '3e21fd9\t2026-10-22\tMerge pull request #20';
+    if (k.startsWith('gh pr list')) return JSON.stringify([{ number: 17, title: 'Add it', state: prState, headRefName: 'b', mergedAt: null, closedAt: null }]);
+    return '';
+  };
+  const gitOpts = (over: Partial<SyncOptions> = {}) => opts({ run, computer: 'PC', ...over });
+
+  beforeEach(() => {
+    prState = 'OPEN';
+    runs = [];
+    hubStatus = { server_summaries: false, pages_needed: [], summaries_owed: 0 };
+    pageInputs = {
+      [KEY_A]: {
+        page: { summary: 's', body: '## Open items\n\n- PR #17 is open.', version: 1, rebuilt_at: '2026-10-09T00:00:00.000Z', dirty: false, digests_through: 1 },
+        digests: [pageDigest],
+        through: 1,
+      },
+    };
+    track(KEY_A);
+  });
+
+  it('reviews a page with nothing new against git, saves it, and does it again only when the facts change', async () => {
+    const first = await runSync(gitOpts());
+    expect(first.git).toEqual({ checked: [KEY_A], skipped: [] });
+    expect(first.pages.left).toEqual([]);
+    expect(llm.reviews).toHaveLength(1);
+    expect(llm.reviews[0]!.git?.text).toContain('#17 OPEN');
+    expect(pagePuts()).toHaveLength(1);
+    expect(pagePuts()[0]!.body.body).toContain('## Git (checked on PC');
+    expect(loadState(hub).git_checked?.[KEY_A]).toMatch(/^[0-9a-f]{64}$/);
+
+    await runSync(gitOpts());
+    expect(llm.reviews).toHaveLength(1);
+    expect(pagePuts()).toHaveLength(1);
+
+    prState = 'MERGED';
+    await runSync(gitOpts());
+    expect(llm.reviews).toHaveLength(2);
+    expect(pagePuts()).toHaveLength(2);
+  });
+
+  it('keeps the checked mark and reports a skip, not a page left, when the save is refused', async () => {
+    const refuse: typeof fetch = async (input, init) =>
+      init?.method === 'PUT' && String(input).endsWith('/page') ? new Response('{}', { status: 409 }) : fakeFetch(input, init);
+    const report = await runSync(gitOpts({ fetchImpl: refuse }));
+    expect(loadState(hub).git_checked).toBeUndefined();
+    expect(report.git.checked).toEqual([]);
+    expect(report.git.skipped.map((x) => x.project)).toEqual([KEY_A]);
+    expect(report.pages.left).toEqual([]);
+  });
+
+  it('skips the check without a writer', async () => {
+    const report = await runSync(gitOpts({ llm: null }));
+    expect(report.git.skipped).toEqual([{ project: KEY_A, reason: 'Claude Code is not installed on this computer' }]);
+    expect(report.pages.left).toEqual([]);
+  });
+
+  it('runs no git or gh in a dry run', async () => {
+    await runSync(gitOpts({ dryRun: true }));
+    expect(runs).toEqual([]);
   });
 });

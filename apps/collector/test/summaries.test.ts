@@ -60,7 +60,7 @@ beforeEach(() => {
 describe('updatePages', () => {
   it('merges only digests newer than the page', async () => {
     const out = await run([KEY]);
-    expect(out).toEqual({ updated: [KEY], left: [] });
+    expect(out).toEqual({ updated: [KEY], left: [], checked: [] });
     const req = stateCalls()[0]!;
     expect(req.mode).toBe('merge');
     expect(req.digests.map((d) => d.session_id)).toEqual(['claude-code:b']);
@@ -93,7 +93,7 @@ describe('updatePages', () => {
     putAnswer = 409;
     const out = await run([KEY]);
     expect(puts).toHaveLength(3);
-    expect(out).toEqual({ updated: [], left: [{ project: KEY, reason: 'another computer changed the page while this one was saving it' }] });
+    expect(out).toEqual({ updated: [], checked: [], left: [{ project: KEY, reason: 'another computer changed the page while this one was saving it' }] });
   });
 
   it('starts again from fresh inputs after a refused save', async () => {
@@ -132,7 +132,7 @@ describe('updatePages', () => {
     const out = await run([KEY, 'github.com/me/beta'], budget);
     expect(budget.stopped).toMatch(/usage limit/);
     const reason = budget.stopped!;
-    expect(out).toEqual({ updated: [], left: [{ project: KEY, reason }, { project: 'github.com/me/beta', reason }] });
+    expect(out).toEqual({ updated: [], checked: [], left: [{ project: KEY, reason }, { project: 'github.com/me/beta', reason }] });
     expect(puts).toEqual([]);
   });
 
@@ -140,7 +140,7 @@ describe('updatePages', () => {
     const budget = newBudget(false);
     budget.stopped = 'Claude usage limit reached';
     const out = await run([KEY], budget);
-    expect(out).toEqual({ updated: [], left: [{ project: KEY, reason: 'Claude usage limit reached' }] });
+    expect(out).toEqual({ updated: [], checked: [], left: [{ project: KEY, reason: 'Claude usage limit reached' }] });
     expect(llm.calls).toEqual([]);
   });
 
@@ -166,5 +166,30 @@ describe('stopReason', () => {
 
   it('says only that the limit was reached when there is no reset time', () => {
     expect(stopReason(new UsageLimitError(null))).toBe('Claude usage limit reached');
+  });
+});
+
+describe('updatePages with git', () => {
+  const check = { facts: 'PR #17 merged', as_of: NOW, section: '## Git (checked on PC, 2026-10-22 11:30)\n\n- main at abc1234', hash: 'h1' };
+
+  it('reviews a page with nothing new against git alone and saves it with the section', async () => {
+    inputs[KEY]!.page = page({ digests_through: 2, body: '## Open items\n\n- PR #17 is open.' });
+    const out = await updatePages(remote, llm, [KEY], newBudget(false), { now: NOW, maxChars: 100_000, git: new Map([[KEY, check]]), gitOnly: new Set([KEY]) });
+    expect(out).toEqual({ updated: [KEY], left: [], checked: [KEY] });
+    expect(stateCalls()).toEqual([]);
+    expect(llm.reviews).toHaveLength(1);
+    expect(llm.reviews[0]!.git).toEqual({ text: 'PR #17 merged', as_of: NOW });
+    expect(puts[0]!.body.body.endsWith(`\n\n${check.section}`)).toBe(true);
+    expect(puts[0]!.body).toMatchObject({ base_version: 3, through: 2, full_rebuild: false });
+  });
+
+  it('makes no call and no save for a git-only key without a page', async () => {
+    inputs[KEY]!.page = null;
+    const out = await updatePages(remote, llm, [KEY], newBudget(false), { now: NOW, maxChars: 100_000, git: new Map([[KEY, check]]), gitOnly: new Set([KEY]) });
+    expect(out.checked).toEqual([]);
+    expect(out.left).toEqual([{ project: KEY, reason: 'no page to check yet' }]);
+    expect(llm.reviews).toEqual([]);
+    expect(puts).toEqual([]);
+    expect(deletes).toEqual([]);
   });
 });

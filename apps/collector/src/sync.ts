@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { sep } from 'node:path';
 import { sanitizeSession, type HashedSession, type Llm, type PersonalConfig, type Trigger, type UploadDigest } from '@context-hub/core';
 import { ALL_ADAPTERS, type Adapter, type RawSession, type SessionFile } from './adapters/index.js';
@@ -18,7 +19,9 @@ import {
   type StateEntry,
 } from './config.js';
 import { discoverDocs, docId, readDoc } from './docs.js';
-import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
+import { prepareGitChecks } from './git-check.js';
+import { realRunner, type CommandRunner } from './git-facts.js';
+import { applyOverrides, checkoutFor, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
 import { budgetOpen, catchUpOwed, MAX_CHARS, newBudget, spend, stopReason, summarize, updatePages, type PageLeft, type SessionRef } from './summaries.js';
 import { deleteRemote, getStatus, putSession, reportSyncRun, type HubStatus, type Remote } from './upload.js';
 
@@ -49,6 +52,12 @@ export interface SyncOptions {
   onProgress?: (p: SyncProgress) => void;
   /** What started this run, shown beside it in the hub's activity log. */
   trigger?: Trigger;
+  /** The folder the sync was run from. If it is in a tracked project's repo, that project's checkout is remembered. */
+  cwd?: string;
+  /** Runs git and gh to check pages against git. Tests pass a fake. */
+  run?: CommandRunner;
+  /** The name the page's Git section gives this computer. Default: the host name. */
+  computer?: string;
 }
 
 export interface SyncReport {
@@ -70,6 +79,8 @@ export interface SyncReport {
   waiting: { count: number; reason: string | null };
   /** State pages written in this run, and those left for a later sync. */
   pages: { updated: string[]; left: PageLeft[] };
+  /** Projects whose page was checked against git in this run, and those that could not be (not pages left behind). */
+  git: { checked: string[]; skipped: PageLeft[] };
   /** Set when the run finished but the server could not be told about it. */
   reportError?: string;
 }
@@ -244,6 +255,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     errors: [...s.errors],
     waiting: { count: 0, reason: null },
     pages: { updated: [], left: [] },
+    git: { checked: [], skipped: [] },
   };
   const dryRun = opts.dryRun === true;
   const now = opts.now ?? (() => new Date());
@@ -259,6 +271,25 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   }
   const llm: Llm | null = dryRun ? null : opts.llm !== undefined ? opts.llm : buildLlm(s.cfg);
   const budget = newBudget(opts.all);
+
+  // Remember where each project is checked out, for the git check. Only a repo that resolves to the
+  // very project it is filed under counts: a session assigned elsewhere says nothing about its folder.
+  const resolveDeps = { git: opts.git ?? realGit, exists: opts.exists ?? existsSync };
+  const checkouts = new Map<string, ReturnType<typeof checkoutFor>>();
+  const rememberCheckout = (dir: string, sessionKey: string | null, projectKey: string): void => {
+    if (dryRun) return;
+    if (!checkouts.has(dir)) checkouts.set(dir, checkoutFor(dir, resolveDeps));
+    const found = checkouts.get(dir);
+    if (!found) return;
+    const key = applyOverrides(found.key, sessionKey ?? '', { aliases: s.cfg.aliases, assignments: {} });
+    if (key !== projectKey) return;
+    s.state.repos = { ...s.state.repos, [projectKey]: found.path };
+  };
+  if (opts.cwd) {
+    const found = checkoutFor(opts.cwd, resolveDeps);
+    const key = found && applyOverrides(found.key, '', { aliases: s.cfg.aliases, assignments: {} });
+    if (key && s.cfg.tracked.includes(key)) rememberCheckout(opts.cwd, null, key);
+  }
 
   let stopped = false; // set after the first failed upload
   const total = s.items.filter((i) => isSelected(i, s.cfg, opts) && !(s.state.files[i.file.path]?.hash != null && i.same)).length;
@@ -291,6 +322,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     let raw: RawSession;
     try {
       raw = item.raw ?? s.read(file);
+      if (raw.cwd) rememberCheckout(raw.cwd, sessionKey, projectKey);
     } catch (e) {
       report.errors.push(`${sessionKey}: ${(e as Error).message}`);
       continue;
@@ -503,19 +535,34 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     }
     if (needed !== null) {
       pagesChecked = !opts.project;
+      // Pages whose git facts changed are checked even when no session is new.
+      const prepared = prepareGitChecks(selected, s.state, { ...resolveDeps, run: opts.run ?? realRunner }, {
+        now: now(),
+        computer: opts.computer ?? hostname(),
+        aliases: s.cfg.aliases,
+      });
+      report.git.skipped.push(...prepared.skipped);
+      const gitOnly = [...prepared.checks].filter(([key, c]) => c.hash !== s.state.git_checked?.[key] && !needed!.includes(key)).map(([key]) => key);
       if (llm === null) {
         report.pages.left.push(...needed.map((project) => ({ project, reason: 'Claude Code is not installed on this computer' })));
+        report.git.skipped.push(...gitOnly.map((project) => ({ project, reason: 'Claude Code is not installed on this computer' })));
       } else {
         report.pages.left.push(
           ...needed.filter((key) => deferred.has(key)).map((project) => ({ project, reason: 'it waits for summaries still owed after re-cleaning' })),
         );
-        const pages = await updatePages(remote, llm, needed.filter((key) => !deferred.has(key)), budget, {
+        const pages = await updatePages(remote, llm, [...needed.filter((key) => !deferred.has(key)), ...gitOnly], budget, {
           now: now().toISOString(),
           maxChars: MAX_CHARS,
           onPage: (done, total, key) => opts.onProgress?.({ step: 'page', done, total, project: key }),
+          git: prepared.checks,
+          gitOnly: new Set(gitOnly),
         });
         report.pages.updated.push(...pages.updated);
-        report.pages.left.push(...pages.left);
+        // The hub reads pages.left as pages behind, which a skipped git check is not.
+        report.pages.left.push(...pages.left.filter((l) => !gitOnly.includes(l.project)));
+        report.git.skipped.push(...pages.left.filter((l) => gitOnly.includes(l.project)));
+        report.git.checked.push(...pages.checked);
+        for (const key of pages.checked) s.state.git_checked = { ...s.state.git_checked, [key]: prepared.checks.get(key)!.hash };
       }
     }
   }

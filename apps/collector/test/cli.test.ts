@@ -744,6 +744,36 @@ describe('hub sync: summaries', () => {
     expect(out.join('\n')).toMatch(/1 page left for the next sync/);
   });
 
+  it('says how many projects were checked against git', async () => {
+    const llm = new FakeLlm();
+    io.llm = llm;
+    io.cwd = '/work/alpha';
+    io.fetchImpl = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/status')) return new Response(JSON.stringify({ pages_needed: [], summaries_owed: 0 }), { status: 200 });
+      if (url.endsWith('/page-inputs')) {
+        const page = { summary: 's', body: '## Open items\n\n- x', version: 1, rebuilt_at: '2026-10-09T00:00:00.000Z', dirty: false, digests_through: 1 };
+        return new Response(JSON.stringify({ page, digests: [{ session_id: 'x', title: 't', date: null, text: 'g', saved_seq: 1 }], through: 1 }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    };
+    io.runCommand = (_cmd, _cwd, args) => (args[0] === 'symbolic-ref' ? 'origin/main' : args[0] === 'log' ? 'abc1234\t2026-10-22\tinit' : '');
+    await run(['sync'], io);
+    expect(out.join('\n')).toMatch(/Checked against git: 1 project\b/);
+  });
+
+  it('does not list projects with no checkout here as not checked against git', async () => {
+    io.llm = new FakeLlm();
+    io.fetchImpl = async (input) =>
+      String(input).endsWith('/api/status') ? new Response(JSON.stringify({ pages_needed: [], summaries_owed: 0 }), { status: 200 }) : new Response('{}', { status: 200 });
+    // The project still resolves from its remote, but no checkout can be found for it.
+    io.git = (_cwd, args) => (args[0] === 'remote' ? 'git@github.com:me/alpha.git' : null);
+    io.runCommand = () => null;
+    await run(['sync'], io);
+    expect(out.join('\n')).toMatch(/Uploaded 1 session/);
+    expect(out.join('\n')).not.toMatch(/against git/);
+  });
+
   it('a dry run says what it would summarize and calls no model', async () => {
     const llm = new FakeLlm();
     io.llm = llm;
