@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyReview, sectionBullets, type PageReview } from '../src/page-review.js';
+import { applyReview, GIT_EVIDENCE, sectionBullets, type PageReview } from '../src/page-review.js';
 
 const BODY = [
   '## What this is',
@@ -79,5 +79,11 @@ describe('applyReview', () => {
   it('leaves a page without the sections unchanged', () => {
     const plain = { summary: 's', body: 'No sections here.' };
     expect(applyReview(plain, review({ drop_open: [{ item: 1, session_id: 'claude-code:a' }] }), shown)).toEqual(plain);
+  });
+
+  it('keeps a drop that cites git only when git was shown', () => {
+    const drop = review({ drop_open: [{ item: 1, session_id: GIT_EVIDENCE }] });
+    expect(sectionBullets(applyReview(page, drop, new Set([GIT_EVIDENCE])).body, 'Open items')).toHaveLength(2);
+    expect(applyReview(page, drop, shown).body).toBe(BODY);
   });
 });

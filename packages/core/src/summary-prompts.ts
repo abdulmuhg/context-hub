@@ -29,6 +29,7 @@ export const REVIEW_SYSTEM = [
   'You get the page\'s "Open items" and "Current state" lines, numbered, and the digests, newest first.',
   'An open item is settled when a digest shows it was done, decided or made unnecessary, including indirectly: for example a later session reports work that could only have succeeded if it was done. A current-state line is outdated when a newer session reports something different.',
   'For each settled or outdated line, give its number and the id of the session that shows it. Leave a line alone when you are not sure: a wrong drop loses real information, while a stale line is only noise. Do not drop a line because it is old.',
+  'When a <git> block is given, a line is also settled or outdated when git shows it on strong evidence only: the PR it names is merged or closed, the branch it names is merged or deleted, or a commit subject clearly names that work. Cite the id "git" for such a line. A loose word match is not enough.',
   'Then write the summary: one sentence of at most 25 words saying where the project stands, consistent with the page once those lines are gone.',
   COMMON,
 ].join('\n');

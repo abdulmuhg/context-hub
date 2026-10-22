@@ -18,6 +18,8 @@ export interface PageReview {
 
 export const OPEN_ITEMS = 'Open items';
 export const CURRENT_STATE = 'Current state';
+/** The evidence id a drop cites when git, not a session, shows a line is settled. */
+export const GIT_EVIDENCE = 'git';
 
 interface Section {
   /** Line index of the heading. */

@@ -37,6 +37,8 @@ export interface ReviewRequest {
   page: StatePage;
   /** The page's sources and any newer sessions, newest first. */
   digests: { session_id: string; title: string; date: string | null; text: string }[];
+  /** Git and PR facts for the project, when the caller has a checkout to read them from. */
+  git?: { text: string; as_of: string };
 }
 
 export interface Llm {
@@ -123,7 +125,8 @@ export abstract class PromptedLlm implements Llm {
       `<open_items>\n${numbered(OPEN_ITEMS)}\n</open_items>`,
       `<current_state>\n${numbered(CURRENT_STATE)}\n</current_state>`,
       `<page>\n${req.page.body}\n</page>`,
-      `Session digests, newest first:\n${digests}`,
+      ...(req.git ? [`<git as_of="${req.git.as_of}">\n${req.git.text}\n</git>`] : []),
+      `Session digests, newest first:\n${digests || '(none)'}`,
     ].join('\n\n');
     return this.ask<PageReview>({ system: REVIEW_SYSTEM, user, schema: ReviewSchema, kind: 'review', project: req.project });
   }
