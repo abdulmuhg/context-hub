@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { listActivity } from '../src/activity.js';
 import { openDb, type Db } from '../src/db.js';
+import { saveDigest } from '../src/digest-store.js';
 import { createGrant, issueTokens } from '../src/oauth/store.js';
 import { handleMcp, INSTRUCTIONS } from '../src/mcp.js';
 import { PAGE_BUDGET, upsertSession } from '../src/store.js';
@@ -90,6 +91,29 @@ describe('get_project', () => {
     expect(isError).toBe(false);
     expect(data).toMatchObject({ key: 'github.com/me/alpha', state: null, last_synced_at: NOW });
     expect(data.recent[0]).toMatchObject({ session_id: 'claude-code:a1', title: 'Redis cache removal' });
+  });
+
+  it('gives each session only its goal, and get_session the full digest', async () => {
+    const full = 'Goal: Drop the Redis cache.\nDone:\n- Removed Redis (#1)\nOpen:\n- Delete the Redis container (#1)';
+    const s = db.prepare("SELECT id, content_hash FROM sessions WHERE source_session_id = 'a1'").get() as { id: number; content_hash: string };
+    const body = { goal: 'Drop the Redis cache.', done: [{ text: 'Removed Redis', seq: 1 }], decisions: [], open_items: [{ text: 'Delete the Redis container', seq: 1 }], key_refs: [] };
+    saveDigest(db, { sessionRowId: s.id, hash: s.content_hash, model: 'm1', body, text: full, now: NOW });
+
+    const { data } = await tool('get_project', { project: 'alpha' });
+    expect(data.recent[0].digest).toEqual({ goal: 'Drop the Redis cache.', model: 'm1', written_at: NOW, stale: false });
+
+    const { data: page } = await tool('get_session', { session_id: 'claude-code:a1' });
+    expect(page.session.digest.text).toBe(full);
+  });
+
+  it('takes the goal from the text when a digest has no body', async () => {
+    const s = db.prepare("SELECT id, content_hash FROM sessions WHERE source_session_id = 'a1'").get() as { id: number; content_hash: string };
+    const body = { goal: 'x', done: [], decisions: [], open_items: [], key_refs: [] };
+    saveDigest(db, { sessionRowId: s.id, hash: s.content_hash, model: 'm1', body, text: 'Goal: Drop the Redis cache.\nDone:\n- Removed Redis', now: NOW });
+    db.prepare('UPDATE digests SET body = NULL WHERE session_id = ?').run(s.id);
+
+    const { data } = await tool('get_project', { project: 'alpha' });
+    expect(data.recent[0].digest.goal).toBe('Drop the Redis cache.');
   });
 
   it('returns candidates instead of guessing', async () => {
@@ -256,7 +280,7 @@ describe('the exact description of every tool', () => {
   const NAMES = 'alpha, beta';
   const expected = (names: string): Record<string, string> => ({
     list_projects: `List the user's software projects and their AI coding history (Claude Code, Codex, Antigravity, notes saved from chats, and documents synced from their notes files). Projects in the hub: ${names}.`,
-    get_project: `Catch up on one of the user's software projects: its current state, recent coding sessions and its documents. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
+    get_project: `Catch up on one of the user's software projects: its current state, recent coding sessions and its documents. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Each recent session shows only the goal from its digest; get_session gives the full digest and the conversation. Projects: ${names}.`,
     search: `Keyword search across all stored conversations. Every word must match; put a phrase in double quotes for an exact match. Covers the coding sessions, notes and documents of: ${names}.`,
     save_note: `Save a short note into one of the user's existing projects, so it is there in later sessions in any tool. Use only when the user asks to save, remember or record something. Save it to the project the user names; a project can share its name with this hub, so "save to context-hub" means the project called context-hub. If the user names no project, or the name could mean more than one, ask which project before saving. Never include passwords, keys, card numbers or phone numbers. Projects: ${names}.`,
   });

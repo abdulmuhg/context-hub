@@ -1,6 +1,6 @@
 import type { HashedSession, Message, UploadDigest } from '@context-hub/core';
 import type { Db } from './db.js';
-import { digestCounts, getDigest, getProjectState, markDigestPending, markStateDirty, saveComputerOutcome, type DigestStatus } from './digest-store.js';
+import { digestCounts, getDigest, getProjectState, markDigestPending, markStateDirty, saveComputerOutcome, type DigestRow, type DigestStatus } from './digest-store.js';
 import { deleteSearchRows, searchRowWriter } from './search-rows.js';
 
 export function publicId(source: string, id: string): string {
@@ -196,7 +196,16 @@ export interface SessionDigest {
   stale: boolean;
 }
 
-export interface SessionSummary {
+/** A digest cut to its goal, for listing many sessions at once. */
+export interface SessionGoal {
+  goal: string;
+  model: string;
+  written_at: string;
+  /** True when this goal was written from an older version of the session. */
+  stale: boolean;
+}
+
+export interface SessionSummary<D = SessionDigest> {
   session_id: string;
   source: string;
   title: string;
@@ -206,7 +215,7 @@ export interface SessionSummary {
   account_id: string | null;
   is_subagent: boolean;
   /** Null until a digest has been written. */
-  digest: SessionDigest | null;
+  digest: D | null;
   /** 'none' for subagent transcripts, which are covered by their parent's digest. */
   digest_status: DigestStatus | 'none';
   /** The computer's token label, or null when the server wrote it (or there is no digest). */
@@ -233,7 +242,23 @@ interface SessionRow {
 const SESSION_COLUMNS = `s.id, s.source, s.source_session_id, s.title, s.started_at, s.last_activity_at,
                          s.git_branch, s.account_id, s.parent, s.cwd, s.synced_at, p.key AS project`;
 
+/** Longest goal a project view shows; a goal is meant to be a sentence or two. */
+const GOAL_MAX = 500;
+
+/** The goal from the digest's body, or from the "Goal:" line its text starts with. */
+function goalOf(d: DigestRow & { text: string }): string {
+  const goal = d.body?.goal ?? (d.text.split('\n', 1)[0] ?? '').replace(/^Goal:\s*/, '');
+  return goal.length > GOAL_MAX ? goal.slice(0, GOAL_MAX - 1) + '…' : goal;
+}
+
+const fullDigest = (d: DigestRow & { text: string }): SessionDigest => ({ text: d.text, model: d.model ?? '', written_at: d.updated_at, stale: d.status !== 'ok' });
+const goalDigest = (d: DigestRow & { text: string }): SessionGoal => ({ goal: goalOf(d), model: d.model ?? '', written_at: d.updated_at, stale: d.status !== 'ok' });
+
 function summarise(db: Db, r: SessionRow): SessionSummary {
+  return summariseWith(db, r, fullDigest);
+}
+
+function summariseWith<D>(db: Db, r: SessionRow, digestOf: (d: DigestRow & { text: string }) => D): SessionSummary<D> {
   const d = getDigest(db, r.id);
   return {
     session_id: publicId(r.source, r.source_session_id),
@@ -244,7 +269,7 @@ function summarise(db: Db, r: SessionRow): SessionSummary {
     git_branch: r.git_branch,
     account_id: r.account_id,
     is_subagent: r.parent !== null,
-    digest: d && d.text !== null ? { text: d.text, model: d.model ?? '', written_at: d.updated_at, stale: d.status !== 'ok' } : null,
+    digest: d && d.text !== null ? digestOf({ ...d, text: d.text }) : null,
     digest_status: d?.status ?? 'none',
     digest_written_by: d?.written_by ?? null,
     digest_model: d?.model ?? null,
@@ -273,7 +298,8 @@ export interface ProjectView {
   /** Null before the first digest of the project has been written. */
   state: ProjectStateView | null;
   last_synced_at: string;
-  recent: SessionSummary[];
+  /** Each session with only its digest's goal; get_session gives the full digest. */
+  recent: SessionSummary<SessionGoal>[];
   /** The most recently changed documents. */
   documents: DocumentSummary[];
   document_count: number;
@@ -310,7 +336,7 @@ export function getProject(db: Db, projectId: number, sessions: number, document
     name: project.name,
     state,
     last_synced_at: synced.t,
-    recent: rows.map((r) => summarise(db, r)),
+    recent: rows.map((r) => summariseWith(db, r, goalDigest)),
     documents: docs.map((d) => ({ session_id: publicId('doc', d.id), path: documentPath(d.id), title: d.title, updated_at: d.last_activity_at })),
     document_count: docCount,
   };

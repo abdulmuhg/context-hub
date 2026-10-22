@@ -116,10 +116,10 @@ describe('lookups return digests and state', () => {
     expect(view.recent[0]).toMatchObject({ digest: null, digest_status: 'pending' });
   });
 
-  it('returns the digest once written', () => {
+  it('returns the digest once written: its goal in the project, all of it in the session', () => {
     digestIt('a', 'Goal: fix login');
     expect(getProject(db, projectId('alpha'), 5).recent[0]).toMatchObject({
-      digest: { text: 'Goal: fix login', model: 'm1', written_at: NOW, stale: false },
+      digest: { goal: 'g', model: 'm1', written_at: NOW, stale: false },
       digest_status: 'ok',
     });
     expect(getSessionPage(db, 'claude-code', 'a', 0)!.session.digest).toMatchObject({ text: 'Goal: fix login', stale: false });
@@ -128,7 +128,7 @@ describe('lookups return digests and state', () => {
   it('marks the digest stale while a changed session waits for a new one', () => {
     digestIt('a', 'old');
     upsertSession(db, makeSession({ source_session_id: 'a', messages: [text(0, 'user', 'changed')] }), LATER);
-    expect(getProject(db, projectId('alpha'), 5).recent[0]).toMatchObject({ digest: { text: 'old', stale: true }, digest_status: 'pending' });
+    expect(getProject(db, projectId('alpha'), 5).recent[0]).toMatchObject({ digest: { goal: 'g', stale: true }, digest_status: 'pending' });
   });
 
   it('reports none for a subagent transcript', () => {
