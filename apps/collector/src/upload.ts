@@ -112,6 +112,8 @@ export interface HubStatus {
   pages_needed?: string[];
   /** Sessions a computer still owes a summary for after re-cleaning. */
   summaries_owed?: number;
+  /** The hub's name for the token that asked. */
+  label?: string;
   [key: string]: unknown;
 }
 
@@ -136,13 +138,15 @@ export async function exchangeDeviceCode(
   code: string,
   name: string,
   fetchImpl: typeof fetch = fetch,
+  /** This computer's current token for the same hub: sent so the hub retires it once the new one is issued. */
+  retireToken?: string,
 ): Promise<{ token: string; label: string }> {
   const target = url.replace(/\/+$/, '') + '/api/devices';
   let res: Response;
   try {
     res = await fetchImpl(target, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(retireToken ? { Authorization: `Bearer ${retireToken}` } : {}) },
       body: JSON.stringify({ code, name }),
       signal: AbortSignal.timeout(30_000),
     });

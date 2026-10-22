@@ -960,6 +960,12 @@ describe('runSync: git check', () => {
     track(KEY_A);
   });
 
+  it('the Git section names the stored label', async () => {
+    saveConfig(hub, { ...loadConfig(hub), label: 'MRC' });
+    await runSync(gitOpts({ computer: undefined }));
+    expect(pagePuts()[0]!.body.body).toContain('## Git (checked on MRC');
+  });
+
   it('reviews a page with nothing new against git, saves it, and does it again only when the facts change', async () => {
     const first = await runSync(gitOpts());
     expect(first.git).toEqual({ checked: [KEY_A], skipped: [] });

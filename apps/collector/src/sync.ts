@@ -538,7 +538,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
       // Pages whose git facts changed are checked even when no session is new.
       const prepared = prepareGitChecks(selected, s.state, { ...resolveDeps, run: opts.run ?? realRunner }, {
         now: now(),
-        computer: opts.computer ?? hostname(),
+        computer: opts.computer ?? s.cfg.label ?? hostname(),
         aliases: s.cfg.aliases,
       });
       report.git.skipped.push(...prepared.skipped);

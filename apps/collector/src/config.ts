@@ -33,6 +33,10 @@ export interface Config {
   docs: DocFolder[];
   /** How this computer writes summaries with Claude Code. Not part of the settings fingerprint: changing it re-uploads nothing. */
   summaries?: { model?: string; effort?: Effort };
+  /** The hub's name for this computer, from the token it issued. */
+  label?: string;
+  /** The version of hub that last ran `hub setup`, so the next run can say "updated from X". */
+  setup_version?: string;
 }
 
 export const DEFAULT_SUMMARY_MODEL = 'claude-haiku-5-5';

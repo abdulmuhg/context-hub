@@ -121,6 +121,49 @@ describe('hub login', () => {
     expect(loadToken(io.hubDir)).toBeFalsy();
   });
 
+  it('login stores the label the hub returns', async () => {
+    answers = ['ABCD-EFGH'];
+    await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io);
+    expect(loadConfig(io.hubDir).label).toBe('my-mac');
+  });
+
+  it('login on the same hub sends the old token to retire it', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'old'], io);
+    const headers: unknown[] = [];
+    const inner = io.fetchImpl!;
+    io.fetchImpl = async (input, init) => {
+      headers.push(init?.headers);
+      return inner(input, init);
+    };
+    answers = ['ABCD-EFGH'];
+    expect(await run(['login', '--url', 'https://hub.example.com/', '--name', 'x'], io)).toBe(0);
+    expect(headers[0]).toMatchObject({ Authorization: 'Bearer old' });
+  });
+
+  it('login to a different hub sends no old token', async () => {
+    await run(['init', '--url', 'https://old.example.com', '--token', 'old'], io);
+    const headers: unknown[] = [];
+    const inner = io.fetchImpl!;
+    io.fetchImpl = async (input, init) => {
+      headers.push(init?.headers);
+      return inner(input, init);
+    };
+    answers = ['y', 'ABCD-EFGH'];
+    expect(await run(['login', '--url', 'https://new.example.com', '--name', 'x'], io)).toBe(0);
+    expect(JSON.stringify(headers[0])).not.toContain('Authorization');
+  });
+
+  it('an expired code saves nothing and says how to get a new line', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'old'], io);
+    status = 401;
+    answers = ['OLD-CODE'];
+    expect(await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io)).toBe(1);
+    expect(err.join('
+')).toContain('Get a new line from Sign-ins → Add a computer and paste it.');
+    expect(loadToken(io.hubDir)).toBe('old');
+    expect(loadConfig(io.hubDir).label).toBeUndefined();
+  });
+
   it('asks before replacing a different saved hub and stops on anything but y', async () => {
     await run(['init', '--url', 'https://old.example.com', '--token', 'old'], io);
     answers = ['n'];

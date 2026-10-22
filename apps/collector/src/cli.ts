@@ -317,6 +317,31 @@ function docsCase(io: Io, args: string[]): number {
   throw new Fail(USAGE);
 }
 
+const trimUrl = (u: string): string => u.trim().replace(//+$/, '');
+
+/**
+ * Swaps a dashboard code for a token and saves it with the hub's name for this computer. Nothing is
+ * saved when the exchange fails. The computer's current token goes along only when it is for the
+ * same hub, so the hub can retire it.
+ */
+export async function connectWithCode(
+  io: Io,
+  url: string,
+  code: string,
+  name: string,
+): Promise<{ label: string; previousUrl: string | null }> {
+  const saved = loadConfig(io.hubDir).server_url;
+  const sameHub = Boolean(saved) && trimUrl(saved) === trimUrl(url);
+  const old = sameHub ? loadToken(io.hubDir) : null;
+  const { token, label } = await exchangeDeviceCode(url, code, name, io.fetchImpl, old ?? undefined);
+  update(io, (cfg) => {
+    cfg.server_url = url;
+    cfg.label = label;
+  });
+  saveToken(io.hubDir, token);
+  return { label, previousUrl: saved && !sameHub ? saved : null };
+}
+
 function bundleOf(io: Io): string {
   return io.bundlePath ?? resolve(process.argv[1] ?? '');
 }
@@ -614,11 +639,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const name = values.name ?? ((await io.ask(`Name for this computer [${host}]: `)).trim() || host);
       const code = (await io.ask('Code from the dashboard (Sign-ins > Add a computer): ')).trim();
       if (code === '') throw new Fail('No code entered. Nothing saved.');
-      const { token, label } = await exchangeDeviceCode(url, code, name, io.fetchImpl);
-      update(io, (cfg) => {
-        cfg.server_url = url;
-      });
-      saveToken(io.hubDir, token);
+      const { label } = await connectWithCode(io, url, code, name);
       io.out(`Connected as "${label}". Next: hub projects, then hub track <project> and hub sync.`);
       return 0;
     }
