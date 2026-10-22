@@ -59,8 +59,8 @@ you open **Customize > Connectors > context-hub**, click **Disconnect**, then
 
 Reading needs nothing local. Uploading this computer's own sessions needs
 the `hub` command (Node 22 or newer) and a **computer code**: a one-time code,
-valid 10 minutes, that `hub login` swaps for this computer's own upload
-token.
+valid 10 minutes, that the install line (or `hub login`) swaps for this computer's own
+upload token.
 
 #### Which path are you on?
 
@@ -74,51 +74,57 @@ flowchart TD
     addc --> code[/Computer code/]
     owner --> code
     server --> code
-    code --> install[On the new computer:<br/>install, then hub login]
+    code --> install[On the new computer:<br/>paste the line]
     install --> done([Connected: hub track, hub sync])
 ```
 
 | You are | Get the computer code from |
 |---|---|
-| **Adding another computer** (one computer or browser is already signed in) | The dashboard: **Sign-ins > Add a computer**. It also shows the commands to run. |
+| **Adding another computer** (one computer or browser is already signed in) | The dashboard: **Sign-ins > Add a computer**. It also shows the line to paste for each OS, with the code inside. |
 | **Using someone else's hub** | The hub's owner, from their **Sign-ins > Add a computer**. You never need server access. |
 | **Hosting the hub, first computer ever** (nothing is signed in yet) | The server: `docker exec context-hub node /app/dist/admin-bin.js device-code` (or `docker compose exec … device-code`). |
 
-A computer code only works in `hub login`, and a sign-in code (for browsers
+A computer code only works in the install line or `hub login`, and a sign-in code (for browsers
 and the Claude apps, see [Sign-in codes](#sign-in-codes)) only works there.
 Using one in the other's place just says "wrong or expired" and costs nothing.
 
 #### Install and log in
 
+Open **Sign-ins > Add a computer** on the dashboard. It shows one line for
+each OS with the code already inside. Paste the one for the new computer:
+
 **macOS and Linux:**
 
 ```bash
-curl -fsSL https://hub.abdulmughnialfikri.com/install | sh
+curl -fsSL https://hub.abdulmughnialfikri.com/install | sh -s -- --code ABCD-EFGH
 ```
 
-Then run the `login` line it prints, which asks for a name for this computer
-and the code. The installer puts `hub` in `~/.local/bin` and installs the
-Claude Code slash commands. If `~/.local/bin` is not on your `PATH` (a fresh
-Mac), it prints the line to add to `~/.zshrc` and gives the next step with the
-full path. Run the install line again to update; it leaves `~/.context-hub`
-alone.
+**Windows** (PowerShell, no extra setup):
 
-**Windows** has no installer yet:
-
-```bash
-git clone https://github.com/abdulmuhg/context-hub.git
-cd context-hub
-pnpm install
-pnpm --filter @context-hub/collector build
+```powershell
+$env:HUB_CODE='ABCD-EFGH'; irm https://hub.abdulmughnialfikri.com/install.ps1 | iex
 ```
 
-Put a `hub.cmd` in your npm global folder that runs
-`node C:\path\to\context-hub\apps\collector\dist\bin.js %*`, then run
-`hub login --url https://hub.abdulmughnialfikri.com` and enter the code.
+(`ABCD-EFGH` stands for your own code.) The line needs Node 22 or newer; if it
+is missing, the installer says how to get it and to paste the same line again.
+It installs `hub`, puts it first on your `PATH`, then runs `hub setup`, which
+connects the computer, installs the Claude Code slash commands, turns on
+[automatic sync](#sync-automatically-claude-code), prints a checklist of what
+is now true, and asks which of the projects found on this computer to upload.
+It then runs the first sync while you watch. Every change it makes to your
+`PATH` or to `~/.claude/settings.json` appears in the checklist.
 
-When it works, `hub login` prints `Connected as "<name>"`, and the computer
-appears on **Sign-ins > Tokens** with its own **Disconnect**, so a lost
-computer can be cut off.
+Paste the line again, with a fresh code, to update or repair a computer: it
+keeps the login and the settings you changed, and retires the computer's old
+token. A line without a code (`curl … | sh`) updates and checks without logging
+in again.
+
+If you would rather type it yourself, `hub login` still works: it asks for the
+hub address, a name for the computer and the code.
+
+When it works, the checklist says `Connected to … as "<name>"`, and the
+computer appears on **Sign-ins > Tokens** with its own **Disconnect**, so a
+lost computer can be cut off.
 
 ### 3. Choose projects and sync
 
@@ -243,7 +249,8 @@ With `hub auto on`, ending a Claude Code session starts a background `hub sync`
 of your tracked projects. It returns at once, so closing Claude Code is never
 delayed. It never asks and never tracks a new project (new projects wait for
 you to run `hub sync` in a terminal), and it adds one line per run to
-`~/.context-hub/auto.log`. It is off until you turn it on. The hook is written
+`~/.context-hub/auto.log`. It is turned on for you by the first install; after that it stays as you set it.
+The hook is written
 to `~/.claude/settings.json`; other settings and hooks there are left alone,
 and a backup is saved as `settings.json.hub-backup`.
 
@@ -470,11 +477,12 @@ Live at https://hub.abdulmughnialfikri.com, used by its owner. Every push to
 
 | Built | Planned or parked |
 |---|---|
-| Collector for Claude Code, Codex and Antigravity; secret stripping and a personal-data filter | Windows installer |
-| Summaries and per-project briefings written on your computer by Claude Code (the hub's key as a fallback), with a review step that drops settled items | Importer for claude.ai export files (waits on a real export) |
-| MCP lookups for Claude Code and other tools | ChatGPT and Gemini sign-in |
-| Sign-in for claude.ai, desktop and mobile; `save_note` | A hub for more than one person |
+| Collector for Claude Code, Codex and Antigravity; secret stripping and a personal-data filter | Importer for claude.ai export files (waits on a real export) |
+| Summaries and per-project briefings written on your computer by Claude Code (the hub's key as a fallback), with a review step that drops settled items | ChatGPT and Gemini sign-in |
+| MCP lookups for Claude Code and other tools | A hub for more than one person |
+| Sign-in for claude.ai, desktop and mobile; `save_note` | |
 | Dashboard, activity log, sync reports, off-site backups | |
+| One-line install on macOS, Linux and Windows (`hub setup`) | |
 
 ## License
 
