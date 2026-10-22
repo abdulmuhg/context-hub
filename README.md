@@ -312,6 +312,14 @@ minutes.
   what was said in sessions, not what happened elsewhere (a pull request
   merged on GitHub, a setting changed). Assistants are told to check git and
   the live service before relying on it.
+- `hub sync` also checks each page against git. For a project checked out on
+  the computer that syncs, it runs `git fetch`, reads the default branch and
+  local branches, and (when `gh` is installed and signed in) the latest pull
+  requests. Lines that git shows are settled, such as an open item naming a
+  merged PR, are dropped, and the page ends with a short `## Git` section that
+  says which computer checked and when. It re-checks when the facts change,
+  even with no new session. Without a checkout, git, or network, it is skipped
+  and the page keeps its last `## Git` section.
 - When a briefing is wrong, ask any chat to save a correcting note to that
   project. The briefing updates within a minute.
 
