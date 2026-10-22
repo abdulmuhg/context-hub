@@ -13,7 +13,7 @@ export const INSTRUCTIONS = [
   "context-hub holds the user's past AI assistant conversations about their projects.",
   'When the user refers to earlier work, names a project, or asks to continue something, call get_project before answering. If you are not sure which project they mean, call list_projects first.',
   'When the user names one of their software projects, use these tools rather than searching past chats: coding sessions are stored here, not in the chat app.',
-  'Use search to find a specific decision or detail, and get_session to read the original conversation behind a result.',
+  'Use search to find a specific decision or detail, and get_session to read a session\'s full digest and the original conversation behind a result.',
   'Digests are summaries and can be wrong; when a detail matters, open the session with get_session.',
   'Documents (source "doc") are the user\'s own notes files, such as ticket write-ups, topic notes and saved memories, kept in step with their computer on every sync. They hold conclusions the user chose to keep, so when one covers the question, read it with get_session before relying on digests. get_project lists the most recently changed; find others with search and source "doc".',
   'A session with digest_status "pending" or a digest marked stale has changed since its digest was written; a state page marked stale may describe work that was removed. In those cases read the session itself before relying on the summary.',
@@ -93,7 +93,7 @@ export function buildMcpServer(db: Db, caller: McpCaller = { canSave: false, act
   server.registerTool(
     'get_project',
     {
-      description: `Catch up on one of the user's software projects: its current state, recent coding sessions and its documents. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Projects: ${names}.`,
+      description: `Catch up on one of the user's software projects: its current state, recent coding sessions and its documents. Call this first whenever the user names one of these projects or asks where they left off, before searching past chats: this history is not in the chat app's own chat history. Each recent session shows only the goal from its digest; get_session gives the full digest and the conversation. Projects: ${names}.`,
       inputSchema: {
         project: z.string().describe('A project key or name, for example "jsonroom" or "github.com/abdulmuhg/jsonroom"'),
         sessions: z.number().int().min(1).max(20).optional().describe('How many recent sessions to include. Default 5.'),

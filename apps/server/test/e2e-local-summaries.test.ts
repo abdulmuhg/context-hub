@@ -106,7 +106,7 @@ describe('local summaries, end to end', () => {
     const project = await call('get_project', { project: 'alpha' });
     expect(project.state.summary).toBe('Alpha: the staging deploy is being fixed.');
     expect(project.state.stale).toBe(false);
-    expect(project.recent[0].digest.text).toContain('zebrafish rollback');
+    expect(project.recent[0].digest.goal).toContain('zebrafish rollback');
     expect(project.recent[0].digest.model).toBe('claude-sonnet-5-5');
     await client.close();
 

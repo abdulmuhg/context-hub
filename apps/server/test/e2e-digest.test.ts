@@ -64,7 +64,7 @@ describe('upload, digest, catch up', () => {
     expect(project.recent).toHaveLength(2);
     for (const s of project.recent) {
       expect(s.digest_status).toBe('ok');
-      expect(s.digest.text).toMatch(/^Goal: digest of Session s\d/);
+      expect(s.digest.goal).toMatch(/^digest of Session s\d/);
       expect(s.digest.stale).toBe(false);
     }
     expect((await call('list_projects')).projects[0].summary).toBe(project.state.summary);
