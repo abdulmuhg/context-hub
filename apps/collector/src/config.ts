@@ -57,6 +57,10 @@ export interface State {
   files: Record<string, StateEntry>;
   /** What the last sync left waiting, for `hub status`. */
   last_waiting?: { count: number; reason: string | null; at: string };
+  /** The main checkout of each project on this computer, by project key. */
+  repos?: Record<string, string>;
+  /** The hash of the git facts each project's page was last checked against, by project key. */
+  git_checked?: Record<string, string>;
 }
 
 export function hubDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -115,7 +119,13 @@ export function saveConfig(dir: string, cfg: Config): void {
 
 export function loadState(dir: string): State {
   const saved = readJson<Partial<State>>(dir, 'state.json', {});
-  return { fingerprint: saved.fingerprint ?? '', files: saved.files ?? {}, ...(saved.last_waiting ? { last_waiting: saved.last_waiting } : {}) };
+  return {
+    fingerprint: saved.fingerprint ?? '',
+    files: saved.files ?? {},
+    ...(saved.last_waiting ? { last_waiting: saved.last_waiting } : {}),
+    ...(saved.repos ? { repos: saved.repos } : {}),
+    ...(saved.git_checked ? { git_checked: saved.git_checked } : {}),
+  };
 }
 
 export function saveState(dir: string, state: State): void {

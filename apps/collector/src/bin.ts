@@ -6,6 +6,7 @@ import { hubDir } from './config.js';
 const io: Io = {
   home: homedir(),
   hubDir: hubDir(),
+  cwd: process.cwd(),
   out: (line) => console.log(line),
   err: (line) => console.error(line),
   interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),

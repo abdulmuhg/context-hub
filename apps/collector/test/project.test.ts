@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyOverrides, projectMatches, resolveProjectKey, type ResolveDeps } from '../src/project.js';
+import { applyOverrides, checkoutFor, projectMatches, resolveProjectKey, type ResolveDeps } from '../src/project.js';
 
 /** A fake git: `repos` maps a directory to its remote (or null) and top-level folder. */
 function deps(repos: Record<string, { remote: string | null; top: string }>, missing: string[] = []): ResolveDeps {
@@ -163,5 +163,41 @@ describe('projectMatches', () => {
 
   it('does not match a different project', () => {
     expect(projectMatches('room', 'github.com/abdulmuhg/jsonroom')).toBe(false);
+  });
+});
+
+describe('checkoutFor', () => {
+  /** A fake git: `common` maps a directory to what `--git-common-dir` prints, `top` to `--show-toplevel`. */
+  const fake = (common: Record<string, string>, missing: string[] = [], remote: string | null = 'git@github.com:me/alpha.git'): ResolveDeps => {
+    const known = new Set([...Object.keys(common), ...Object.values(common).map((c) => c.replace(/[\/].git$/, ''))]);
+    return {
+      exists: (p) => !missing.includes(p),
+      git: (cwd, args) => {
+        if (args[0] === 'remote') return known.has(cwd) ? remote : null;
+        if (args.includes('--git-common-dir')) return common[cwd] ?? null;
+        if (args.includes('--show-toplevel')) return common[cwd] ? common[cwd]!.replace(/[\/]\.git$/, '') : null;
+        return null;
+      },
+    };
+  };
+
+  it('gives the main checkout and its key for a repo folder', () => {
+    expect(checkoutFor('/work/alpha', fake({ '/work/alpha': '/work/alpha/.git' }))).toEqual({ path: '/work/alpha', key: 'github.com/me/alpha' });
+  });
+
+  it('gives the main checkout, not the folder, for a linked worktree', () => {
+    const d = fake({ '/wt/fix': '/work/alpha/.git' });
+    expect(checkoutFor('/wt/fix', d)).toEqual({ path: '/work/alpha', key: 'github.com/me/alpha' });
+  });
+
+  it('gives the repo of a removed Claude Code worktree', () => {
+    const gone = '/work/alpha/.claude/worktrees/x';
+    expect(checkoutFor(gone, fake({ '/work/alpha': '/work/alpha/.git' }, [gone]))).toEqual({ path: '/work/alpha', key: 'github.com/me/alpha' });
+  });
+
+  it('is null outside a repo, or when a removed worktree has no repo left', () => {
+    expect(checkoutFor('/tmp/scratch', fake({}))).toBeNull();
+    const gone = '/old/app/.claude/worktrees/x';
+    expect(checkoutFor(gone, fake({}, [gone, '/old/app']))).toBeNull();
   });
 });

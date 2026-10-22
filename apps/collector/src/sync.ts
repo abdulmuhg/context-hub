@@ -18,7 +18,7 @@ import {
   type StateEntry,
 } from './config.js';
 import { discoverDocs, docId, readDoc } from './docs.js';
-import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
+import { applyOverrides, checkoutFor, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
 import { budgetOpen, catchUpOwed, MAX_CHARS, newBudget, spend, stopReason, summarize, updatePages, type PageLeft, type SessionRef } from './summaries.js';
 import { deleteRemote, getStatus, putSession, reportSyncRun, type HubStatus, type Remote } from './upload.js';
 
@@ -49,6 +49,8 @@ export interface SyncOptions {
   onProgress?: (p: SyncProgress) => void;
   /** What started this run, shown beside it in the hub's activity log. */
   trigger?: Trigger;
+  /** The folder the sync was run from. If it is in a tracked project's repo, that project's checkout is remembered. */
+  cwd?: string;
 }
 
 export interface SyncReport {
@@ -260,6 +262,25 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
   const llm: Llm | null = dryRun ? null : opts.llm !== undefined ? opts.llm : buildLlm(s.cfg);
   const budget = newBudget(opts.all);
 
+  // Remember where each project is checked out, for the git check. Only a repo that resolves to the
+  // very project it is filed under counts: a session assigned elsewhere says nothing about its folder.
+  const resolveDeps = { git: opts.git ?? realGit, exists: opts.exists ?? existsSync };
+  const checkouts = new Map<string, ReturnType<typeof checkoutFor>>();
+  const rememberCheckout = (dir: string, sessionKey: string | null, projectKey: string): void => {
+    if (dryRun) return;
+    if (!checkouts.has(dir)) checkouts.set(dir, checkoutFor(dir, resolveDeps));
+    const found = checkouts.get(dir);
+    if (!found) return;
+    const key = applyOverrides(found.key, sessionKey ?? '', { aliases: s.cfg.aliases, assignments: {} });
+    if (key !== projectKey) return;
+    s.state.repos = { ...s.state.repos, [projectKey]: found.path };
+  };
+  if (opts.cwd) {
+    const found = checkoutFor(opts.cwd, resolveDeps);
+    const key = found && applyOverrides(found.key, '', { aliases: s.cfg.aliases, assignments: {} });
+    if (key && s.cfg.tracked.includes(key)) rememberCheckout(opts.cwd, null, key);
+  }
+
   let stopped = false; // set after the first failed upload
   const total = s.items.filter((i) => isSelected(i, s.cfg, opts) && !(s.state.files[i.file.path]?.hash != null && i.same)).length;
   let done = 0;
@@ -291,6 +312,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     let raw: RawSession;
     try {
       raw = item.raw ?? s.read(file);
+      if (raw.cwd) rememberCheckout(raw.cwd, sessionKey, projectKey);
     } catch (e) {
       report.errors.push(`${sessionKey}: ${(e as Error).message}`);
       continue;

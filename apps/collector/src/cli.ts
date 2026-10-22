@@ -34,6 +34,8 @@ export interface Io {
   /** Writes the summaries. Left out, Claude Code on this computer is used. Tests pass a fake. */
   llm?: Llm | null;
   git?: GitRunner;
+  /** The folder the command was run in; `hub sync` remembers it as the project's checkout. */
+  cwd?: string;
   exists?: (path: string) => boolean;
   hostname?: () => string;
   /** True when stdin and stdout are a terminal, so it is safe to ask questions. */
@@ -488,6 +490,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         project: values.project,
         session: values.session,
         trigger,
+        ...(io.cwd ? { cwd: io.cwd } : {}),
         onProgress:
           progress &&
           ((p) => {

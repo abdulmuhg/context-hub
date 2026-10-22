@@ -896,3 +896,36 @@ describe('runSync: state pages', () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe('runSync: remembering checkouts', () => {
+  it('records where a tracked project is checked out', async () => {
+    track(KEY_A);
+    await runSync(opts());
+    expect(loadState(hub).repos).toEqual({ [KEY_A]: '/work/alpha' });
+  });
+
+  it('records nothing for a session whose repo is not its project', async () => {
+    track('local:beta');
+    saveConfig(hub, { ...loadConfig(hub), assignments: { [`claude-code:${S1}`]: 'local:beta' } });
+    await runSync(opts());
+    expect(loadState(hub).repos ?? {}).toEqual({});
+  });
+
+  it('records the folder sync runs in when it is inside a tracked repo', async () => {
+    track(KEY_A);
+    rmSync(join(proj(), `${S1}.jsonl`));
+    await runSync(opts({ cwd: '/work/alpha/src' }));
+    expect(loadState(hub).repos).toEqual({ [KEY_A]: '/work/alpha' });
+  });
+
+  it('does not record a folder of an untracked project', async () => {
+    await runSync(opts({ cwd: '/work/alpha' }));
+    expect(loadState(hub).repos ?? {}).toEqual({});
+  });
+
+  it('records nothing in a dry run', async () => {
+    track(KEY_A);
+    await runSync(opts({ dryRun: true, cwd: '/work/alpha' }));
+    expect(existsSync(join(hub, 'state.json'))).toBe(false);
+  });
+});

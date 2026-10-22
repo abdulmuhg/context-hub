@@ -66,6 +66,24 @@ function repoKeyForHint(hint: string, deps: ResolveDeps): string | null {
 /** Claude Code puts a worktree at "<repo>/.claude/worktrees/<name>" and removes it when done. */
 const CLAUDE_WORKTREE = /^(.+?)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+/;
 
+/**
+ * The main checkout of the repo a folder is in, and the project key of that
+ * checkout. A linked or removed Claude Code worktree gives its repo, not its own
+ * folder, since the worktree goes away. Null outside a repo.
+ */
+export function checkoutFor(dir: string, deps: ResolveDeps): { path: string; key: string } | null {
+  let at = dir;
+  if (!deps.exists(dir)) {
+    const repo = CLAUDE_WORKTREE.exec(dir)?.[1];
+    if (!repo || !deps.exists(repo)) return null;
+    at = repo;
+  }
+  const common = deps.git(at, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  const path = (common && baseName(common) === '.git' ? parentDir(common) : null) ?? deps.git(at, ['rev-parse', '--show-toplevel']);
+  if (!path) return null;
+  return { path, key: keyForExistingDir(path, deps.git) };
+}
+
 function keyForCwd(cwd: string, deps: ResolveDeps): string {
   if (deps.exists(cwd)) return keyForExistingDir(cwd, deps.git);
   const repo = CLAUDE_WORKTREE.exec(cwd)?.[1];
