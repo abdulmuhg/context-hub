@@ -1,10 +1,10 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
-import { claudeOnlyAsCmd, cleanEnv, findClaude } from './claude-llm.js';
+import { runClaudeCommand, summariesRow, type Mark } from './checks.js';
 import { SLASH_COMMANDS } from './commands.js';
 import { isTrigger, TRIGGERS, type Effort, type Level, type Llm, type Trigger } from '@context-hub/core';
 import {
@@ -21,6 +21,7 @@ import {
 } from './config.js';
 import { HUB_VERSION } from './version.js';
 import { Fail, friendlyMessage } from './errors.js';
+import { setupCase } from './setup.js';
 import { runResummarize } from './resummarize.js';
 import { NO_CHECKOUT } from './git-check.js';
 import type { CommandRunner } from './git-facts.js';
@@ -54,6 +55,8 @@ export interface Io {
   spawn?: typeof spawn;
   /** For `hub doctor`: runs `claude` with these arguments (`mcp list`, `auth status --json`). found is false when Claude Code is not installed. */
   runClaude?: (args: string[]) => { found: boolean; output: string };
+  /** Runs the handler if the person presses Ctrl+C, and returns a function that stops listening. Only set for a terminal. */
+  onInterrupt?: (handler: () => void) => () => void;
 }
 
 const USAGE = `Usage: hub <command>
@@ -62,6 +65,7 @@ const USAGE = `Usage: hub <command>
   sync                                 upload your tracked projects (asks about new ones)
   auto on | off | status               sync automatically when a Claude Code session ends
   doctor                               check that this computer is set up and connected
+  setup --url URL [--code CODE]        set up this computer (run by the installer)
 
 Advanced:
   init [--url URL] [--token TOKEN]     save the server address and upload token
@@ -654,6 +658,8 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
     case '--version':
       io.out(HUB_VERSION);
       return 0;
+    case 'setup':
+      return setupCase(io, rest, () => dispatch(['sync'], io));
     case 'doctor':
       return doctorCase(io);
     case 'auto':
@@ -668,8 +674,6 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
   }
 }
 
-type Mark = '✓' | '!' | '✗' | '–';
-
 const DAY_MS = 86_400_000;
 const QUIET_DAYS = 3;
 
@@ -680,21 +684,6 @@ function ago(iso: string, now: number): string {
   const h = Math.round(min / 60);
   if (h < 24) return `${h} h ago`;
   return `${Math.round(h / 24)} d ago`;
-}
-
-/**
- * Runs `claude` for the doctor. `mcp list` checks every server, so it can take a few seconds. `auth status`
- * is run the way summaries are (no shell, the clean environment), so it reports what a summary run would see.
- */
-function runClaudeCommand(args: string[]): { found: boolean; output: string } {
-  if (args[0] === 'auth') {
-    const cmd = findClaude();
-    if (cmd === null) return { found: false, output: '' };
-    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 20_000, env: cleanEnv(process.env), windowsHide: true });
-    return { found: r.status === 0, output: `${r.stdout ?? ''}` };
-  }
-  const r = spawnSync('claude', args, { encoding: 'utf8', timeout: 20_000, shell: process.platform === 'win32', windowsHide: true });
-  return { found: r.status === 0, output: `${r.stdout ?? ''}` };
 }
 
 /**
@@ -775,24 +764,8 @@ async function doctorCase(io: Io): Promise<number> {
   else add('!', 'Claude Code', 'no context-hub connection. Add the connector to this Claude account (README: "Read from the hub in the Claude apps").');
 
   // Summaries: written here by Claude Code, on its sign-in.
-  const auth = runClaude(['auth', 'status', '--json']);
-  if (!auth.found) {
-    if (hubWritesSummaries) add('!', 'Summaries', "Claude Code is not installed; the hub will summarize this computer's sessions");
-    else if (!io.runClaude && claudeOnlyAsCmd()) add('✗', 'Summaries', 'Claude Code is installed only as a .cmd file, which summaries cannot use. Install the native claude.exe, then run: claude');
-    else add('✗', 'Summaries', 'Claude Code is not installed, so sessions wait here. Install it, then run: claude');
-  } else {
-    let loggedIn: boolean | null = null;
-    try {
-      loggedIn = (JSON.parse(auth.output) as { loggedIn?: boolean }).loggedIn === true;
-    } catch {
-      loggedIn = null;
-    }
-    const model = cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL;
-    const effort = cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT;
-    if (loggedIn === true) add('✓', 'Summaries', `Claude Code signed in, model ${model}, effort ${effort}`);
-    else if (loggedIn === false) add('✗', 'Summaries', 'Claude Code is not signed in, or its login expired. Run: claude auth login');
-    else add('!', 'Summaries', 'could not tell whether Claude Code is signed in. Run: claude');
-  }
+  const [summariesMark, summariesText] = summariesRow(io, cfg, hubWritesSummaries);
+  add(summariesMark, 'Summaries', summariesText);
   const waiting = loadState(io.hubDir).last_waiting;
   if (waiting) add('!', 'Waiting summaries', `${plural(waiting.count, 'session')}${waiting.reason ? `: ${waiting.reason}` : ''}`);
 

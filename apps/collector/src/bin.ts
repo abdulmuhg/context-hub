@@ -17,6 +17,14 @@ const io: Io = {
         process.stdout.write(line);
       }
     : undefined,
+  onInterrupt: (handler) => {
+    const onSigint = (): void => {
+      handler();
+      process.exit(130);
+    };
+    process.once('SIGINT', onSigint);
+    return () => void process.off('SIGINT', onSigint);
+  },
   ask: async (question) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
