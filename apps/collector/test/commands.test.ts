@@ -22,9 +22,9 @@ describe('SLASH_COMMANDS', () => {
     expect(SLASH_COMMANDS['hub-status.md']).toContain('hub auto status');
   });
 
-  it('/hub-sync runs plain hub sync with no project argument', () => {
+  it('/hub-sync runs plain hub sync, saying it is the slash command, with no project argument', () => {
     const text = SLASH_COMMANDS['hub-sync.md']!;
-    expect(text).toContain('Run `hub sync`.');
+    expect(text).toContain('Run `hub sync --trigger slash`.');
     expect(text).not.toContain('--project');
     expect(text).not.toContain('$ARGUMENTS');
   });

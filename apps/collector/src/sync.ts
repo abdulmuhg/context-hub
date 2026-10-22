@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { sep } from 'node:path';
-import { sanitizeSession, type HashedSession, type Llm, type PersonalConfig, type UploadDigest } from '@context-hub/core';
+import { sanitizeSession, type HashedSession, type Llm, type PersonalConfig, type Trigger, type UploadDigest } from '@context-hub/core';
 import { ALL_ADAPTERS, type Adapter, type RawSession, type SessionFile } from './adapters/index.js';
 import { ClaudeCodeLlm, findClaude } from './claude-llm.js';
 import {
@@ -47,6 +47,8 @@ export interface SyncOptions {
   all?: boolean;
   /** Called before each session or document that has to be read and possibly uploaded. */
   onProgress?: (p: SyncProgress) => void;
+  /** What started this run, shown beside it in the hub's activity log. */
+  trigger?: Trigger;
 }
 
 export interface SyncReport {
@@ -253,7 +255,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
       report.errors.push('No server address or upload token. Run `hub init` first.');
       return report;
     }
-    remote = { url: s.cfg.server_url, token, fetchImpl: opts.fetchImpl };
+    remote = { url: s.cfg.server_url, token, fetchImpl: opts.fetchImpl, ...(opts.trigger ? { trigger: opts.trigger } : {}) };
   }
   const llm: Llm | null = dryRun ? null : opts.llm !== undefined ? opts.llm : buildLlm(s.cfg);
   const budget = newBudget(opts.all);

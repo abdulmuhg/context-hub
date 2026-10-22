@@ -145,6 +145,19 @@ describe('runAutoChild', () => {
     expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
   });
 
+  it('tells the hub the run was started by the hook', async () => {
+    const triggers: (string | null)[] = [];
+    await runAutoChild({
+      ...opts,
+      fetchImpl: async (_input, init) => {
+        if (init?.method === 'PUT' || init?.method === 'POST') triggers.push(new Headers(init.headers).get('x-hub-trigger'));
+        return new Response('{}', { status: 200 });
+      },
+    });
+    expect(triggers.length).toBeGreaterThan(0);
+    expect(new Set(triggers)).toEqual(new Set(['auto']));
+  });
+
   it('exits without syncing while a fresh lock exists', async () => {
     writeRaw(join(hubDir, 'auto.lock'), new Date(T0.getTime() - 2 * 60 * 1000).toISOString());
     await runAutoChild(opts);

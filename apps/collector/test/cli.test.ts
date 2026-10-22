@@ -248,6 +248,26 @@ describe('hub sync', () => {
     expect(requests).toEqual([]);
   });
 
+  it('tells the hub what started the run: --trigger when given, else whether a terminal ran it', async () => {
+    const seen: (string | null)[] = [];
+    const real = io.fetchImpl!;
+    io.fetchImpl = async (input, init) => {
+      if (init?.method === 'POST') seen.push(new Headers(init.headers).get('x-hub-trigger'));
+      return real(input, init);
+    };
+    await run(['sync', '--trigger', 'slash'], io);
+    await run(['sync'], io);
+    io.interactive = true;
+    await run(['sync'], io);
+    expect(seen).toEqual(['slash', 'other', 'terminal']);
+  });
+
+  it('refuses a --trigger it does not know', async () => {
+    expect(await run(['sync', '--trigger', 'cron'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/--trigger must be one of: terminal, slash, auto, other/);
+    expect(requests).toEqual([]);
+  });
+
   it('exits 1 and prints the error when the server refuses', async () => {
     io.fetchImpl = async () => new Response('no', { status: 401 });
     expect(await run(['sync'], io)).toBe(1);

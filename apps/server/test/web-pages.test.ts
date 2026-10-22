@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Trigger } from '@context-hub/core';
 import { logActivity, type Action, type Direction } from '../src/activity.js';
 import { openDb, type Db } from '../src/db.js';
 import { markDigestPending, refuseDigest, saveDigest, saveProjectState } from '../src/digest-store.js';
@@ -45,7 +46,10 @@ function addSession(
 
 const projectId = (key: string): number => (db.prepare('SELECT id FROM projects WHERE key = ?').get(key) as { id: number }).id;
 
-const log = (at: string, over: Partial<{ direction: Direction; action: Action; projectKey: string | null; actor: string; detail: string | null }> = {}): void => {
+const log = (
+  at: string,
+  over: Partial<{ direction: Direction; action: Action; projectKey: string | null; actor: string; detail: string | null; trigger: Trigger }> = {},
+): void => {
   logActivity(
     db,
     {
@@ -55,6 +59,7 @@ const log = (at: string, over: Partial<{ direction: Direction; action: Action; p
       sessionRef: null,
       actor: over.actor ?? 'claude.ai',
       detail: over.detail === undefined ? null : over.detail,
+      trigger: over.trigger ?? null,
     },
     at,
   );
@@ -173,6 +178,19 @@ describe('the Activity page', () => {
     expect(html).toContain('3 sessions');
     expect(html).toContain('1 session');
     expect(html.match(/sessions?<\/span>/g)).toHaveLength(3);
+  });
+
+  it("names what started a computer's run under By, and keeps uploads started differently apart", async () => {
+    log(ago(MINUTE), { direction: 'in', action: 'sync', projectKey: null, actor: 'collector', detail: '2 uploaded', trigger: 'slash' });
+    log(ago(MINUTE + 10_000), { direction: 'in', action: 'upload', projectKey: JSONROOM, actor: 'collector', trigger: 'auto' });
+    log(ago(MINUTE + 20_000), { direction: 'in', action: 'upload', projectKey: JSONROOM, actor: 'collector', trigger: 'terminal' });
+    log(ago(MINUTE + 30_000), { direction: 'in', action: 'upload', projectKey: JSONROOM, actor: 'collector' });
+    const html = await page('/activity');
+    expect(html).toContain('collector<span class="sub">/hub-sync</span>');
+    expect(html).toContain('collector<span class="sub">auto sync</span>');
+    expect(html).toContain('collector<span class="sub">terminal</span>');
+    // Three uploads, three ways: none folds into another.
+    expect(html.match(/1 session<\/span>/g)).toHaveLength(3);
   });
 
   it('keeps the direction filter in the pager links', async () => {

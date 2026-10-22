@@ -39,6 +39,7 @@ describe('activity log', () => {
       sessionRef: null,
       actor: 'Claude',
       detail: 'b',
+      trigger: null,
     });
   });
 

@@ -283,7 +283,7 @@ the browser stays signed in for 30 days.
 | Page | What it shows |
 |---|---|
 | **Overview** | Healthy or Needs attention, counts, the last sync, the last backup (and whether it reached off-site storage), anything wrong right now, recent activity, and the running version. A **Model spend** card shows what the hub's own fallback key spent today (UTC day), the calls made today and the last 30 days, and the daily limit when one is set. `hub-admin usage [--days N]` gives the same per day, by kind and by project. |
-| **Activity** | Everything saved into the hub and read from it over the last 30 days, and by whom. |
+| **Activity** | Everything saved into the hub and read from it over the last 30 days, and by whom. Under a computer's name it says what started the upload: a terminal, `/hub-sync`, auto sync, or no terminal (anything else, such as a script). |
 | **Projects** | Every project and its summary; open one for its full briefing, recent sessions and notes, and its documents. |
 | **Sign-ins** | Every way in: Claude apps, tokens and browsers, each with a **Disconnect** that asks once and says what breaks. |
 

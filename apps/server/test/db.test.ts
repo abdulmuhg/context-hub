@@ -5,8 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { openDb, SCHEMA_VERSION, type Db } from '../src/db.js';
 import { projectsNeedingPage } from '../src/digest-store.js';
 
+/** Undoes migration 13, for a test that rewinds to an earlier version and runs the later ones again. */
+function unmigrate13(db: Db): void {
+  db.exec('ALTER TABLE activity DROP COLUMN trigger');
+}
+
 /** Puts a fresh database back to how migration 8 left it, so the later migrations run again. */
 function unmigrate9(db: Db): void {
+  unmigrate13(db);
   db.exec('DROP TABLE project_uploaders');
   db.exec('DROP TABLE page_skips');
   db.exec('DROP TABLE server_page_queue');
@@ -144,6 +150,7 @@ describe('migration 12', () => {
     row.run('Bash ls', 'tool', 1, 3);
     row.run('the digest', 'digest', 1, -1);
     row.run('left behind', 'message', 9, 0);
+    unmigrate13(old);
     old.pragma('user_version = 11');
     old.close();
     const db = openDb(path);
@@ -172,12 +179,27 @@ describe('migration 11', () => {
     upload.run('2026-10-02T00:00:00.000Z', 'p', 'pc');
     upload.run('2026-10-02T00:00:00.000Z', 'p', 'twin');
     old.exec('DROP TABLE project_uploaders');
+    unmigrate13(old);
     old.pragma('user_version = 10');
     old.close();
     const db = openDb(path);
     expect(db.prepare('SELECT project_key, token_id, last_upload_at FROM project_uploaders').all()).toEqual([
       { project_key: 'p', token_id: 1, last_upload_at: '2026-10-02T00:00:00.000Z' },
     ]);
+    db.close();
+  });
+});
+
+describe('migration 13', () => {
+  it('adds what started each run to the activity log, leaving older rows without one', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
+    const old = openDb(path);
+    unmigrate13(old);
+    old.prepare("INSERT INTO activity(at, direction, action, actor) VALUES ('2026-10-21T00:00:00Z', 'in', 'sync', 'pc')").run();
+    old.pragma('user_version = 12');
+    old.close();
+    const db = openDb(path);
+    expect(db.prepare('SELECT actor, trigger FROM activity').all()).toEqual([{ actor: 'pc', trigger: null }]);
     db.close();
   });
 });

@@ -322,8 +322,23 @@ describe('the activity log: uploads and deletes', () => {
         sessionRef: 'claude-code:s1',
         actor: 'collector',
         detail: 'Fix the login bug',
+        trigger: null,
       },
     ]);
+  });
+
+  it('records what started the upload when the collector says, and ignores a value it does not know', async () => {
+    const session = makeSession();
+    const path = `/api/sessions/${session.source}/${session.source_session_id}`;
+    const send = (s: ReturnType<typeof makeSession>, trigger: string) =>
+      call('PUT', path, {
+        token: ingest,
+        body: gz(s),
+        headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip', 'X-Hub-Trigger': trigger },
+      });
+    expect((await send(makeSession({ title: 'first' }), 'auto')).status).toBe(200);
+    expect((await send(makeSession({ title: 'second' }), 'cron')).status).toBe(200);
+    expect(rows().map((r) => r.trigger)).toEqual([null, 'auto']);
   });
 
   it('cuts a long title to 100 characters', async () => {
@@ -553,6 +568,15 @@ describe('POST /api/sync-runs', () => {
     const res = await report(ingest, good);
     expect(res.status).toBe(204);
     expect(latestSyncRun(db)).toMatchObject({ finishedAt: good.finished_at, uploaded: 2, unchanged: 5, errors: 0 });
+  });
+
+  it('logs what started the run beside it', async () => {
+    await call('POST', '/api/sync-runs', {
+      token: ingest,
+      body: JSON.stringify(good),
+      headers: { 'Content-Type': 'application/json', 'X-Hub-Trigger': 'slash' },
+    });
+    expect(listActivity(db, { limit: 1, offset: 0 })[0]).toMatchObject({ action: 'sync', trigger: 'slash' });
   });
 
   const skips = () => db.prepare('SELECT project_key, reason, at FROM page_skips ORDER BY project_key').all();

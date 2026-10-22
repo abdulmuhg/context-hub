@@ -45,3 +45,18 @@ export interface HashedSession extends Session {
 export type SessionInput = Omit<Session, 'title' | 'started_at' | 'last_activity_at'> & {
   title: string | null;
 };
+
+/**
+ * What started a collector run, sent with each upload so the dashboard can show it: a person in a
+ * terminal, the /hub-sync slash command, the hub auto hook when a Claude Code session ends, or
+ * anything else that ran hub without a terminal.
+ */
+export const TRIGGERS = ['terminal', 'slash', 'auto', 'other'] as const;
+export type Trigger = (typeof TRIGGERS)[number];
+
+/** The request header that carries the trigger. */
+export const TRIGGER_HEADER = 'x-hub-trigger';
+
+export function isTrigger(value: unknown): value is Trigger {
+  return typeof value === 'string' && (TRIGGERS as readonly string[]).includes(value);
+}
