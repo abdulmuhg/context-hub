@@ -34,7 +34,8 @@ RUN pnpm --filter @context-hub/server build
 # The collector's single-file bundle, which the server hands out as /hub.mjs.
 # Built before `deploy` below: after it, the workspace is in a production-only
 # state and any further pnpm command tries to reinstall (and fails without a TTY).
-RUN pnpm --filter @context-hub/collector build
+ARG HUB_VERSION=dev
+RUN HUB_VERSION=$HUB_VERSION pnpm --filter @context-hub/collector build
 
 # A self-contained copy of the server with production dependencies only,
 # real files instead of pnpm's symlinks. --legacy keeps the pre-pnpm-10

@@ -19,6 +19,7 @@ import {
   saveToken,
   type Config,
 } from './config.js';
+import { HUB_VERSION } from './version.js';
 import { runResummarize } from './resummarize.js';
 import { NO_CHECKOUT } from './git-check.js';
 import type { CommandRunner } from './git-facts.js';
@@ -630,6 +631,9 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       io.out(`Installed ${Object.keys(SLASH_COMMANDS).length} slash commands in ${dir}.`);
       return 0;
     }
+    case '--version':
+      io.out(HUB_VERSION);
+      return 0;
     case 'doctor':
       return doctorCase(io);
     case 'auto':

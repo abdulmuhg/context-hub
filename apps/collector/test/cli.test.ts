@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newProjects, run, type Io } from '../src/cli.js';
 import { SLASH_COMMANDS } from '../src/commands.js';
+import { HUB_VERSION } from '../src/version.js';
 import { UsageLimitError } from '../src/claude-llm.js';
 import { loadConfig, loadPersonal, loadToken, saveConfig, saveState, settingsFingerprint } from '../src/config.js';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
@@ -967,5 +968,13 @@ describe('hub resummarize', () => {
   it('is in the help text', async () => {
     await run([], io);
     expect(err.join('\n')).toMatch(/resummarize \[<project>\] \[--all\] \[--model-not ID\]/);
+  });
+});
+
+describe('hub --version', () => {
+  it('hub --version prints the version', async () => {
+    expect(await run(['--version'], io)).toBe(0);
+    expect(out).toEqual([HUB_VERSION]);
+    expect(HUB_VERSION).toBe('dev');
   });
 });
