@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, utimesSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { hookCommand } from '../src/auto.js';
@@ -194,8 +194,12 @@ describe('hub setup: picking projects', () => {
     answers = [];
     prompts = [];
     syncs = 0;
-    const seed = (file: string, id: string, cwd: string, at: string): void =>
-      writeJsonl(join(io.home, '.claude', 'projects', 'p', file), [session(id, cwd, at)]);
+    // A project's last activity is its newest file's modified time, so the files get the session's time.
+    const seed = (file: string, id: string, cwd: string, at: string): void => {
+      const path = join(io.home, '.claude', 'projects', 'p', file);
+      writeJsonl(path, [session(id, cwd, at)]);
+      utimesSync(path, new Date(at), new Date(at));
+    };
     seed('a1.jsonl', '11111111-1111-4111-8111-111111111111', '/work/alpha', '2026-01-01T10:00:00.000Z');
     seed('a2.jsonl', '11111111-1111-4111-8111-111111111112', '/work/alpha', '2026-01-02T10:00:00.000Z');
     seed('b1.jsonl', '22222222-2222-4222-8222-222222222222', '/work/beta', NOW);

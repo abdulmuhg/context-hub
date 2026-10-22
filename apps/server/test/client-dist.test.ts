@@ -239,9 +239,14 @@ describe('the PowerShell install script', () => {
   const script = installScriptPs1(HUB);
 
   it('never calls exit and uses no PowerShell 7 syntax', () => {
-    expect(script).not.toMatch(/\bexit\b/);
-    expect(script).not.toMatch(/&&|\|\||\?\?/);
-    expect(script).not.toMatch(/\?\s*[^:]+\s*:/);
+    // Comments may say anything; only the code has to run in Windows PowerShell 5.1.
+    const code = script
+      .split('\n')
+      .filter((l) => !/^\s*#/.test(l))
+      .join('\n');
+    expect(code).not.toMatch(/\bexit\b/);
+    expect(code).not.toMatch(/&&|\|\||\?\?/);
+    expect(code).not.toMatch(/\?\s*[^:]+\s*:/);
   });
 
   it('quotes an address that holds a quote', () => {

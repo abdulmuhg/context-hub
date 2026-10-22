@@ -140,8 +140,8 @@ export function parsePicks(answer: string, count: number): number[] | 'all' | nu
   if (text === '') return [];
   if (text === 'all') return 'all';
   const picks: number[] = [];
-  for (const part of text.split(/[s,]+/)) {
-    if (!/^d+$/.test(part)) return null;
+  for (const part of text.split(/[\s,]+/)) {
+    if (!/^\d+$/.test(part)) return null;
     const n = Number(part);
     if (n < 1 || n > count) return null;
     if (!picks.includes(n)) picks.push(n);

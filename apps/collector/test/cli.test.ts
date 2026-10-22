@@ -158,8 +158,7 @@ describe('hub login', () => {
     status = 401;
     answers = ['OLD-CODE'];
     expect(await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io)).toBe(1);
-    expect(err.join('
-')).toContain('Get a new line from Sign-ins → Add a computer and paste it.');
+    expect(err.join('\n')).toContain('Get a new line from Sign-ins → Add a computer and paste it.');
     expect(loadToken(io.hubDir)).toBe('old');
     expect(loadConfig(io.hubDir).label).toBeUndefined();
   });

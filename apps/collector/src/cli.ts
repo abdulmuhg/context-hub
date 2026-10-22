@@ -321,7 +321,7 @@ function docsCase(io: Io, args: string[]): number {
   throw new Fail(USAGE);
 }
 
-const trimUrl = (u: string): string => u.trim().replace(//+$/, '');
+const trimUrl = (u: string): string => u.trim().replace(/\/+$/, '');
 
 /**
  * Swaps a dashboard code for a token and saves it with the hub's name for this computer. Nothing is
