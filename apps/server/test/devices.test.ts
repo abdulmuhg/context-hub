@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../src/db.js';
-import { cleanDeviceName } from '../src/devices.js';
+import { cleanDeviceName, exchangeDeviceCode } from '../src/devices.js';
 import { createConnectCode } from '../src/oauth/store.js';
 import { AuthLimiter } from '../src/ratelimit.js';
-import { createToken, listTokens } from '../src/tokens.js';
+import { createToken, listTokens, verifyToken } from '../src/tokens.js';
 import { createWebSession } from '../src/web/session.js';
 import { makeSession, startServer } from './helpers.js';
 
@@ -123,5 +123,43 @@ describe('cleanDeviceName', () => {
   });
   it('has no angle brackets, equals signs or parentheses in the hostile case', () => {
     expect(cleanDeviceName('<img src=x onerror=alert(1)>')).not.toMatch(/[<>=()]/);
+  });
+});
+
+describe('exchangeDeviceCode retiring the old token', () => {
+  const at = NOW.toISOString();
+
+  it('retires the token it was given once the new one is issued', () => {
+    const old = createToken(db, 'mac', 'ingest', at).token;
+    const made = exchangeDeviceCode(db, { code: deviceCode(), name: 'mac', retire: old }, at);
+    expect(made).not.toBeNull();
+    expect(verifyToken(db, old, at)).toBeNull();
+    expect(verifyToken(db, made!.token, at)).not.toBeNull();
+  });
+
+  it('a wrong code retires nothing', () => {
+    const old = createToken(db, 'mac', 'ingest', at).token;
+    expect(exchangeDeviceCode(db, { code: 'AAAA-AAAA', name: 'mac', retire: old }, at)).toBeNull();
+    expect(verifyToken(db, old, at)).not.toBeNull();
+  });
+
+  it('an unknown or read-scope retire token is ignored', () => {
+    const read = createToken(db, 'reader', 'read', at).token;
+    expect(exchangeDeviceCode(db, { code: deviceCode(), name: 'mac', retire: read }, at)).not.toBeNull();
+    expect(verifyToken(db, read, at)).not.toBeNull();
+    expect(exchangeDeviceCode(db, { code: deviceCode(), name: 'mac', retire: 'chub_nope' }, at)).not.toBeNull();
+  });
+
+  it('/api/devices with a bearer retires it', async () => {
+    const old = createToken(db, 'mac', 'ingest', at).token;
+    const res = await exchange({ code: deviceCode(), name: 'mac' }, { Authorization: `Bearer ${old}` });
+    expect(res.status).toBe(200);
+    expect(verifyToken(db, old, at)).toBeNull();
+  });
+
+  it("/api/status names the token's label", async () => {
+    const { token } = createToken(db, 'my-mac', 'ingest', at);
+    const body = (await (await fetch(url + '/api/status', { headers: { Authorization: `Bearer ${token}` } })).json()) as { label: string };
+    expect(body.label).toBe('my-mac');
   });
 });

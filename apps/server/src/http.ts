@@ -236,9 +236,9 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
     }
 
     if (path === '/api/status' && method === 'GET') {
-      authorise(req, res, ['ingest', 'read']);
+      const credential = authorise(req, res, ['ingest', 'read']);
       const owed = (db.prepare('SELECT COUNT(*) AS n FROM digests WHERE summary_to_follow = 1').get() as { n: number }).n;
-      return send(res, 200, { ...status(db), server_summaries: deps.serverSummaries ?? false, pages_needed: projectsNeedingPage(db), summaries_owed: owed });
+      return send(res, 200, { ...status(db), server_summaries: deps.serverSummaries ?? false, pages_needed: projectsNeedingPage(db), summaries_owed: owed, ...(credential.kind === 'bearer' ? { label: credential.label } : {}) });
     }
 
     if (path === '/api/connect-code' && method === 'POST') {
@@ -255,7 +255,9 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       const body = await readJson(req);
       const r = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
       if (typeof r.code !== 'string') throw new HttpError(400, 'code must be a string');
-      const made = exchangeDeviceCode(db, { code: r.code, name: cleanDeviceName(r.name) }, now().toISOString());
+      // The computer's current token, if it sent one, is retired once the new one is issued. This route stays unauthenticated.
+      const retire = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1];
+      const made = exchangeDeviceCode(db, { code: r.code, name: cleanDeviceName(r.name), ...(retire ? { retire } : {}) }, now().toISOString());
       if (made === null) {
         limiter.recordFailure(address);
         return send(res, 401, { error: 'That code is wrong or has expired.' });

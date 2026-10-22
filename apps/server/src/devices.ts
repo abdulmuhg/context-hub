@@ -1,6 +1,6 @@
 import type { Db } from './db.js';
 import { consumeConnectCode } from './oauth/store.js';
-import { createToken } from './tokens.js';
+import { createToken, retireIngestToken } from './tokens.js';
 
 const MAX_NAME = 40;
 
@@ -11,15 +11,17 @@ export function cleanDeviceName(raw: unknown): string {
   return name === '' ? 'computer' : name;
 }
 
-/** Swaps a device code for a new upload token labelled with the computer's name. Null for a wrong, used or expired code. */
+/** Swaps a device code for a new upload token labelled with the computer's name. When `retire` is the computer's current upload token, it is revoked once the new one exists. Null for a wrong, used or expired code. */
 export function exchangeDeviceCode(
   db: Db,
-  input: { code: string; name: string },
+  input: { code: string; name: string; retire?: string },
   now: string,
 ): { token: string; label: string } | null {
   return db.transaction(() => {
     if (!consumeConnectCode(db, input.code, now, 'device')) return null;
     const label = cleanDeviceName(input.name);
-    return { token: createToken(db, label, 'ingest', now).token, label };
+    const made = { token: createToken(db, label, 'ingest', now).token, label };
+    if (input.retire) retireIngestToken(db, input.retire, now);
+    return made;
   })();
 }
