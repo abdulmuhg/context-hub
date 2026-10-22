@@ -19,6 +19,8 @@ const io: Io = {
     : undefined,
   onInterrupt: (handler) => {
     const onSigint = (): void => {
+      // The progress line has no newline yet; end it so the message starts on its own line.
+      if (process.stdout.isTTY) process.stdout.write('\n');
       handler();
       process.exit(130);
     };

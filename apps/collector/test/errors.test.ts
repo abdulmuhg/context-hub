@@ -13,6 +13,10 @@ describe('plainReason', () => {
     expect(plainReason(withCause('EAI_AGAIN'))).toBe("the address wasn't found");
     expect(plainReason(withCause('ECONNREFUSED'))).toBe('the connection was refused');
     expect(plainReason(withCause('ECONNRESET'))).toBe('the connection was dropped');
+    expect(plainReason(withCause('ETIMEDOUT'))).toBe("it didn't answer in time");
+    expect(plainReason(withCause('UND_ERR_CONNECT_TIMEOUT'))).toBe("it didn't answer in time");
+    expect(plainReason(withCause('ENETUNREACH'))).toBe('the network is unreachable');
+    expect(plainReason(withCause('EHOSTUNREACH'))).toBe('the network is unreachable');
     expect(plainReason(named('TimeoutError'))).toBe("it didn't answer in time");
     expect(plainReason(named('AbortError'))).toBe("it didn't answer in time");
     for (const code of ['CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT']) {
@@ -43,6 +47,21 @@ describe('friendlyMessage', () => {
     for (const status of [401, 403]) {
       expect(friendlyMessage(new HttpStatusError('GET', '/api/status', status), dir)).toBe(`This computer was disconnected from the hub. ${NEW_LINE}`);
     }
+  });
+
+  it('says the hub is restarting on a 5xx, and the address is wrong on a 404 from status or devices', () => {
+    for (const status of [500, 502, 503]) {
+      expect(friendlyMessage(new HttpStatusError('GET', '/api/status', status), dir)).toBe(
+        "The hub isn't answering properly right now (it may be restarting). Try again in a minute.",
+      );
+    }
+    for (const path of ['/api/status', '/api/devices']) {
+      expect(friendlyMessage(new HttpStatusError('GET', path, 404), dir)).toBe(
+        "That address answered, but it doesn't look like a context-hub. Check the address, then try again.",
+      );
+    }
+    // A 404 for one project or session means that thing is not on the hub, not that the address is wrong.
+    expect(friendlyMessage(new HttpStatusError('DELETE', '/api/projects/x', 404), dir)).toMatch(/^Something went wrong: /);
   });
 
   it('keeps the old messages of the typed errors', () => {

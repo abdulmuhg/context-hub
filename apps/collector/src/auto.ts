@@ -13,9 +13,12 @@ export function hookCommand(nodePath: string, bundlePath: string): string {
   return `"${nodePath}" "${bundlePath}"${HOOK_SUFFIX}`;
 }
 
-/** True for a hook that runs our sync, whatever the paths are: `"node" "bundle" sync --auto`. */
+/**
+ * True for a hook that runs our sync, wherever node and the bundle are: `"node" "…/hub.mjs" sync --auto`, or
+ * `…/bin.js` for a hook written from a clone's build. Another tool's `sync --auto` hook is never ours.
+ */
 export function isOurHook(command: unknown): boolean {
-  return typeof command === 'string' && /^"[^"]+" "[^"]+" sync --auto$/.test(command);
+  return typeof command === 'string' && /^"[^"\r\n]+" "[^"\r\n]*[\\/](?:hub\.mjs|bin\.js)" sync --auto$/.test(command);
 }
 
 function notJson(hint: string): Error {

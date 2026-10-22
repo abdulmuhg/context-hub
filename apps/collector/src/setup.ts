@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -38,9 +38,10 @@ export async function setupCase(io: Io, args: string[], sync: Sync): Promise<num
   const rows: Row[] = [];
   const bundle = io.bundlePath ?? resolve(process.argv[1] ?? '');
 
-  const configPath = join(io.hubDir, 'config.json');
-  const firstInstall = !existsSync(configPath);
   const before = loadConfig(io.hubDir);
+  // A first install is the first run that connects: a run without a code (curl … | sh, then hub login)
+  // must not use it up, or auto sync would never be turned on.
+  const firstInstall = !before.server_url || !loadToken(io.hubDir);
 
   // What was installed, and what changed.
   if (before.setup_version === undefined) rows.push(['✓', `hub ${HUB_VERSION} installed in ${dirname(bundle)}`]);
@@ -69,6 +70,12 @@ export async function setupCase(io: Io, args: string[], sync: Sync): Promise<num
       const { label, previousUrl } = await connectWithCode(io, url, code, before.label ?? host);
       rows.push(['✓', `Connected to ${url} as "${label}"${previousUrl ? ` (was ${trimUrl(previousUrl)})` : ''}`]);
       connected = true;
+      try {
+        const token = loadToken(io.hubDir);
+        if (token) hubWritesSummaries = (await getStatus({ url, token, fetchImpl: io.fetchImpl })).server_summaries === true;
+      } catch {
+        // Only the wording of the summaries row depends on it.
+      }
     } catch (e) {
       rows.push(['✗', friendlyMessage(e, io.hubDir)]);
     }

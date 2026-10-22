@@ -39,6 +39,8 @@ export function plainReason(e: unknown): string {
   if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return "the address wasn't found";
   if (code === 'ECONNREFUSED') return 'the connection was refused';
   if (code === 'ECONNRESET') return 'the connection was dropped';
+  if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') return "it didn't answer in time";
+  if (code === 'ENETUNREACH' || code === 'EHOSTUNREACH') return 'the network is unreachable';
   if (err?.name === 'TimeoutError' || err?.name === 'AbortError') return "it didn't answer in time";
   if (/^(CERT_|ERR_TLS|UNABLE_TO_VERIFY|SELF_SIGNED|DEPTH_ZERO)/.test(code)) return "its certificate couldn't be checked";
   return err?.message ?? String(e);
@@ -56,6 +58,11 @@ export function friendlyMessage(e: unknown, hubDir: string, now: Date = new Date
   if (e instanceof HttpStatusError) {
     if (e.status === 401 || e.status === 403) return `This computer was disconnected from the hub. ${NEW_LINE}`;
     if (e.status === 429) return 'Too many wrong codes from this address. Wait 15 minutes, then try again.';
+    // Only these two are on every hub, so a 404 means the address is wrong; elsewhere it means something else.
+    if (e.status === 404 && (e.path === '/api/status' || e.path === '/api/devices')) {
+      return "That address answered, but it doesn't look like a context-hub. Check the address, then try again.";
+    }
+    if (e.status >= 500) return "The hub isn't answering properly right now (it may be restarting). Try again in a minute.";
   }
   const message = e instanceof Error ? e.message : String(e);
   const log = join(hubDir, 'error.log');

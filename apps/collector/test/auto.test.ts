@@ -76,7 +76,7 @@ describe('autoOn / autoOff', () => {
     expect(read(path)).toEqual({});
   });
 
-  const OLD = '"C:\node.exe" "C:\src\context-hub\apps\collector\dist\bin.js" sync --auto';
+  const OLD = '"C:\\node.exe" "C:\\src\\context-hub\\apps\\collector\\dist\\bin.js" sync --auto';
 
   it('autoOn over a hook pointing at an old clone repoints it instead of adding a second', () => {
     writeRaw(path, JSON.stringify({ hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: OLD, timeout: 10 }] }] } }));
@@ -108,7 +108,12 @@ describe('autoOn / autoOff', () => {
   });
 
   it('recognises a hook whose paths contain spaces', () => {
-    expect(isOurHook('"C:\Program Files\nodejs\node.exe" "C:\Users\John Smith\AppData\Local\context-hub\hub.mjs" sync --auto')).toBe(true);
+    expect(isOurHook('"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\John Smith\\AppData\\Local\\context-hub\\hub.mjs" sync --auto')).toBe(true);
+  });
+
+  it("another tool's hook in the same shape is not ours", () => {
+    expect(isOurHook('"/usr/bin/python3" "/opt/notes/notes.py" sync --auto')).toBe(false);
+    expect(isOurHook('"x" "y" sync --auto')).toBe(false);
   });
 
   it("other people's hooks are never touched", () => {

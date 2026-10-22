@@ -19,7 +19,8 @@ export function runClaudeCommand(args: string[]): { found: boolean; output: stri
     const cmd = findClaude();
     if (cmd === null) return { found: false, output: '' };
     const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 20_000, env: cleanEnv(process.env), windowsHide: true });
-    return { found: r.status === 0, output: `${r.stdout ?? ''}` };
+    // Found means it ran. A signed-out Claude Code may exit non-zero, and must not read as not installed.
+    return { found: r.error === undefined, output: `${r.stdout ?? ''}` };
   }
   const r = spawnSync('claude', args, { encoding: 'utf8', timeout: 20_000, shell: process.platform === 'win32', windowsHide: true });
   return { found: r.status === 0, output: `${r.stdout ?? ''}` };

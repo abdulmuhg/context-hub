@@ -187,7 +187,20 @@ describe('the install script', () => {
     chmodSync(join(ahead, 'hub'), 0o755);
     run([], env({}, `${ahead}:`));
     expect(existsSync(join(ahead, 'hub'))).toBe(true);
-    expect(ranLog()[0]).toContain(`--warn Another hub at ${ahead}/hub comes first on PATH; this one is at ${home}/.local/bin/hub`);
+    expect(ranLog()[0]).toContain(
+      `--warn Another program called hub is at ${ahead}/hub. New terminals run this one instead (${home}/.local/bin/hub); use the full path for the other.`,
+    );
+  });
+
+  it.skipIf(!posix)('never renames its own launcher when PATH spells the folder differently', () => {
+    const { home, run, env, ranLog } = sandbox();
+    // A trailing slash makes "$dir/hub" a different string for the same file.
+    run([], env({}, `${home}/.local/bin/:`));
+    run([], env({}, `${home}/.local/bin/:`));
+    expect(existsSync(join(home, '.local', 'bin', 'hub'))).toBe(true);
+    expect(existsSync(join(home, '.local', 'bin', 'hub.old'))).toBe(false);
+    expect(ranLog()).toHaveLength(2);
+    expect(ranLog().join('\n')).not.toContain('Renamed');
   });
 
   const hasSetsid = posix && spawnSync('setsid', ['--version']).status === 0;
@@ -256,16 +269,42 @@ describe('the PowerShell install script', () => {
   });
 
   it('quotes a LOCALAPPDATA with spaces in hub.cmd', () => {
-    expect(script).toContain(`'node "' + $bundle + '" %*'`);
+    // hub.cmd finds the bundle from its own folder, so no profile path is ever written into it.
+    expect(script).toContain(`'node "%~dp0..\\hub.mjs" %*'`);
+    expect(script).toContain('[Text.Encoding]::ASCII');
     expect(script).toContain("Join-Path $env:LOCALAPPDATA 'context-hub'");
     expect(script).toContain("Join-Path $base 'bin'");
     expect(script).toContain("Join-Path $bin 'hub.cmd'");
     expect(script).toContain('& node $bundle setup @setupArgs');
   });
 
-  it('puts the bin folder first in the user PATH only once', () => {
-    expect(script).toContain("$rest = @($parts | Where-Object { $_.TrimEnd('\\') -ne $bin.TrimEnd('\\') })");
+  it.runIf(process.platform === 'win32')('the hub.cmd it writes runs the bundle from a folder with spaces and accents', () => {
+    const base = join(mkdtempSync(join(tmpdir(), 'ps-')), 'José Smith', 'context-hub');
+    mkdirSync(join(base, 'bin'), { recursive: true });
+    writeFileSync(join(base, 'hub.mjs'), "console.log(process.argv.slice(2).join(' '));\n");
+    writeFileSync(join(base, 'bin', 'hub.cmd'), '@echo off\r\nnode "%~dp0..\\hub.mjs" %*\r\n', 'ascii');
+    const out = execFileSync('cmd.exe', ['/d', '/c', join(base, 'bin', 'hub.cmd'), 'setup', '--url', 'https://hub.test'], { encoding: 'utf8' });
+    expect(out.trim()).toBe('setup --url https://hub.test');
+  });
+
+  it.runIf(process.platform === 'win32')('parses in Windows PowerShell 5.1 with no errors', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'ps-')), 'install.ps1');
+    // With a byte-order mark, as 5.1 would need to read a saved copy as UTF-8.
+    writeFileSync(file, '﻿' + script);
+    const command = `$e = $null; [System.Management.Automation.Language.Parser]::ParseFile('${file}', [ref]$null, [ref]$e) | Out-Null; $e.Count`;
+    expect(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8' }).trim()).toBe('0');
+  });
+
+  it('is plain ASCII, so a console in any code page shows it and a saved copy still parses', () => {
+    expect(script).not.toMatch(/[^\x00-\x7F]/);
+  });
+
+  it('puts the bin folder first in the user PATH only once, keeping %VARS% unexpanded', () => {
+    expect(script).toContain('[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames');
+    expect(script).toContain('[Microsoft.Win32.RegistryValueKind]::ExpandString');
+    expect(script).toContain("[Environment]::ExpandEnvironmentVariables($_).TrimEnd('\\') -ne $bin.TrimEnd('\\')");
     expect(script).toContain('$newUser = (@($bin) + $rest) -join');
+    expect(script).not.toContain("SetEnvironmentVariable('Path'");
   });
 
   it('reads the code from the environment, not from the URL', () => {

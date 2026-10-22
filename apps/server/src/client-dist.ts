@@ -79,7 +79,7 @@ case ":$PATH:" in
   *":$BIN:"*) ;;
   *) need_path=1 ;;
 esac
-if [ "$need_path" = 1 ] || { [ -n "$first" ] && [ "$first" != "$BIN/hub" ]; }; then
+if [ "$need_path" = 1 ] || { [ -n "$first" ] && ! [ "$first" -ef "$BIN/hub" ]; }; then
   case "$\{SHELL:-}" in
     */zsh) profile="$HOME/.zshrc" ;;
     */bash) profile="$HOME/.bashrc" ;;
@@ -94,12 +94,13 @@ if [ "$need_path" = 1 ] || { [ -n "$first" ] && [ "$first" != "$BIN/hub" ]; }; t
   fi
 fi
 
-# 4. Old launchers of ours that would win are renamed, not deleted, so they can be put back.
+# 4. Old launchers of ours are renamed, not deleted, so they can be put back. -ef compares the files
+# themselves, so a PATH entry spelt differently (a trailing slash, a symlinked home) is still ours.
 old_ifs=$IFS
 IFS=:
 for dir in $PATH; do
   IFS=$old_ifs
-  if [ -n "$dir" ] && [ -f "$dir/hub" ] && [ "$dir/hub" != "$BIN/hub" ]; then
+  if [ -n "$dir" ] && [ -f "$dir/hub" ] && ! [ "$dir/hub" -ef "$BIN/hub" ]; then
     other="$dir/hub"
     if grep -qE 'context-hub|collector/dist/bin\\.js|hub\\.mjs' "$other" 2>/dev/null; then
       if mv -f "$other" "$other.old" 2>/dev/null; then
@@ -108,7 +109,7 @@ for dir in $PATH; do
         set -- "$@" --warn "Couldn't rename the old hub at $other. This one is at $BIN/hub"
       fi
     elif [ "$other" = "$first" ]; then
-      set -- "$@" --warn "Another hub at $other comes first on PATH; this one is at $BIN/hub"
+      set -- "$@" --warn "Another program called hub is at $other. New terminals run this one instead ($BIN/hub); use the full path for the other."
     fi
   fi
   IFS=:
@@ -155,7 +156,7 @@ const PS_INSTALLER = String.raw`& {
   if ($major -lt 22) {
     Write-Host ('context-hub needs Node 22 or newer (found: ' + $found + ').')
     Write-Host 'Install it with: winget install OpenJS.NodeJS.LTS'
-    Write-Host 'then open a new terminal and paste the same line again. If more than 10 minutes have passed, get a new line from Sign-ins → Add a computer.'
+    Write-Host 'then open a new terminal and paste the same line again. If more than 10 minutes have passed, get a new line from Sign-ins > Add a computer.'
     return
   }
 
@@ -174,17 +175,18 @@ const PS_INSTALLER = String.raw`& {
   try {
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
     Invoke-WebRequest -UseBasicParsing -Uri $bundleUrl -OutFile $partial
-    Move-Item -Force -Path $partial -Destination $bundle
+    Move-Item -Force -LiteralPath $partial -Destination $bundle
   } catch {
-    Remove-Item $partial -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $partial -ErrorAction SilentlyContinue
     Write-Host ("Couldn't download hub from " + $bundleUrl + ". Nothing was changed. Paste the line again.")
     return
   }
 
-  # The launcher: hub.cmd runs the bundle with node.
+  # The launcher: hub.cmd runs the bundle next to its own folder. No path is written into it, so a profile
+  # folder with spaces or non-ASCII letters (cmd reads batch files in the console code page) cannot break it.
   try {
-    $cmd = '@echo off' + [Environment]::NewLine + 'node "' + $bundle + '" %*' + [Environment]::NewLine
-    [IO.File]::WriteAllText($launcher, $cmd, [Text.Encoding]::Default)
+    $cmd = '@echo off' + [Environment]::NewLine + 'node "%~dp0..\hub.mjs" %*' + [Environment]::NewLine
+    [IO.File]::WriteAllText($launcher, $cmd, [Text.Encoding]::ASCII)
   } catch {
     Write-Host ("Couldn't write " + $launcher + ". Nothing else was changed. Paste the line again.")
     return
@@ -194,16 +196,22 @@ const PS_INSTALLER = String.raw`& {
   $warns = @()
 
   # 3. PATH: the install folder goes first in the user's PATH (not the machine's), and in this session.
-  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  # The registry value is read and written as it is stored, so entries like %USERPROFILE%\... stay unexpanded.
+  $userPath = ''
   try {
-    $parts = @()
-    if ($userPath) { $parts = @($userPath -split ';' | Where-Object { $_ -ne '' }) }
-    $rest = @($parts | Where-Object { $_.TrimEnd('\') -ne $bin.TrimEnd('\') })
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    $userPath = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $parts = @($userPath -split ';' | Where-Object { $_ -ne '' })
+    $rest = @($parts | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ne $bin.TrimEnd('\') })
     $newUser = (@($bin) + $rest) -join ';'
     if ($newUser -ne $userPath) {
-      [Environment]::SetEnvironmentVariable('Path', $newUser, 'User')
+      $key.SetValue('Path', $newUser, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+      # Setting and clearing a variable through .NET tells Explorer to reread the environment for new windows.
+      [Environment]::SetEnvironmentVariable('CONTEXT_HUB_PATH_CHANGED', '1', 'User')
+      [Environment]::SetEnvironmentVariable('CONTEXT_HUB_PATH_CHANGED', $null, 'User')
       $notes += ('Added ' + $bin + ' to the front of your PATH (user)')
     }
+    $key.Close()
     $userPath = $newUser
   } catch {
     $warns += ("Couldn't update your PATH. Run hub by its full path: " + $launcher)
@@ -231,11 +239,11 @@ const PS_INSTALLER = String.raw`& {
     }
   }
 
-  # Which hub would a new window run? The machine's PATH comes before the user's.
-  $order = @(([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $userPath) -split ';' | Where-Object { $_ -ne '' })
+  # Which hub would a new window run? The machine's PATH comes before the user's, and an .exe or .bat counts too.
+  $order = @(([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::ExpandEnvironmentVariables($userPath)) -split ';' | Where-Object { $_ -ne '' })
   $winner = $null
   foreach ($dir in $order) {
-    foreach ($name in $names) {
+    foreach ($name in @('hub.exe', 'hub.bat', 'hub.cmd', 'hub.ps1')) {
       $file = Join-Path $dir $name
       if ($winner -eq $null -and (Test-Path -LiteralPath $file -PathType Leaf)) { $winner = $file }
     }

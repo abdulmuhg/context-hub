@@ -72,6 +72,15 @@ describe('hub setup', () => {
     expect(JSON.parse(readFileSync(settingsPath(), 'utf8')).hooks.SessionEnd[0].hooks[0].command).toBe(hook());
   });
 
+  it('a run without a code, then one with a code, still counts as the first install and turns auto sync on', async () => {
+    expect(await setup()).toBe(0);
+    expect(out).toContain('! Not connected yet. Paste the line from Sign-ins → Add a computer, or run: hub login');
+    out = [];
+    expect(await setup('--code', 'ABCD-EFGH')).toBe(0);
+    expect(out).toContain('✓ Auto sync on (runs when a Claude Code session ends)');
+    expect(JSON.parse(readFileSync(settingsPath(), 'utf8')).hooks.SessionEnd[0].hooks[0].command).toBe(hook());
+  });
+
   it('a re-run keeps the name, leaves auto sync off when it was off, and says already current', async () => {
     saveConfig(io.hubDir, { ...loadConfig(io.hubDir), server_url: 'https://hub.test', label: 'MRC', setup_version: 'dev' });
     saveToken(io.hubDir, 'chub_old');
