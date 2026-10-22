@@ -16,7 +16,7 @@
 - The PowerShell installer runs in Windows PowerShell 5.1: no `&&`, `||`, `??`, ternaries or other PowerShell 7 syntax. It must not need the execution policy changed, and it must never call `exit`, because it runs inside the user's session through `iex`.
 - The one-time code never appears in a URL or a server log. `/install` and `/install.ps1` take no query string.
 - No new runtime dependencies in the collector bundle.
-- `hub login` (with and without prompts), `hub install-commands` and `hub auto on|off|status` keep their behaviour.
+- `hub login` (with and without prompts), `hub install-commands` and `hub auto on|off|status` keep their behaviour, with one deliberate change: `hub auto off` removes every context-hub hook, not only the one pointing at this bundle. There must only ever be one, and two would start two syncs.
 - Every user-facing failure says what happened and the one thing to do next. No stack traces or raw HTTP codes on screen.
 - Mac/Linux line: `curl -fsSL <HUB>/install | sh -s -- --code <CODE>`
 - Windows line: `$env:HUB_CODE='<CODE>'; irm <HUB>/install.ps1 | iex`
@@ -193,10 +193,10 @@
 
     Then `config.setup_version === 'dev'`, and the exchange body's `name` is `io.hostname()`.
   - `a re-run keeps the name, leaves auto sync off when it was off, and says already current`. Use `setup_version: 'dev'` and `label: 'MRC'`, with auto off. Expect the rows `✓ hub dev already current`, `– Auto sync off (turn on with: hub auto on)`, and a request body `name` of `'MRC'`.
-  - `an update says from and to`: `setup_version: '2026.10.01-aaaaaaa'` gives `✓ hub updated from 2026.10.01-aaaaaaa to dev`.
+  - `an update says from and to`: `setup_version: '2026.10.01-aaaaaaa'` gives `✓ hub dev, updated from 2026.10.01-aaaaaaa`. Every version row starts `✓ hub <version>`.
   - `a re-run repoints an old hook even when it says nothing else about auto`.
   - `without a code and already connected it checks the token and keeps it`: `✓ Connected to https://hub.test as "MRC"`, with no `/api/devices` request.
-  - `without a code and not connected it says how to connect and returns 1`: `✗ Not connected. Paste the line from Sign-ins → Add a computer, or run: hub login`. The slash commands are still installed.
+  - `without a code and not connected it says how to connect and returns 0`: `! Not connected yet. Paste the line from Sign-ins → Add a computer, or run: hub login`. The slash commands are still installed. This is the documented two-step path (`curl … | sh`, then `hub login`), so it is not a failure. ✗ and exit 1 are kept for a failed connection: a bad code, an unreachable hub, or a revoked token.
   - `a revoked token without a code says the computer was disconnected` (Review Focus 2): status answers 401, and the row is `✗ This computer was disconnected from the hub. Get a new line from Sign-ins → Add a computer and paste it.`
   - `a new hub with a code says which hub it was connected to`: `✓ Connected to https://new.test as "my-mac" (was https://old.test)`.
   - `no Claude Code skips auto sync and says why`: `– Auto sync skipped: Claude Code isn't installed`.
@@ -299,8 +299,10 @@ Behaviour to pin (the whole script inside `& { … }`, using `return` and never 
   - `serves /install.ps1 with the address filled in`: status, headers, and a body containing `& {`, `'https://hub.test/hub.mjs'` and `Remove-Item Env:HUB_CODE`.
   - `the script never calls exit and uses no PowerShell 7 syntax`: the body does not match `/\bexit\b/`, `/&&|\|\||\?\?/`, or `/\?\s*[^:]+\s*:/`.
   - `quotes an address that holds a quote`: a single quote becomes `''` inside PowerShell single quotes.
-  - `quotes a LOCALAPPDATA with spaces in hub.cmd` (Review Focus 4), `it.runIf(process.platform === 'win32')`: run the script with `powershell.exe -NoProfile -Command`, with `LOCALAPPDATA` set to a temp dir containing a space, `HUB_CODE` set, and a fake `Invoke-WebRequest` defined before the script that writes a stub bundle recording its arguments. Expect `hub.cmd` to exist and running it to record `setup --url https://hub.test --code ABCD-EFGH`. Point the user PATH change at a test-only override: the script reads `$env:CONTEXT_HUB_TEST_USER_PATH_FILE` when set, so the test never writes the real registry.
-  - `is idempotent`: run twice; the bin folder appears once in the recorded user PATH.
+  - `quotes a LOCALAPPDATA with spaces in hub.cmd` (Review Focus 4): the line that writes `hub.cmd` puts the bundle path in double quotes (`node "<path>" %*`), and every path the script builds comes from `Join-Path` on `$env:LOCALAPPDATA` and is used quoted.
+  - `puts the bin folder first in the user PATH only once`: the PATH step filters out existing copies of the bin folder before prepending it (a text assertion on that expression).
+
+  The script is not run automatically, because running it would write the real user PATH. It carries no test-only switches. Its real run is Task 11 step 5.
 - [ ] **Step 2: Run them and confirm they fail.**
 - [ ] **Step 3: Implement `installScriptPs1` and the route.**
 - [ ] **Step 4: Run them and confirm they pass** on this Windows PC (`pnpm vitest run apps/server/test/client-dist.test.ts`).
@@ -334,7 +336,8 @@ Behaviour to pin (the whole script inside `& { … }`, using `return` and never 
 - [ ] **Step 1: Rewrite "Install and log in"** as one path per OS: open Add a computer, paste the line. Keep `hub login` as the manual fallback. Remove the clone-and-`hub.cmd` Windows steps. In "Sync automatically", say auto sync is on after a first install. In Status, move "Windows installer" to Built.
 - [ ] **Step 2: Run the full gates.** `pnpm typecheck && pnpm test`. Expected: clean, with no tests deleted or skipped that were running before.
 - [ ] **Step 3: Commit.** `git commit -m "README: one line per OS to set up a computer"`
-- [ ] **Step 4: Real run on this Windows PC,** after the branch is deployed (owner's go-ahead). Get a code from Add a computer, paste the Windows line in a new PowerShell window, and check:
+- [ ] **Step 4: Open the PR, and stop until it is merged and deployed.** Deploys run only from `main`, and the installers are served by the deployed hub, so steps 5 to 7 can't happen on the branch. Don't fake them with a local server. Wait for the owner to merge and for the deploy to finish.
+- [ ] **Step 5: Real run on this Windows PC,** against the live hub. Get a code from Add a computer, paste the Windows line in a new PowerShell window, and check:
   - the checklist
   - `%APPDATA%\npm\hub.cmd` became `hub.cmd.old`
   - `Get-Command hub` points at `%LOCALAPPDATA%\context-hub\bin\hub.cmd` in a **new** window
@@ -342,5 +345,5 @@ Behaviour to pin (the whole script inside `& { … }`, using `return` and never 
   - Sign-ins shows one live token for this computer
 
   Paste a second line to check that re-pasting retires the old token.
-- [ ] **Step 5: Real run on the Mac.** Repeat with the macOS line, and check the `.zshrc` line and the checklist.
-- [ ] **Step 6:** Note any deviations in `docs/superpowers/plans/fresh-install-deviations.md`, commit, and close issue #6 in the PR description.
+- [ ] **Step 6: Real run on the Mac.** Repeat with the macOS line, and check the `.zshrc` line and the checklist.
+- [ ] **Step 7:** Note any deviations in `docs/superpowers/plans/fresh-install-deviations.md` in a follow-up commit to `main` through a small PR. Close issue #6 once both real runs pass.
