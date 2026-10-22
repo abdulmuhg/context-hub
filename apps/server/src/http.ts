@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
-import { stripSecrets, type DigestBody, type HashedSession, type UploadDigest } from '@context-hub/core';
+import { isTrigger, stripSecrets, TRIGGER_HEADER, type DigestBody, type HashedSession, type Trigger, type UploadDigest } from '@context-hub/core';
 import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun, recordUploader, type PageLeft } from './activity.js';
 import { installScript } from './client-dist.js';
 import type { Db } from './db.js';
@@ -62,6 +62,12 @@ export function send(res: ServerResponse, statusCode: number, body: unknown): vo
   drainBody(res);
   res.writeHead(statusCode, headers);
   res.end(req.method === 'HEAD' ? undefined : text);
+}
+
+/** What started the collector's run, from its header. Anything unknown is treated as not said. */
+function triggerOf(req: IncomingMessage): Trigger | null {
+  const value = req.headers[TRIGGER_HEADER];
+  return isTrigger(value) ? value : null;
 }
 
 function decodePart(value: string): string {
@@ -277,7 +283,11 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         ...(r.pages_left === undefined ? {} : { pagesLeft: pagesLeft(r.pages_left) }),
       };
       // Only a bearer credential reaches here (ingest scope), so it always carries a token id.
-      recordSyncRun(db, { tokenId: (credential as Extract<Credential, { kind: 'bearer' }>).id, ...run }, now().toISOString());
+      recordSyncRun(
+        db,
+        { tokenId: (credential as Extract<Credential, { kind: 'bearer' }>).id, ...run, trigger: triggerOf(req) },
+        now().toISOString(),
+      );
       res.writeHead(204);
       return void res.end();
     }
@@ -333,7 +343,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         }
         logActivitySafe(
           db,
-          { direction: 'in', action: 'delete', projectKey: owner?.key ?? null, sessionRef: null, actor, detail: null },
+          { direction: 'in', action: 'delete', projectKey: owner?.key ?? null, sessionRef: null, actor, detail: null, trigger: triggerOf(req) },
           now().toISOString(),
           log,
         );
@@ -361,6 +371,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
             sessionRef: `${source}:${id}`,
             actor,
             detail: session.title.slice(0, 100),
+            trigger: triggerOf(req),
           },
           now().toISOString(),
           log,
@@ -433,7 +444,12 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       } catch (e) {
         log(`activity log failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-      logActivitySafe(db, { direction: 'in', action: 'delete', projectKey: null, sessionRef: null, actor, detail: null }, now().toISOString(), log);
+      logActivitySafe(
+        db,
+        { direction: 'in', action: 'delete', projectKey: null, sessionRef: null, actor, detail: null, trigger: triggerOf(req) },
+        now().toISOString(),
+        log,
+      );
       return send(res, 200, { deleted });
     }
 

@@ -111,6 +111,14 @@ const WHAT: Record<Action, string> = {
   get_session: 'read session',
 };
 
+/** How the By column names what started a computer's run (core TRIGGERS). */
+const TRIGGER_LABEL: Record<string, string> = {
+  terminal: 'terminal',
+  slash: '/hub-sync',
+  auto: 'auto sync',
+  other: 'no terminal',
+};
+
 /** One line of the table: a row, and how many uploads were folded into it. */
 interface ActivityItem {
   row: ActivityRow;
@@ -119,11 +127,11 @@ interface ActivityItem {
   oldestAt: string;
 }
 
-/** Uploads to one project by one actor less than this apart are one line. */
+/** Uploads to one project by one actor, started the same way, less than this apart are one line. */
 const COLLAPSE_MS = 2 * 60_000;
 
 /**
- * Folds a run of consecutive `upload` rows for the same project and actor into one line.
+ * Folds a run of consecutive `upload` rows for the same project, actor and trigger into one line.
  * Rows arrive newest first, so each is measured against the oldest one folded in so far;
  * a different project, actor or action, or a longer gap, starts a new line. Only the rows
  * on the page being rendered are folded, never across a page boundary.
@@ -139,6 +147,7 @@ function collapse(rows: ActivityRow[]): ActivityItem[] {
       last.row.action === 'upload' &&
       last.row.projectKey === row.projectKey &&
       last.row.actor === row.actor &&
+      (last.row.trigger ?? null) === (row.trigger ?? null) &&
       gap >= 0 &&
       gap <= COLLAPSE_MS
     ) {
@@ -169,6 +178,9 @@ function activityRow(item: ActivityItem): string {
       : r.action === 'upload' && item.sessions > 1
         ? `<span class="muted">latest:</span> ${escapeHtml(r.detail)}`
         : escapeHtml(r.detail);
+  // What started the computer's run, under its name; rows from reads and older collectors have none.
+  const how = r.trigger ? (TRIGGER_LABEL[r.trigger] ?? r.trigger) : null;
+  const by = how === null ? '' : `<span class="sub">${escapeHtml(how)}</span>`;
   const project =
     r.projectKey === null
       ? '<span class="muted">—</span>'
@@ -176,7 +188,7 @@ function activityRow(item: ActivityItem): string {
   return (
     `<tr><td>${timeTag(r.at)}</td><td class="muted">${DIRECTION[r.direction]}</td>` +
     `<td class="what">${tag}${text}</td>` +
-    `<td>${project}</td><td>${escapeHtml(r.actor)}</td></tr>`
+    `<td>${project}</td><td>${escapeHtml(r.actor)}${by}</td></tr>`
   );
 }
 

@@ -1,3 +1,4 @@
+import type { Trigger } from '@context-hub/core';
 import type { Db } from './db.js';
 
 export type Direction = 'in' | 'out';
@@ -10,6 +11,8 @@ export interface ActivityEntry {
   sessionRef: string | null;
   actor: string;
   detail: string | null;
+  /** What started the computer's run, when it said. */
+  trigger?: Trigger | null;
 }
 
 export interface ActivityRow extends ActivityEntry {
@@ -35,8 +38,8 @@ export function logActivity(db: Db, e: ActivityEntry, now: string): void {
   db.transaction(() => {
     db.prepare('DELETE FROM activity WHERE at < ?').run(cutoff);
     db.prepare(
-      'INSERT INTO activity(at, direction, action, project_key, session_ref, actor, detail) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(now, e.direction, e.action, e.projectKey, e.sessionRef, e.actor, e.detail);
+      'INSERT INTO activity(at, direction, action, project_key, session_ref, actor, detail, trigger) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(now, e.direction, e.action, e.projectKey, e.sessionRef, e.actor, e.detail, e.trigger ?? null);
   })();
 }
 
@@ -55,7 +58,7 @@ export function listActivity(db: Db, opts: { direction?: Direction; limit: numbe
   const args: (string | number)[] = opts.direction ? [opts.direction] : [];
   return db
     .prepare(
-      `SELECT id, at, direction, action, project_key AS projectKey, session_ref AS sessionRef, actor, detail
+      `SELECT id, at, direction, action, project_key AS projectKey, session_ref AS sessionRef, actor, detail, trigger
        FROM activity ${where} ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`,
     )
     .all(...args, opts.limit, opts.offset) as ActivityRow[];
@@ -87,7 +90,15 @@ export interface PageLeft {
  */
 export function recordSyncRun(
   db: Db,
-  r: { tokenId: number; finishedAt: string; uploaded: number; unchanged: number; errors: number; pagesLeft?: PageLeft[] },
+  r: {
+    tokenId: number;
+    finishedAt: string;
+    uploaded: number;
+    unchanged: number;
+    errors: number;
+    pagesLeft?: PageLeft[];
+    trigger?: Trigger | null;
+  },
   now: string,
 ): void {
   db.transaction(() => {
@@ -106,7 +117,7 @@ export function recordSyncRun(
     const detail = `${r.uploaded} uploaded, ${r.unchanged} unchanged${r.errors > 0 ? `, ${r.errors} errors` : ''}`;
     logActivity(
       db,
-      { direction: 'in', action: 'sync', projectKey: null, sessionRef: null, actor, detail },
+      { direction: 'in', action: 'sync', projectKey: null, sessionRef: null, actor, detail, trigger: r.trigger ?? null },
       now,
     );
   })();

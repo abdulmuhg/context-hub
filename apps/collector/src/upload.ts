@@ -1,5 +1,5 @@
 import { gzipSync } from 'node:zlib';
-import type { HashedSession, UploadDigest } from '@context-hub/core';
+import { TRIGGER_HEADER, type HashedSession, type Trigger, type UploadDigest } from '@context-hub/core';
 
 export interface Remote {
   url: string;
@@ -7,6 +7,8 @@ export interface Remote {
   fetchImpl?: typeof fetch;
   /** Give up on a request after this long. Default 60 seconds. */
   timeoutMs?: number;
+  /** What started this run, sent with every request so the hub's activity log can show it. */
+  trigger?: Trigger;
 }
 
 function base(remote: Remote): string {
@@ -17,6 +19,7 @@ function base(remote: Remote): string {
 async function request(remote: Remote, method: string, path: string, body?: Uint8Array<ArrayBuffer>): Promise<Response> {
   const doFetch = remote.fetchImpl ?? fetch;
   const headers: Record<string, string> = { Authorization: `Bearer ${remote.token}` };
+  if (remote.trigger) headers[TRIGGER_HEADER] = remote.trigger;
   if (body) {
     headers['Content-Type'] = 'application/json';
     headers['Content-Encoding'] = 'gzip';

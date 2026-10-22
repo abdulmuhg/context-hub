@@ -274,6 +274,10 @@ const MIGRATIONS: string[] = [
   DROP TABLE search_index;
   ALTER TABLE search_index_new RENAME TO search_index;
   `,
+  `
+  -- What started a computer's upload or sync (types.ts TRIGGERS); null for reads and older collectors.
+  ALTER TABLE activity ADD COLUMN trigger TEXT;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -162,7 +162,7 @@ export async function runAutoChild(opts: SyncOptions): Promise<void> {
     const { project: _project, session: _session, dryRun: _dryRun, ...rest } = opts;
     let line: string;
     try {
-      const r = await runSync(rest);
+      const r = await runSync({ ...rest, trigger: 'auto' });
       const counts = `${r.uploaded.length} uploaded, ${r.unchanged} unchanged, ${r.summarized.length} summarized, ${r.waiting.count} waiting`;
       line =
         r.errors.length === 0

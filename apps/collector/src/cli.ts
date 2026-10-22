@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
 import { claudeOnlyAsCmd, cleanEnv, findClaude } from './claude-llm.js';
 import { SLASH_COMMANDS } from './commands.js';
-import type { Effort, Level, Llm } from '@context-hub/core';
+import { isTrigger, TRIGGERS, type Effort, type Level, type Llm, type Trigger } from '@context-hub/core';
 import {
   DEFAULT_SUMMARY_EFFORT,
   DEFAULT_SUMMARY_MODEL,
@@ -62,7 +62,8 @@ Advanced:
   skip <session> | unskip <session>    exclude one session (<source>:<id>)
   alias <from> <to>                    merge or rename a project key
   assign <session> <project>           set the project of one session
-  sync [--project P] [--session S] [--dry-run] [--all]   (--project narrows tracked projects; --all lifts the cap on summaries)
+  sync [--project P] [--session S] [--dry-run] [--all] [--trigger T]   (--project narrows tracked projects; --all lifts the cap on summaries;
+                                       --trigger names what started it on the dashboard: terminal, slash, auto or other)
   summaries [model <id> | effort <level>]   show or change how this computer writes summaries
   resummarize [<project>] [--all] [--model-not ID]   rewrite older summaries with this computer's model
   forget <project> | forget --session <source>:<id>
@@ -107,7 +108,14 @@ function remote(io: Io): Remote {
   const cfg = loadConfig(io.hubDir);
   const token = loadToken(io.hubDir);
   if (!cfg.server_url || !token) throw new Fail('No server address or upload token. Run `hub init` first.');
-  return { url: cfg.server_url, token, fetchImpl: io.fetchImpl };
+  return { url: cfg.server_url, token, fetchImpl: io.fetchImpl, trigger: triggerOf(io) };
+}
+
+/** Who started this run when it does not say: a person at a terminal, or something without one. */
+function triggerOf(io: Io, given?: string): Trigger {
+  if (given === undefined) return io.interactive ? 'terminal' : 'other';
+  if (!isTrigger(given)) throw new Fail(`--trigger must be one of: ${TRIGGERS.join(', ')}`);
+  return given;
 }
 
 const NEVER_OFFERED = 'unfiled';
@@ -441,6 +449,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
           all: { type: 'boolean' },
           auto: { type: 'boolean' },
           'auto-child': { type: 'boolean' },
+          trigger: { type: 'string' },
         },
       });
       if (values.auto) {
@@ -458,6 +467,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         await runAutoChild({ ...scanOpts(io), fetchImpl: io.fetchImpl, ...(io.llm !== undefined ? { llm: io.llm } : {}) });
         return 0;
       }
+      const trigger = triggerOf(io, values.trigger);
       const dryRun = values['dry-run'] === true;
       const plain = !dryRun && !values.project && !values.session;
       if (plain) await offerNewProjects(io);
@@ -477,6 +487,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
         all: values.all === true,
         project: values.project,
         session: values.session,
+        trigger,
         onProgress:
           progress &&
           ((p) => {
