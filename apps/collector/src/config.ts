@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { Fail } from './errors.js';
 import { canonicalKey, type Effort, type Level, type PersonalEntry } from '@context-hub/core';
 
 export interface DocFolder {
@@ -84,7 +85,7 @@ function readJson<T>(dir: string, name: string, fallback: T): T {
   try {
     return JSON.parse(readFileSync(path, 'utf8')) as T;
   } catch {
-    throw new Error(`${path}: ${name} is not valid JSON. Fix or delete the file.`);
+    throw new Fail(`${path}: ${name} is not valid JSON. Fix or delete the file.`);
   }
 }
 

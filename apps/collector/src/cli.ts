@@ -20,6 +20,7 @@ import {
   type Config,
 } from './config.js';
 import { HUB_VERSION } from './version.js';
+import { Fail, friendlyMessage } from './errors.js';
 import { runResummarize } from './resummarize.js';
 import { NO_CHECKOUT } from './git-check.js';
 import type { CommandRunner } from './git-facts.js';
@@ -86,8 +87,6 @@ Advanced:
 const LEVELS: Level[] = ['off', 'warn', 'partial', 'full'];
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const SESSION_KEY = /^(claude-code|codex|antigravity):.+$/;
-
-class Fail extends Error {}
 
 function need(value: string | undefined, what: string): string {
   if (!value) throw new Fail(`Missing ${what}.\n\n${USAGE}`);
@@ -789,7 +788,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   try {
     return await dispatch(argv, io);
   } catch (e) {
-    io.err(e instanceof Error ? e.message : String(e));
+    io.err(friendlyMessage(e, io.hubDir));
     return 1;
   }
 }

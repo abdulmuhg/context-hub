@@ -116,7 +116,7 @@ describe('hub login', () => {
     status = 401;
     answers = ['WRONG-CODE'];
     expect(await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io)).toBe(1);
-    expect(err.join('\n')).toContain('That code is wrong or has expired.');
+    expect(err.join('\n')).toContain("That code didn't work: it has expired, was already used, or was mistyped. Get a new line from Sign-ins → Add a computer and paste it.");
     expect(loadConfig(io.hubDir).server_url).toBeFalsy();
     expect(loadToken(io.hubDir)).toBeFalsy();
   });

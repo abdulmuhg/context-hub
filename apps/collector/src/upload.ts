@@ -1,6 +1,8 @@
 import { gzipSync } from 'node:zlib';
 import { TRIGGER_HEADER, type HashedSession, type Trigger, type UploadDigest } from '@context-hub/core';
 
+import { BadCodeError, HttpStatusError, plainReason, UnreachableError } from './errors.js';
+
 export interface Remote {
   url: string;
   token: string;
@@ -28,14 +30,14 @@ async function request(remote: Remote, method: string, path: string, body?: Uint
   try {
     res = await doFetch(base(remote) + path, { method, headers, body, signal: AbortSignal.timeout(remote.timeoutMs ?? 60_000) });
   } catch (e) {
-    throw new Error(`could not reach ${base(remote)}: ${(e as Error).message}`);
+    throw new UnreachableError(base(remote), plainReason(e));
   }
   return res;
 }
 
 async function send(remote: Remote, method: string, path: string, body?: Uint8Array<ArrayBuffer>): Promise<Response> {
   const res = await request(remote, method, path, body);
-  if (!res.ok) throw new Error(`${method} ${path}: server answered ${res.status}`);
+  if (!res.ok) throw new HttpStatusError(method, path, res.status);
   return res;
 }
 
@@ -53,7 +55,7 @@ export async function putDigest(remote: Remote, ref: { source: string; id: strin
   const path = `${sessionPath(ref)}/digest`;
   const res = await request(remote, 'PUT', path, gz({ hash, digest }));
   if (res.status === 409) return 'moved';
-  if (!res.ok) throw new Error(`PUT ${path}: server answered ${res.status}`);
+  if (!res.ok) throw new HttpStatusError('PUT', path, res.status);
   return 'saved';
 }
 
@@ -82,7 +84,7 @@ export async function listProjectDigests(remote: Remote, key: string): Promise<P
   const path = `/api/projects/${encodeURIComponent(key)}/digests`;
   const res = await request(remote, 'GET', path);
   if (res.status === 404) return [];
-  if (!res.ok) throw new Error(`GET ${path}: server answered ${res.status}`);
+  if (!res.ok) throw new HttpStatusError('GET', path, res.status);
   return ((await res.json()) as { sessions: ProjectDigestEntry[] }).sessions;
 }
 
@@ -145,20 +147,10 @@ export async function exchangeDeviceCode(
       signal: AbortSignal.timeout(30_000),
     });
   } catch (e) {
-    throw new Error(`could not reach ${url.replace(/\/+$/, '')}: ${(e as Error).message}`);
+    throw new UnreachableError(url.replace(/\/+$/, ''), plainReason(e));
   }
-  if (!res.ok) {
-    let message = `server answered ${res.status}`;
-    if (res.status === 401 || res.status === 429) {
-      try {
-        const body = (await res.json()) as { error?: unknown };
-        if (typeof body.error === 'string') message = body.error;
-      } catch {
-        // keep the generic message
-      }
-    }
-    throw new Error(message);
-  }
+  if (res.status === 401) throw new BadCodeError();
+  if (!res.ok) throw new HttpStatusError('POST', '/api/devices', res.status);
   return (await res.json()) as { token: string; label: string };
 }
 
@@ -186,7 +178,7 @@ export async function putPage(
   const path = `${projectPath(key)}/page`;
   const res = await request(remote, 'PUT', path, gz(page));
   if (res.status === 409) return { ok: false };
-  if (!res.ok) throw new Error(`PUT ${path}: server answered ${res.status}`);
+  if (!res.ok) throw new HttpStatusError('PUT', path, res.status);
   return { ok: true, version: ((await res.json()) as { version: number }).version };
 }
 

@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { Fail } from './errors.js';
 import { runSync, type SyncOptions } from './sync.js';
 
 const HOOK_SUFFIX = ' sync --auto';
@@ -17,7 +18,7 @@ function isOurs(command: unknown, bundleName?: string): boolean {
 }
 
 function notJson(hint: string): Error {
-  return new Error(`~/.claude/settings.json is not valid JSON, so it was not changed.${hint}`);
+  return new Fail(`~/.claude/settings.json is not valid JSON, so it was not changed.${hint}`);
 }
 
 /** Returns null when the file does not exist. Throws when it is not a JSON object. */
