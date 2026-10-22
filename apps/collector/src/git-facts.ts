@@ -102,7 +102,7 @@ export function gatherFacts(dir: string, key: string, run: CommandRunner): RepoF
   });
 
   const merged = new Set(lines(run('git', dir, ['branch', '--format=%(refname:short)', '--merged', ref], GIT_TIMEOUT_MS)));
-  const branches = lines(run('git', dir, ['for-each-ref', 'refs/heads', '--format=%(refname:short)%x09%(upstream:track)'], GIT_TIMEOUT_MS))
+  const branches = lines(run('git', dir, ['for-each-ref', 'refs/heads', '--format=%(refname:short)%09%(upstream:track)'], GIT_TIMEOUT_MS))
     .map((l) => {
       const [name = '', track = ''] = l.split('\t');
       return { name, merged: merged.has(name), gone: track.includes('gone') };

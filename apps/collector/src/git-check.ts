@@ -3,6 +3,9 @@ import { factsHash, gatherFacts, renderFacts, renderSection, type CommandRunner 
 import { checkoutFor, type ResolveDeps } from './project.js';
 import type { PageLeft } from './summaries.js';
 
+/** Why a project was not checked: its checkout is not known on this computer. */
+export const NO_CHECKOUT = 'no checkout on this computer';
+
 /** What a project's page is checked against: facts for the review, the section for the page, and a hash of the facts. */
 export interface GitCheck {
   facts: string;
@@ -29,7 +32,7 @@ export function prepareGitChecks(
     const found = path ? checkoutFor(path, deps) : null;
     if (!path || !found || (o.aliases?.[found.key] ?? found.key) !== key) {
       if (state.repos) delete state.repos[key];
-      skipped.push({ project: key, reason: 'no checkout on this computer' });
+      skipped.push({ project: key, reason: NO_CHECKOUT });
       continue;
     }
     const facts = gatherFacts(path, key, deps.run);

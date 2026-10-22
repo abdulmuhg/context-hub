@@ -20,6 +20,7 @@ import {
   type Config,
 } from './config.js';
 import { runResummarize } from './resummarize.js';
+import { NO_CHECKOUT } from './git-check.js';
 import type { CommandRunner } from './git-facts.js';
 import { applyOverrides, projectMatches, realGit, resolveProjectKey, type GitRunner } from './project.js';
 import { listProjects, runSync, type ProjectRow, type SyncProgress, type SyncReport } from './sync.js';
@@ -171,9 +172,11 @@ function printReport(io: Io, report: SyncReport, dryRun: boolean): void {
   if (report.waiting.count > 0) io.out(`${plural(report.waiting.count, 'session')} waiting${report.waiting.reason ? `: ${report.waiting.reason}` : ''}`);
   if (report.pages.left.length > 0) io.out(`${plural(report.pages.left.length, 'page')} left for the next sync`);
   if (report.git.checked.length > 0) io.out(`Checked against git: ${plural(report.git.checked.length, 'project')}`);
-  else if (report.git.skipped.length > 0) {
+  // Most projects have no checkout here until a session or a sync from inside one records it, so that reason is not news.
+  const notChecked = report.git.skipped.filter((s) => s.reason !== NO_CHECKOUT);
+  if (notChecked.length > 0) {
     io.out('Not checked against git:');
-    for (const s of report.git.skipped) io.out(`  ${shortName(s.project)}: ${s.reason}`);
+    for (const s of notChecked) io.out(`  ${shortName(s.project)}: ${s.reason}`);
   }
   const gone = dryRun ? report.wouldDelete : report.deleted;
   if (gone.length > 0) io.out(`${dryRun ? 'Would remove' : 'Removed'} ${plural(gone.length, 'document')} whose file is gone:`);

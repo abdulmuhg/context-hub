@@ -20,7 +20,7 @@ const GOOD: Record<string, string | null> = {
   'git fetch --quiet --prune origin': '',
   'git symbolic-ref --short refs/remotes/origin/HEAD': 'origin/main',
   [`${LOG} origin/main`]: '3e21fd9\t2026-10-22\tMerge pull request #20 from abdulmuhg/lean-get-project\ne55eac0\t2026-10-21\tGive each session only its goal',
-  'git for-each-ref refs/heads --format=%(refname:short)%x09%(upstream:track)': 'main\t\nspike-x\t[gone]\ndone-x\t\nwip\t[ahead 1]',
+  'git for-each-ref refs/heads --format=%(refname:short)%09%(upstream:track)': 'main\t\nspike-x\t[gone]\ndone-x\t\nwip\t[ahead 1]',
   'git branch --format=%(refname:short) --merged origin/main': 'main\ndone-x',
   [GH_LIST]: JSON.stringify([
     { number: 21, title: 'Add the git check', state: 'OPEN', headRefName: 'git-reality-check', mergedAt: null, closedAt: null },

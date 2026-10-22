@@ -762,6 +762,18 @@ describe('hub sync: summaries', () => {
     expect(out.join('\n')).toMatch(/Checked against git: 1 project\b/);
   });
 
+  it('does not list projects with no checkout here as not checked against git', async () => {
+    io.llm = new FakeLlm();
+    io.fetchImpl = async (input) =>
+      String(input).endsWith('/api/status') ? new Response(JSON.stringify({ pages_needed: [], summaries_owed: 0 }), { status: 200 }) : new Response('{}', { status: 200 });
+    // The project still resolves from its remote, but no checkout can be found for it.
+    io.git = (_cwd, args) => (args[0] === 'remote' ? 'git@github.com:me/alpha.git' : null);
+    io.runCommand = () => null;
+    await run(['sync'], io);
+    expect(out.join('\n')).toMatch(/Uploaded 1 session/);
+    expect(out.join('\n')).not.toMatch(/against git/);
+  });
+
   it('a dry run says what it would summarize and calls no model', async () => {
     const llm = new FakeLlm();
     io.llm = llm;

@@ -106,9 +106,7 @@ export async function buildStatePage(llm: Llm, inputs: PageInputs): Promise<{ pa
   const current = stored && split ? { ...stored, body: split.body } : null;
   const attach = (page: StatePage): StatePage => {
     const section = git?.section ?? split?.section ?? null;
-    return section === null ? page : { summary: page.summary, body: `${page.body}
-
-${section}` };
+    return section === null ? page : { summary: page.summary, body: `${page.body}\n\n${section}` };
   };
   const old = current ? Date.parse(now) - Date.parse(current.rebuilt_at) > REBUILD_AFTER_MS : false;
   const rebuild = !current || current.dirty || old || inputs.forceRebuild === true;

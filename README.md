@@ -319,7 +319,9 @@ minutes.
   merged PR, are dropped, and the page ends with a short `## Git` section that
   says which computer checked and when. It re-checks when the facts change,
   even with no new session. Without a checkout, git, or network, it is skipped
-  and the page keeps its last `## Git` section.
+  and the page keeps its last `## Git` section. The hub learns where a project
+  is checked out from the folder of its next new session, or from running
+  `hub sync` inside it.
 - When a briefing is wrong, ask any chat to save a correcting note to that
   project. The briefing updates within a minute.
 
