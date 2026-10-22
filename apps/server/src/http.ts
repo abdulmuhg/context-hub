@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { isTrigger, stripSecrets, TRIGGER_HEADER, type DigestBody, type HashedSession, type Trigger, type UploadDigest } from '@context-hub/core';
 import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun, recordUploader, type PageLeft } from './activity.js';
-import { installScript } from './client-dist.js';
+import { installScript, installScriptPs1 } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
 import { AuthLimiter } from './ratelimit.js';
@@ -221,11 +221,19 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
 
     if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) return send(res, 200, { status: 'ok' });
 
-    if ((path === '/install' || path === '/hub.mjs') && (method === 'GET' || method === 'HEAD')) {
+    if ((path === '/install' || path === '/install.ps1' || path === '/hub.mjs') && (method === 'GET' || method === 'HEAD')) {
       const publicUrl = deps.oauth?.publicUrl ?? deps.web?.publicOrigin ?? null;
-      const text = publicUrl === null ? null : path === '/install' ? installScript(publicUrl) : (deps.client?.bundle ?? null);
+      const text =
+        publicUrl === null
+          ? null
+          : path === '/install'
+            ? installScript(publicUrl)
+            : path === '/install.ps1'
+              ? installScriptPs1(publicUrl)
+              : (deps.client?.bundle ?? null);
       if (text === null) return send(res, 404, { error: 'Not found' });
-      const type = path === '/install' ? 'text/x-shellscript; charset=utf-8' : 'text/javascript; charset=utf-8';
+      const type =
+        path === '/install' ? 'text/x-shellscript; charset=utf-8' : path === '/install.ps1' ? 'text/plain; charset=utf-8' : 'text/javascript; charset=utf-8';
       res.writeHead(200, {
         'Content-Type': type,
         'Content-Length': Buffer.byteLength(text),

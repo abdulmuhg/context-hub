@@ -132,3 +132,132 @@ export function installScript(publicUrl: string): string {
   const url = publicUrl.replace(/\/+$/, '');
   return SH_INSTALLER.replace('@URL@', () => quote(url)).replace('@BUNDLE_URL@', () => quote(`${url}/hub.mjs`));
 }
+
+/** Inside PowerShell single quotes, where a quote is doubled. */
+const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`;
+
+// Windows PowerShell 5.1 has no &&, ||, ?? or ternary, and this runs through iex, so it never leaves the session:
+// every stop is a return from the script block. It uses no backticks, so it can sit in a raw template.
+const PS_INSTALLER = String.raw`& {
+  $ErrorActionPreference = 'Stop'
+  $hubUrl = @URL@
+  $bundleUrl = @BUNDLE_URL@
+  $code = $env:HUB_CODE
+  Remove-Item Env:HUB_CODE -ErrorAction SilentlyContinue
+
+  # 1. Node 22 or newer. Nothing has been changed yet if this stops.
+  $found = 'none'
+  if (Get-Command node -ErrorAction SilentlyContinue) {
+    try { $found = (& node -p 'process.versions.node').Trim() } catch { $found = 'none' }
+  }
+  $major = 0
+  if ($found -match '^(\d+)\.') { $major = [int]$Matches[1] }
+  if ($major -lt 22) {
+    Write-Host ('context-hub needs Node 22 or newer (found: ' + $found + ').')
+    Write-Host 'Install it with: winget install OpenJS.NodeJS.LTS'
+    Write-Host 'then open a new terminal and paste the same line again. If more than 10 minutes have passed, get a new line from Sign-ins → Add a computer.'
+    return
+  }
+
+  # 2. The bundle, downloaded aside first so a failed download leaves the old one working.
+  $base = Join-Path $env:LOCALAPPDATA 'context-hub'
+  $bin = Join-Path $base 'bin'
+  $bundle = Join-Path $base 'hub.mjs'
+  $launcher = Join-Path $bin 'hub.cmd'
+  $partial = Join-Path $base 'hub.mjs.download'
+  try {
+    New-Item -ItemType Directory -Force -Path $bin | Out-Null
+  } catch {
+    Write-Host ("Couldn't create " + $bin + ". Nothing was changed. Check that you can write to " + $env:LOCALAPPDATA + ", then paste the line again.")
+    return
+  }
+  try {
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+    Invoke-WebRequest -UseBasicParsing -Uri $bundleUrl -OutFile $partial
+    Move-Item -Force -Path $partial -Destination $bundle
+  } catch {
+    Remove-Item $partial -ErrorAction SilentlyContinue
+    Write-Host ("Couldn't download hub from " + $bundleUrl + ". Nothing was changed. Paste the line again.")
+    return
+  }
+
+  # The launcher: hub.cmd runs the bundle with node.
+  try {
+    $cmd = '@echo off' + [Environment]::NewLine + 'node "' + $bundle + '" %*' + [Environment]::NewLine
+    [IO.File]::WriteAllText($launcher, $cmd, [Text.Encoding]::Default)
+  } catch {
+    Write-Host ("Couldn't write " + $launcher + ". Nothing else was changed. Paste the line again.")
+    return
+  }
+
+  $notes = @()
+  $warns = @()
+
+  # 3. PATH: the install folder goes first in the user's PATH (not the machine's), and in this session.
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  try {
+    $parts = @()
+    if ($userPath) { $parts = @($userPath -split ';' | Where-Object { $_ -ne '' }) }
+    $rest = @($parts | Where-Object { $_.TrimEnd('\') -ne $bin.TrimEnd('\') })
+    $newUser = (@($bin) + $rest) -join ';'
+    if ($newUser -ne $userPath) {
+      [Environment]::SetEnvironmentVariable('Path', $newUser, 'User')
+      $notes += ('Added ' + $bin + ' to the front of your PATH (user)')
+    }
+    $userPath = $newUser
+  } catch {
+    $warns += ("Couldn't update your PATH. Run hub by its full path: " + $launcher)
+  }
+  $session = @($env:Path -split ';' | Where-Object { $_ -ne '' -and $_.TrimEnd('\') -ne $bin.TrimEnd('\') })
+  $env:Path = (@($bin) + $session) -join ';'
+
+  # 4. Old launchers of ours are renamed, not deleted, so they can be put back.
+  $names = @('hub', 'hub.cmd', 'hub.ps1')
+  $ours = 'context-hub|collector\\dist\\bin\.js|hub\.mjs'
+  foreach ($dir in $session) {
+    foreach ($name in $names) {
+      $file = Join-Path $dir $name
+      if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+      $text = ''
+      try { $text = Get-Content -LiteralPath $file -Raw -ErrorAction Stop } catch { }
+      if ($text -match $ours) {
+        try {
+          Move-Item -Force -LiteralPath $file -Destination ($file + '.old')
+          $notes += ('Renamed the old hub at ' + $file + ' to ' + $file + '.old')
+        } catch {
+          $warns += ("Couldn't rename the old hub at " + $file + '. This one is at ' + $launcher)
+        }
+      }
+    }
+  }
+
+  # Which hub would a new window run? The machine's PATH comes before the user's.
+  $order = @(([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $userPath) -split ';' | Where-Object { $_ -ne '' })
+  $winner = $null
+  foreach ($dir in $order) {
+    foreach ($name in $names) {
+      $file = Join-Path $dir $name
+      if ($winner -eq $null -and (Test-Path -LiteralPath $file -PathType Leaf)) { $winner = $file }
+    }
+  }
+  if ($winner -ne $null -and $winner -ne $launcher) {
+    $warns += ('Another hub at ' + $winner + ' comes first on PATH; this one is at ' + $launcher)
+  }
+
+  # 5. Hand over to hub setup.
+  $setupArgs = @('--url', $hubUrl)
+  if ($code) { $setupArgs += @('--code', $code) }
+  foreach ($n in $notes) { $setupArgs += @('--note', $n) }
+  foreach ($w in $warns) { $setupArgs += @('--warn', $w) }
+  & node $bundle setup @setupArgs
+}
+`;
+
+/**
+ * The Windows PowerShell 5.1 installer served at /install.ps1, the same job as the sh one. The code arrives in
+ * the HUB_CODE environment variable, set on the line that fetches this script, so it is never in a URL.
+ */
+export function installScriptPs1(publicUrl: string): string {
+  const url = publicUrl.replace(/\/+$/, '');
+  return PS_INSTALLER.replace('@URL@', () => psQuote(url)).replace('@BUNDLE_URL@', () => psQuote(`${url}/hub.mjs`));
+}

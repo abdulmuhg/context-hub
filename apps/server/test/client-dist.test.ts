@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { installScript, loadClientBundle } from '../src/client-dist.js';
+import { installScript, installScriptPs1, loadClientBundle } from '../src/client-dist.js';
 import { openDb } from '../src/db.js';
 import type { AppDeps } from '../src/http.js';
 import { startServer } from './helpers.js';
@@ -212,5 +212,59 @@ describe('the install script', () => {
     expect(output).toContain('hub.mjs');
     expect(output).toContain('Nothing was changed');
     expect(readFileSync(bundle, 'utf8')).toBe(old);
+  });
+});
+
+describe('GET /install.ps1', () => {
+  it('serves /install.ps1 with the address filled in', async () => {
+    const url = await serve({ web: web(HUB), client: { bundle: 'x' } });
+    const res = await fetch(url + '/install.ps1');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const body = await res.text();
+    expect(body).toContain('& {');
+    expect(body).toContain("'https://hub.test/hub.mjs'");
+    expect(body).toContain('Remove-Item Env:HUB_CODE');
+  });
+
+  it('answers 404 without a public URL', async () => {
+    const url = await serve({ web: web(null), client: { bundle: 'x' } });
+    expect((await fetch(url + '/install.ps1')).status).toBe(404);
+  });
+});
+
+describe('the PowerShell install script', () => {
+  const script = installScriptPs1(HUB);
+
+  it('never calls exit and uses no PowerShell 7 syntax', () => {
+    expect(script).not.toMatch(/\bexit\b/);
+    expect(script).not.toMatch(/&&|\|\||\?\?/);
+    expect(script).not.toMatch(/\?\s*[^:]+\s*:/);
+  });
+
+  it('quotes an address that holds a quote', () => {
+    const quoted = installScriptPs1("https://a.test/'x");
+    expect(quoted).toContain("'https://a.test/''x'");
+    expect(quoted).toContain("'https://a.test/''x/hub.mjs'");
+  });
+
+  it('quotes a LOCALAPPDATA with spaces in hub.cmd', () => {
+    expect(script).toContain(`'node "' + $bundle + '" %*'`);
+    expect(script).toContain("Join-Path $env:LOCALAPPDATA 'context-hub'");
+    expect(script).toContain("Join-Path $base 'bin'");
+    expect(script).toContain("Join-Path $bin 'hub.cmd'");
+    expect(script).toContain('& node $bundle setup @setupArgs');
+  });
+
+  it('puts the bin folder first in the user PATH only once', () => {
+    expect(script).toContain("$rest = @($parts | Where-Object { $_.TrimEnd('\\') -ne $bin.TrimEnd('\\') })");
+    expect(script).toContain('$newUser = (@($bin) + $rest) -join');
+  });
+
+  it('reads the code from the environment, not from the URL', () => {
+    expect(script).toContain('$code = $env:HUB_CODE');
+    expect(script).not.toContain('?code');
   });
 });
