@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild, startLockHeartbeat, takeLock } from '../src/auto.js';
+import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild, startLockHeartbeat, takeLock } from '../src/auto.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
@@ -57,29 +57,77 @@ describe('autoOn / autoOff', () => {
 
   it('off removes only our entry and leaves everything else', () => {
     const other = { hooks: [{ type: 'command', command: 'echo bye' }] };
-    const theirs = { hooks: [{ type: 'command', command: '"node" "/x/other.js" sync --auto' }] };
+    const theirs = { hooks: [{ type: 'command', command: 'echo sync --auto' }] };
     writeRaw(path, JSON.stringify({ theme: 'dark', hooks: { SessionEnd: [other, theirs] } }));
     autoOn(path, CMD);
-    expect(autoOff(path, 'bin.js')).toEqual({ removed: 1 });
+    expect(autoOff(path)).toEqual({ removed: 1 });
     expect(read(path)).toEqual({ theme: 'dark', hooks: { SessionEnd: [other, theirs] } });
-    expect(autoOff(path, 'bin.js')).toEqual({ removed: 0 });
+    expect(autoOff(path)).toEqual({ removed: 0 });
   });
 
   it('off removes our hook from an entry shared with another hook, and empties cleanly', () => {
     const mixed = { hooks: [{ type: 'command', command: 'echo bye' }, { type: 'command', command: CMD }] };
     writeRaw(path, JSON.stringify({ hooks: { SessionEnd: [mixed] } }));
-    expect(autoOff(path, 'bin.js')).toEqual({ removed: 1 });
+    expect(autoOff(path)).toEqual({ removed: 1 });
     expect(read(path)).toEqual({ hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: 'echo bye' }] }] } });
     autoOn(path, CMD);
     writeRaw(path, JSON.stringify({ hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: CMD }] }] } }));
-    autoOff(path, 'bin.js');
+    autoOff(path);
     expect(read(path)).toEqual({});
   });
 
+  const OLD = '"C:\\node.exe" "C:\\src\\context-hub\\apps\\collector\\dist\\bin.js" sync --auto';
+
+  it('autoOn over a hook pointing at an old clone repoints it instead of adding a second', () => {
+    writeRaw(path, JSON.stringify({ hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: OLD, timeout: 10 }] }] } }));
+    expect(autoOn(path, CMD)).toEqual({ changed: true });
+    const end = read(path).hooks.SessionEnd;
+    expect(end).toHaveLength(1);
+    expect(end[0].hooks).toEqual([{ type: 'command', command: CMD, timeout: 10 }]);
+    expect(autoOn(path, CMD)).toEqual({ changed: false });
+  });
+
+  it('repointHook leaves settings untouched when there is no hook of ours', () => {
+    writeRaw(path, JSON.stringify({ hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: 'echo sync --auto' }] }] } }, null, 4));
+    const before = readFileSync(path, 'utf8');
+    expect(repointHook(path, CMD)).toEqual({ repointed: 0 });
+    expect(readFileSync(path, 'utf8')).toBe(before);
+    expect(existsSync(`${path}.hub-backup`)).toBe(false);
+  });
+
+  it('repointHook collapses two of our hooks into one', () => {
+    writeRaw(
+      path,
+      JSON.stringify({ hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: OLD }] }, { hooks: [{ type: 'command', command: CMD }, { type: 'command', command: 'echo bye' }] }] } }),
+    );
+    expect(repointHook(path, CMD)).toEqual({ repointed: 2 });
+    const end = read(path).hooks.SessionEnd;
+    const commands = end.flatMap((e: { hooks: { command: string }[] }) => e.hooks.map((h) => h.command));
+    expect(commands.filter((c: string) => isOurHook(c))).toEqual([CMD]);
+    expect(commands).toContain('echo bye');
+  });
+
+  it('recognises a hook whose paths contain spaces', () => {
+    expect(isOurHook('"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\John Smith\\AppData\\Local\\context-hub\\hub.mjs" sync --auto')).toBe(true);
+  });
+
+  it("another tool's hook in the same shape is not ours", () => {
+    expect(isOurHook('"/usr/bin/python3" "/opt/notes/notes.py" sync --auto')).toBe(false);
+    expect(isOurHook('"x" "y" sync --auto')).toBe(false);
+  });
+
+  it("other people's hooks are never touched", () => {
+    const theirs = { hooks: [{ type: 'command', command: 'echo sync --auto' }] };
+    writeRaw(path, JSON.stringify({ hooks: { SessionEnd: [theirs] } }));
+    expect(autoOff(path)).toEqual({ removed: 0 });
+    expect(repointHook(path, CMD)).toEqual({ repointed: 0 });
+    expect(read(path)).toEqual({ hooks: { SessionEnd: [theirs] } });
+  });
+
   it('off does nothing when the file is missing, and refuses invalid JSON', () => {
-    expect(autoOff(path, 'bin.js')).toEqual({ removed: 0 });
+    expect(autoOff(path)).toEqual({ removed: 0 });
     writeRaw(path, 'nope');
-    expect(() => autoOff(path, 'bin.js')).toThrow(/not valid JSON/);
+    expect(() => autoOff(path)).toThrow(/not valid JSON/);
     expect(readFileSync(path, 'utf8')).toBe('nope');
   });
 });
@@ -93,7 +141,7 @@ describe('autoStatus', () => {
     autoOn(settings, CMD);
     writeRaw(log, 'first\nsecond\n');
     expect(autoStatus(settings, log)).toEqual({ on: true, lastLine: 'second' });
-    autoOff(settings, 'bin.js');
+    autoOff(settings);
     expect(autoStatus(settings, log).on).toBe(false);
   });
 });

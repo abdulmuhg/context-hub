@@ -17,6 +17,16 @@ const io: Io = {
         process.stdout.write(line);
       }
     : undefined,
+  onInterrupt: (handler) => {
+    const onSigint = (): void => {
+      // The progress line has no newline yet; end it so the message starts on its own line.
+      if (process.stdout.isTTY) process.stdout.write('\n');
+      handler();
+      process.exit(130);
+    };
+    process.once('SIGINT', onSigint);
+    return () => void process.off('SIGINT', onSigint);
+  },
   ask: async (question) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {

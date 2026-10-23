@@ -149,13 +149,14 @@ function disconnect(res: ServerResponse, form: URLSearchParams, session: WebSess
 }
 
 /** Issues a one-time code of the asked purpose and shows it once; any other purpose is a 400 and stores nothing. */
-function issueCode(res: ServerResponse, form: URLSearchParams, session: WebSession, ctx: WebCtx): void {
+function issueCode(req: IncomingMessage, res: ServerResponse, form: URLSearchParams, session: WebSession, ctx: WebCtx): void {
   const purpose = form.get('purpose');
   if (purpose !== 'signin' && purpose !== 'device') {
     return sendDocument(res, 400, codeRefusedPage(session.csrf));
   }
   const { code } = createConnectCode(ctx.db, ctx.now(), purpose);
-  sendDocument(res, 200, codePage(purpose, code, ctx.cfg.publicOrigin, session.csrf));
+  const os = /Windows/i.test(req.headers['user-agent'] ?? '') ? 'windows' : 'unix';
+  sendDocument(res, 200, codePage(purpose, code, ctx.cfg.publicOrigin, session.csrf, os));
 }
 
 /**
@@ -192,7 +193,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
       return true;
     }
     if (path === '/sign-ins/code') {
-      issueCode(res, form, session, ctx);
+      issueCode(req, res, form, session, ctx);
       return true;
     }
     return false;

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newProjects, run, type Io } from '../src/cli.js';
 import { SLASH_COMMANDS } from '../src/commands.js';
+import { HUB_VERSION } from '../src/version.js';
 import { UsageLimitError } from '../src/claude-llm.js';
 import { loadConfig, loadPersonal, loadToken, saveConfig, saveState, settingsFingerprint } from '../src/config.js';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
@@ -115,9 +116,51 @@ describe('hub login', () => {
     status = 401;
     answers = ['WRONG-CODE'];
     expect(await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io)).toBe(1);
-    expect(err.join('\n')).toContain('That code is wrong or has expired.');
+    expect(err.join('\n')).toContain("That code didn't work: it has expired, was already used, or was mistyped. Get a new line from Sign-ins → Add a computer and paste it.");
     expect(loadConfig(io.hubDir).server_url).toBeFalsy();
     expect(loadToken(io.hubDir)).toBeFalsy();
+  });
+
+  it('login stores the label the hub returns', async () => {
+    answers = ['ABCD-EFGH'];
+    await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io);
+    expect(loadConfig(io.hubDir).label).toBe('my-mac');
+  });
+
+  it('login on the same hub sends the old token to retire it', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'old'], io);
+    const headers: unknown[] = [];
+    const inner = io.fetchImpl!;
+    io.fetchImpl = async (input, init) => {
+      headers.push(init?.headers);
+      return inner(input, init);
+    };
+    answers = ['ABCD-EFGH'];
+    expect(await run(['login', '--url', 'https://hub.example.com/', '--name', 'x'], io)).toBe(0);
+    expect(headers[0]).toMatchObject({ Authorization: 'Bearer old' });
+  });
+
+  it('login to a different hub sends no old token', async () => {
+    await run(['init', '--url', 'https://old.example.com', '--token', 'old'], io);
+    const headers: unknown[] = [];
+    const inner = io.fetchImpl!;
+    io.fetchImpl = async (input, init) => {
+      headers.push(init?.headers);
+      return inner(input, init);
+    };
+    answers = ['y', 'ABCD-EFGH'];
+    expect(await run(['login', '--url', 'https://new.example.com', '--name', 'x'], io)).toBe(0);
+    expect(JSON.stringify(headers[0])).not.toContain('Authorization');
+  });
+
+  it('an expired code saves nothing and says how to get a new line', async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'old'], io);
+    status = 401;
+    answers = ['OLD-CODE'];
+    expect(await run(['login', '--url', 'https://hub.example.com', '--name', 'x'], io)).toBe(1);
+    expect(err.join('\n')).toContain('Get a new line from Sign-ins → Add a computer and paste it.');
+    expect(loadToken(io.hubDir)).toBe('old');
+    expect(loadConfig(io.hubDir).label).toBeUndefined();
   });
 
   it('asks before replacing a different saved hub and stops on anything but y', async () => {
@@ -967,5 +1010,13 @@ describe('hub resummarize', () => {
   it('is in the help text', async () => {
     await run([], io);
     expect(err.join('\n')).toMatch(/resummarize \[<project>\] \[--all\] \[--model-not ID\]/);
+  });
+});
+
+describe('hub --version', () => {
+  it('hub --version prints the version', async () => {
+    expect(await run(['--version'], io)).toBe(0);
+    expect(out).toEqual([HUB_VERSION]);
+    expect(HUB_VERSION).toBe('dev');
   });
 });

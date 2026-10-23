@@ -28,7 +28,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - id: meta
-        run: echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "version=$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4
 
@@ -45,6 +47,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: HUB_VERSION=${{ steps.meta.outputs.version }}
           tags: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

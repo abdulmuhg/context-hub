@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { installScript, loadClientBundle } from '../src/client-dist.js';
+import { installScript, installScriptPs1, loadClientBundle } from '../src/client-dist.js';
 import { openDb } from '../src/db.js';
 import type { AppDeps } from '../src/http.js';
 import { startServer } from './helpers.js';
@@ -48,9 +48,8 @@ describe('GET /install and /hub.mjs', () => {
     const body = await res.text();
     expect(body).toContain('set -eu');
     expect(body).toContain("'https://hub.test/hub.mjs'");
-    expect(body).toContain("login --url 'https://hub.test'");
-    // Until ~/.local/bin is on PATH, the next step names the launcher by its full path.
-    expect(body).toContain('hub_cmd="$BIN/hub"');
+    expect(body).toContain("HUB_URL='https://hub.test'");
+    expect(body).toContain('setup --url');
   });
 
   it('serve the bundle, and 404 when there is none', async () => {
@@ -81,17 +80,15 @@ describe('the install script', () => {
     expect(installScript("https://a.test/'x")).toContain(`'https://a.test/'\\''x/hub.mjs'`);
   });
 
-  it.skipIf(process.platform === 'win32')('installs, updates in place and leaves ~/.context-hub alone', () => {
+  const posix = process.platform !== 'win32';
+
+  /** A throwaway home with a fake curl that writes a stub bundle, which records the arguments it is run with. */
+  function sandbox() {
     const root = mkdtempSync(join(tmpdir(), 'install-'));
     const home = join(root, 'home');
     const fake = join(root, 'fakebin');
     mkdirSync(join(home, '.context-hub'), { recursive: true });
     mkdirSync(fake);
-    const config = join(home, '.context-hub', 'config.json');
-    writeFileSync(config, '{"server_url":"https://keep.test"}\n');
-    writeFileSync(join(home, '.context-hub', 'credentials'), 'secret-placeholder\n');
-
-    // A curl that writes a stub bundle where -o says. The stub records its arguments.
     writeFileSync(
       join(fake, 'curl'),
       [
@@ -110,9 +107,19 @@ describe('the install script', () => {
     chmodSync(join(fake, 'curl'), 0o755);
     const script = join(root, 'install.sh');
     writeFileSync(script, installScript(HUB));
+    const env = (extra: Record<string, string> = {}, front = ''): NodeJS.ProcessEnv =>
+      ({ HOME: home, PATH: `${front}${fake}:${dirname(process.execPath)}:/usr/bin:/bin`, ...extra }) as NodeJS.ProcessEnv;
+    const run = (args: string[] = [], e: NodeJS.ProcessEnv = env(), cmd = 'sh'): string =>
+      execFileSync(cmd, cmd === 'sh' ? [script, ...args] : ['sh', script, ...args], { env: e, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const ranLog = (): string[] => readFileSync(join(home, 'ran.log'), 'utf8').trim().split('\n');
+    return { root, home, fake, script, env, run, ranLog };
+  }
 
-    const env = { HOME: home, PATH: `${fake}:${dirname(process.execPath)}:/usr/bin:/bin` } as NodeJS.ProcessEnv;
-    const run = (): string => execFileSync('sh', [script], { env, encoding: 'utf8' });
+  it.skipIf(!posix)('installs, updates in place and leaves ~/.context-hub alone', () => {
+    const { home, run, ranLog } = sandbox();
+    const config = join(home, '.context-hub', 'config.json');
+    writeFileSync(config, '{"server_url":"https://keep.test"}\n');
+    writeFileSync(join(home, '.context-hub', 'credentials'), 'secret-placeholder\n');
     const before = readFileSync(config);
     run();
     run();
@@ -123,8 +130,185 @@ describe('the install script', () => {
     expect(readFileSync(launcher, 'utf8')).toBe(`#!/bin/sh\nexec node "${bundle}" "$@"\n`);
     expect(statSync(launcher).mode & 0o111).not.toBe(0);
     expect(readFileSync(join(home, 'curl.log'), 'utf8').trim().split('\n')).toEqual([`${HUB}/hub.mjs`, `${HUB}/hub.mjs`]);
-    expect(readFileSync(join(home, 'ran.log'), 'utf8').trim().split('\n')).toEqual(['install-commands', 'install-commands']);
+    const ran = ranLog();
+    expect(ran[0]).toMatch(/^setup --url https:\/\/hub\.test --note Added ~\/\.local\/bin to the front of PATH in /);
+    expect(ran[1]).toBe('setup --url https://hub.test');
     expect(readFileSync(config).equals(before)).toBe(true);
     expect(readFileSync(join(home, '.context-hub', 'credentials'), 'utf8')).toBe('secret-placeholder\n');
+  });
+
+  it.skipIf(!posix)('passes the code to setup', () => {
+    const { run, ranLog } = sandbox();
+    run(['--code', 'ABCD-EFGH']);
+    expect(ranLog()[0]).toMatch(/^setup --url https:\/\/hub\.test --code ABCD-EFGH/);
+  });
+
+  it.skipIf(!posix)('stops before changing anything when Node is too old', () => {
+    const { home, fake, run, env } = sandbox();
+    writeFileSync(join(fake, 'node'), '#!/bin/sh\necho 20.11.0\n');
+    chmodSync(join(fake, 'node'), 0o755);
+    let output = '';
+    try {
+      run([], env());
+    } catch (e) {
+      output = String((e as { stdout?: string }).stdout);
+    }
+    expect(output).toContain('found: 20.11.0');
+    expect(output).toContain('paste the same line again');
+    expect(existsSync(join(home, '.local', 'share', 'context-hub', 'hub.mjs'))).toBe(false);
+    expect(existsSync(join(home, '.local', 'bin', 'hub'))).toBe(false);
+  });
+
+  it.skipIf(!posix)('adds the PATH line to the profile once', () => {
+    const { home, run, env } = sandbox();
+    run([], env({ SHELL: '/bin/zsh' }));
+    run([], env({ SHELL: '/bin/zsh' }));
+    const lines = readFileSync(join(home, '.zshrc'), 'utf8').split('\n').filter((l) => l.includes('# added by context-hub'));
+    expect(lines).toEqual(['export PATH="$HOME/.local/bin:$PATH" # added by context-hub']);
+  });
+
+  it.skipIf(!posix)('renames an old context-hub launcher that comes first on PATH', () => {
+    const { root, run, env, ranLog } = sandbox();
+    const ahead = join(root, 'ahead');
+    mkdirSync(ahead);
+    writeFileSync(join(ahead, 'hub'), '#!/bin/sh\nexec node /src/context-hub/apps/collector/dist/bin.js "$@"\n');
+    chmodSync(join(ahead, 'hub'), 0o755);
+    run([], env({}, `${ahead}:`));
+    expect(existsSync(join(ahead, 'hub'))).toBe(false);
+    expect(existsSync(join(ahead, 'hub.old'))).toBe(true);
+    expect(ranLog()[0]).toContain(`--note Renamed the old hub at ${ahead}/hub to ${ahead}/hub.old`);
+  });
+
+  it.skipIf(!posix)("leaves a hub that isn't ours and warns", () => {
+    const { root, home, run, env, ranLog } = sandbox();
+    const ahead = join(root, 'ahead');
+    mkdirSync(ahead);
+    writeFileSync(join(ahead, 'hub'), '#!/bin/sh\necho some other tool\n');
+    chmodSync(join(ahead, 'hub'), 0o755);
+    run([], env({}, `${ahead}:`));
+    expect(existsSync(join(ahead, 'hub'))).toBe(true);
+    expect(ranLog()[0]).toContain(
+      `--warn Another program called hub is at ${ahead}/hub. New terminals run this one instead (${home}/.local/bin/hub); use the full path for the other.`,
+    );
+  });
+
+  it.skipIf(!posix)('never renames its own launcher when PATH spells the folder differently', () => {
+    const { home, run, env, ranLog } = sandbox();
+    // A trailing slash makes "$dir/hub" a different string for the same file.
+    run([], env({}, `${home}/.local/bin/:`));
+    run([], env({}, `${home}/.local/bin/:`));
+    expect(existsSync(join(home, '.local', 'bin', 'hub'))).toBe(true);
+    expect(existsSync(join(home, '.local', 'bin', 'hub.old'))).toBe(false);
+    expect(ranLog()).toHaveLength(2);
+    expect(ranLog().join('\n')).not.toContain('Renamed');
+  });
+
+  const hasSetsid = posix && spawnSync('setsid', ['--version']).status === 0;
+  it.skipIf(!hasSetsid)('runs setup without /dev/tty when there is none', () => {
+    const { run, env, ranLog } = sandbox();
+    run([], env(), 'setsid');
+    expect(ranLog()[0]).toMatch(/^setup --url https:\/\/hub\.test/);
+  });
+
+  it.skipIf(!posix)('a failed download changes nothing', () => {
+    const ok = sandbox();
+    ok.run();
+    const bundle = join(ok.home, '.local', 'share', 'context-hub', 'hub.mjs');
+    const old = readFileSync(bundle, 'utf8');
+    writeFileSync(join(ok.fake, 'curl'), '#!/bin/sh\necho "$@" >> "$HOME/curl.log"\nexit 22\n');
+    let output = '';
+    try {
+      ok.run();
+    } catch (e) {
+      output = String((e as { stdout?: string }).stdout);
+    }
+    expect(output).toContain('hub.mjs');
+    expect(output).toContain('Nothing was changed');
+    expect(readFileSync(bundle, 'utf8')).toBe(old);
+  });
+});
+
+describe('GET /install.ps1', () => {
+  it('serves /install.ps1 with the address filled in', async () => {
+    const url = await serve({ web: web(HUB), client: { bundle: 'x' } });
+    const res = await fetch(url + '/install.ps1');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const body = await res.text();
+    expect(body).toContain('& {');
+    expect(body).toContain("'https://hub.test/hub.mjs'");
+    expect(body).toContain('Remove-Item Env:HUB_CODE');
+  });
+
+  it('answers 404 without a public URL', async () => {
+    const url = await serve({ web: web(null), client: { bundle: 'x' } });
+    expect((await fetch(url + '/install.ps1')).status).toBe(404);
+  });
+});
+
+describe('the PowerShell install script', () => {
+  const script = installScriptPs1(HUB);
+
+  it('never calls exit and uses no PowerShell 7 syntax', () => {
+    // Comments may say anything; only the code has to run in Windows PowerShell 5.1.
+    const code = script
+      .split('\n')
+      .filter((l) => !/^\s*#/.test(l))
+      .join('\n');
+    expect(code).not.toMatch(/\bexit\b/);
+    expect(code).not.toMatch(/&&|\|\||\?\?/);
+    expect(code).not.toMatch(/\?\s*[^:]+\s*:/);
+  });
+
+  it('quotes an address that holds a quote', () => {
+    const quoted = installScriptPs1("https://a.test/'x");
+    expect(quoted).toContain("'https://a.test/''x'");
+    expect(quoted).toContain("'https://a.test/''x/hub.mjs'");
+  });
+
+  it('quotes a LOCALAPPDATA with spaces in hub.cmd', () => {
+    // hub.cmd finds the bundle from its own folder, so no profile path is ever written into it.
+    expect(script).toContain(`'node "%~dp0..\\hub.mjs" %*'`);
+    expect(script).toContain('[Text.Encoding]::ASCII');
+    expect(script).toContain("Join-Path $env:LOCALAPPDATA 'context-hub'");
+    expect(script).toContain("Join-Path $base 'bin'");
+    expect(script).toContain("Join-Path $bin 'hub.cmd'");
+    expect(script).toContain('& node $bundle setup @setupArgs');
+  });
+
+  it.runIf(process.platform === 'win32')('the hub.cmd it writes runs the bundle from a folder with spaces and accents', () => {
+    const base = join(mkdtempSync(join(tmpdir(), 'ps-')), 'José Smith', 'context-hub');
+    mkdirSync(join(base, 'bin'), { recursive: true });
+    writeFileSync(join(base, 'hub.mjs'), "console.log(process.argv.slice(2).join(' '));\n");
+    writeFileSync(join(base, 'bin', 'hub.cmd'), '@echo off\r\nnode "%~dp0..\\hub.mjs" %*\r\n', 'ascii');
+    const out = execFileSync('cmd.exe', ['/d', '/c', join(base, 'bin', 'hub.cmd'), 'setup', '--url', 'https://hub.test'], { encoding: 'utf8' });
+    expect(out.trim()).toBe('setup --url https://hub.test');
+  });
+
+  it.runIf(process.platform === 'win32')('parses in Windows PowerShell 5.1 with no errors', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'ps-')), 'install.ps1');
+    // With a byte-order mark, as 5.1 would need to read a saved copy as UTF-8.
+    writeFileSync(file, '﻿' + script);
+    const command = `$e = $null; [System.Management.Automation.Language.Parser]::ParseFile('${file}', [ref]$null, [ref]$e) | Out-Null; $e.Count`;
+    expect(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8' }).trim()).toBe('0');
+  });
+
+  it('is plain ASCII, so a console in any code page shows it and a saved copy still parses', () => {
+    expect(script).not.toMatch(/[^\x00-\x7F]/);
+  });
+
+  it('puts the bin folder first in the user PATH only once, keeping %VARS% unexpanded', () => {
+    expect(script).toContain('[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames');
+    expect(script).toContain('[Microsoft.Win32.RegistryValueKind]::ExpandString');
+    expect(script).toContain("[Environment]::ExpandEnvironmentVariables($_).TrimEnd('\\') -ne $bin.TrimEnd('\\')");
+    expect(script).toContain('$newUser = (@($bin) + $rest) -join');
+    expect(script).not.toContain("SetEnvironmentVariable('Path'");
+  });
+
+  it('reads the code from the environment, not from the URL', () => {
+    expect(script).toContain('$code = $env:HUB_CODE');
+    expect(script).not.toContain('?code');
   });
 });

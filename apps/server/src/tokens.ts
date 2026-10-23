@@ -36,6 +36,13 @@ export function verifyToken(db: Db, token: string, now: string): { id: number; s
   return row;
 }
 
+/** Revokes the live ingest token with this text, if there is one. Any other token, known or not, is left alone. */
+export function retireIngestToken(db: Db, token: string, now: string): boolean {
+  if (token === '') return false;
+  const row = db.prepare("SELECT id FROM tokens WHERE hash = ? AND scope = 'ingest' AND revoked_at IS NULL").get(hashToken(token)) as { id: number } | undefined;
+  return row ? revokeToken(db, row.id, now) : false;
+}
+
 export function listTokens(db: Db): TokenRow[] {
   return db
     .prepare('SELECT id, label, scope, created_at, revoked_at, last_used_at FROM tokens ORDER BY id')

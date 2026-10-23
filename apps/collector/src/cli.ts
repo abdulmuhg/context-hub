@@ -1,10 +1,10 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
-import { claudeOnlyAsCmd, cleanEnv, findClaude } from './claude-llm.js';
+import { runClaudeCommand, summariesRow, type Mark } from './checks.js';
 import { SLASH_COMMANDS } from './commands.js';
 import { isTrigger, TRIGGERS, type Effort, type Level, type Llm, type Trigger } from '@context-hub/core';
 import {
@@ -19,6 +19,9 @@ import {
   saveToken,
   type Config,
 } from './config.js';
+import { HUB_VERSION } from './version.js';
+import { Fail, friendlyMessage } from './errors.js';
+import { setupCase } from './setup.js';
 import { runResummarize } from './resummarize.js';
 import { NO_CHECKOUT } from './git-check.js';
 import type { CommandRunner } from './git-facts.js';
@@ -52,6 +55,8 @@ export interface Io {
   spawn?: typeof spawn;
   /** For `hub doctor`: runs `claude` with these arguments (`mcp list`, `auth status --json`). found is false when Claude Code is not installed. */
   runClaude?: (args: string[]) => { found: boolean; output: string };
+  /** Runs the handler if the person presses Ctrl+C, and returns a function that stops listening. Only set for a terminal. */
+  onInterrupt?: (handler: () => void) => () => void;
 }
 
 const USAGE = `Usage: hub <command>
@@ -60,6 +65,7 @@ const USAGE = `Usage: hub <command>
   sync                                 upload your tracked projects (asks about new ones)
   auto on | off | status               sync automatically when a Claude Code session ends
   doctor                               check that this computer is set up and connected
+  setup --url URL [--code CODE]        set up this computer (run by the installer)
 
 Advanced:
   init [--url URL] [--token TOKEN]     save the server address and upload token
@@ -86,8 +92,6 @@ const LEVELS: Level[] = ['off', 'warn', 'partial', 'full'];
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const SESSION_KEY = /^(claude-code|codex|antigravity):.+$/;
 
-class Fail extends Error {}
-
 function need(value: string | undefined, what: string): string {
   if (!value) throw new Fail(`Missing ${what}.\n\n${USAGE}`);
   return value;
@@ -106,7 +110,7 @@ function update(io: Io, change: (cfg: Config) => void): void {
   saveConfig(io.hubDir, cfg);
 }
 
-function scanOpts(io: Io) {
+export function scanOpts(io: Io) {
   return { home: io.home, hubDir: io.hubDir, git: io.git, exists: io.exists };
 }
 
@@ -126,7 +130,7 @@ function triggerOf(io: Io, given?: string): Trigger {
 
 const NEVER_OFFERED = 'unfiled';
 
-function mainSessions(row: ProjectRow): number {
+export function mainSessions(row: ProjectRow): number {
   return Object.values(row.sessions).reduce((a, b) => a + b, 0);
 }
 
@@ -137,7 +141,7 @@ export function newProjects(rows: ProjectRow[], cfg: Config): ProjectRow[] {
   );
 }
 
-function shortName(key: string): string {
+export function shortName(key: string): string {
   return key.split(/[/\\]/).filter(Boolean).pop() ?? key;
 }
 
@@ -146,7 +150,7 @@ function displayName(key: string): string {
   return name === key ? key : `${name} — ${key}`;
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
@@ -317,6 +321,31 @@ function docsCase(io: Io, args: string[]): number {
   throw new Fail(USAGE);
 }
 
+const trimUrl = (u: string): string => u.trim().replace(/\/+$/, '');
+
+/**
+ * Swaps a dashboard code for a token and saves it with the hub's name for this computer. Nothing is
+ * saved when the exchange fails. The computer's current token goes along only when it is for the
+ * same hub, so the hub can retire it.
+ */
+export async function connectWithCode(
+  io: Io,
+  url: string,
+  code: string,
+  name: string,
+): Promise<{ label: string; previousUrl: string | null }> {
+  const saved = loadConfig(io.hubDir).server_url;
+  const sameHub = Boolean(saved) && trimUrl(saved) === trimUrl(url);
+  const old = sameHub ? loadToken(io.hubDir) : null;
+  const { token, label } = await exchangeDeviceCode(url, code, name, io.fetchImpl, old ?? undefined);
+  update(io, (cfg) => {
+    cfg.server_url = url;
+    cfg.label = label;
+  });
+  saveToken(io.hubDir, token);
+  return { label, previousUrl: saved && !sameHub ? saved : null };
+}
+
 function bundleOf(io: Io): string {
   return io.bundlePath ?? resolve(process.argv[1] ?? '');
 }
@@ -332,7 +361,7 @@ function autoCase(io: Io, sub: string | undefined): number {
     return 0;
   }
   if (sub === 'off') {
-    const { removed } = autoOff(settings, basename(bundleOf(io)));
+    const { removed } = autoOff(settings);
     io.out(removed > 0 ? 'Automatic sync is off.' : 'Automatic sync was not on.');
     return 0;
   }
@@ -614,11 +643,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const name = values.name ?? ((await io.ask(`Name for this computer [${host}]: `)).trim() || host);
       const code = (await io.ask('Code from the dashboard (Sign-ins > Add a computer): ')).trim();
       if (code === '') throw new Fail('No code entered. Nothing saved.');
-      const { token, label } = await exchangeDeviceCode(url, code, name, io.fetchImpl);
-      update(io, (cfg) => {
-        cfg.server_url = url;
-      });
-      saveToken(io.hubDir, token);
+      const { label } = await connectWithCode(io, url, code, name);
       io.out(`Connected as "${label}". Next: hub projects, then hub track <project> and hub sync.`);
       return 0;
     }
@@ -630,6 +655,11 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       io.out(`Installed ${Object.keys(SLASH_COMMANDS).length} slash commands in ${dir}.`);
       return 0;
     }
+    case '--version':
+      io.out(HUB_VERSION);
+      return 0;
+    case 'setup':
+      return setupCase(io, rest, () => dispatch(['sync'], io));
     case 'doctor':
       return doctorCase(io);
     case 'auto':
@@ -644,8 +674,6 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
   }
 }
 
-type Mark = '✓' | '!' | '✗' | '–';
-
 const DAY_MS = 86_400_000;
 const QUIET_DAYS = 3;
 
@@ -656,21 +684,6 @@ function ago(iso: string, now: number): string {
   const h = Math.round(min / 60);
   if (h < 24) return `${h} h ago`;
   return `${Math.round(h / 24)} d ago`;
-}
-
-/**
- * Runs `claude` for the doctor. `mcp list` checks every server, so it can take a few seconds. `auth status`
- * is run the way summaries are (no shell, the clean environment), so it reports what a summary run would see.
- */
-function runClaudeCommand(args: string[]): { found: boolean; output: string } {
-  if (args[0] === 'auth') {
-    const cmd = findClaude();
-    if (cmd === null) return { found: false, output: '' };
-    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 20_000, env: cleanEnv(process.env), windowsHide: true });
-    return { found: r.status === 0, output: `${r.stdout ?? ''}` };
-  }
-  const r = spawnSync('claude', args, { encoding: 'utf8', timeout: 20_000, shell: process.platform === 'win32', windowsHide: true });
-  return { found: r.status === 0, output: `${r.stdout ?? ''}` };
 }
 
 /**
@@ -751,24 +764,8 @@ async function doctorCase(io: Io): Promise<number> {
   else add('!', 'Claude Code', 'no context-hub connection. Add the connector to this Claude account (README: "Read from the hub in the Claude apps").');
 
   // Summaries: written here by Claude Code, on its sign-in.
-  const auth = runClaude(['auth', 'status', '--json']);
-  if (!auth.found) {
-    if (hubWritesSummaries) add('!', 'Summaries', "Claude Code is not installed; the hub will summarize this computer's sessions");
-    else if (!io.runClaude && claudeOnlyAsCmd()) add('✗', 'Summaries', 'Claude Code is installed only as a .cmd file, which summaries cannot use. Install the native claude.exe, then run: claude');
-    else add('✗', 'Summaries', 'Claude Code is not installed, so sessions wait here. Install it, then run: claude');
-  } else {
-    let loggedIn: boolean | null = null;
-    try {
-      loggedIn = (JSON.parse(auth.output) as { loggedIn?: boolean }).loggedIn === true;
-    } catch {
-      loggedIn = null;
-    }
-    const model = cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL;
-    const effort = cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT;
-    if (loggedIn === true) add('✓', 'Summaries', `Claude Code signed in, model ${model}, effort ${effort}`);
-    else if (loggedIn === false) add('✗', 'Summaries', 'Claude Code is not signed in, or its login expired. Run: claude auth login');
-    else add('!', 'Summaries', 'could not tell whether Claude Code is signed in. Run: claude');
-  }
+  const [summariesMark, summariesText] = summariesRow(io, cfg, hubWritesSummaries);
+  add(summariesMark, 'Summaries', summariesText);
   const waiting = loadState(io.hubDir).last_waiting;
   if (waiting) add('!', 'Waiting summaries', `${plural(waiting.count, 'session')}${waiting.reason ? `: ${waiting.reason}` : ''}`);
 
@@ -785,7 +782,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   try {
     return await dispatch(argv, io);
   } catch (e) {
-    io.err(e instanceof Error ? e.message : String(e));
+    io.err(friendlyMessage(e, io.hubDir));
     return 1;
   }
 }

@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { Fail } from './errors.js';
 import { runSync, type SyncOptions } from './sync.js';
 
 const HOOK_SUFFIX = ' sync --auto';
@@ -12,12 +13,16 @@ export function hookCommand(nodePath: string, bundlePath: string): string {
   return `"${nodePath}" "${bundlePath}"${HOOK_SUFFIX}`;
 }
 
-function isOurs(command: unknown, bundleName?: string): boolean {
-  return typeof command === 'string' && command.endsWith(HOOK_SUFFIX) && (bundleName === undefined || command.includes(bundleName));
+/**
+ * True for a hook that runs our sync, wherever node and the bundle are: `"node" "…/hub.mjs" sync --auto`, or
+ * `…/bin.js` for a hook written from a clone's build. Another tool's `sync --auto` hook is never ours.
+ */
+export function isOurHook(command: unknown): boolean {
+  return typeof command === 'string' && /^"[^"\r\n]+" "[^"\r\n]*[\\/](?:hub\.mjs|bin\.js)" sync --auto$/.test(command);
 }
 
 function notJson(hint: string): Error {
-  return new Error(`~/.claude/settings.json is not valid JSON, so it was not changed.${hint}`);
+  return new Fail(`~/.claude/settings.json is not valid JSON, so it was not changed.${hint}`);
 }
 
 /** Returns null when the file does not exist. Throws when it is not a JSON object. */
@@ -56,11 +61,65 @@ function commandsOf(entry: unknown): unknown[] {
   return Array.isArray(hooks) ? hooks.map((h) => (h as Json | null)?.command) : [];
 }
 
+/**
+ * Goes through the SessionEnd entries and either rewrites our hooks to `command` (keeping the first, dropping
+ * any more) or, with null, removes all of them. Other people's hooks are never touched.
+ */
+function rewriteOurs(list: unknown[], command: string | null): { list: unknown[]; found: number } {
+  let found = 0;
+  let placed = false;
+  const next: unknown[] = [];
+  for (const entry of list) {
+    const inner = (entry as Json | null)?.hooks;
+    if (!Array.isArray(inner)) {
+      next.push(entry);
+      continue;
+    }
+    const rest: unknown[] = [];
+    for (const h of inner) {
+      if (!isOurHook((h as Json | null)?.command)) {
+        rest.push(h);
+        continue;
+      }
+      found++;
+      if (command !== null && !placed) {
+        placed = true;
+        rest.push({ ...(h as Json), command });
+      }
+    }
+    if (rest.length === inner.length && rest.every((h, i) => h === inner[i])) next.push(entry);
+    else if (rest.length > 0) next.push({ ...(entry as Json), hooks: rest });
+  }
+  return { list: next, found };
+}
+
+function store(settings: Json, settingsPath: string, list: unknown[]): void {
+  const hooks = { ...((settings.hooks as Json | undefined) ?? {}) };
+  if (list.length > 0) hooks.SessionEnd = list;
+  else delete hooks.SessionEnd;
+  if (Object.keys(hooks).length > 0) settings.hooks = hooks;
+  else delete settings.hooks;
+  writeSettings(settingsPath, settings, true);
+}
+
+/** Rewrites every hook of ours to run `command`, keeping only one. Writes nothing when nothing changes. */
+export function repointHook(settingsPath: string, command: string): { repointed: number } {
+  const hint = ` Fix it or add the hook by hand: ${command}`;
+  const settings = readSettings(settingsPath, hint);
+  if (!settings) return { repointed: 0 };
+  const list = sessionEnd(settings, hint);
+  const { list: next, found } = rewriteOurs(list, command);
+  if (found === 0 || JSON.stringify(next) === JSON.stringify(list)) return { repointed: 0 };
+  store(settings, settingsPath, next);
+  return { repointed: found };
+}
+
+/** Turns auto sync on. A hook of ours already there (even one for another path) is repointed, never doubled. */
 export function autoOn(settingsPath: string, command: string): { changed: boolean } {
   const hint = ` Fix it or add the hook by hand: ${command}`;
   const settings = readSettings(settingsPath, hint);
   const list = sessionEnd(settings ?? {}, hint);
-  if (list.some((e) => commandsOf(e).includes(command))) return { changed: false };
+  if (list.some((e) => commandsOf(e).some(isOurHook))) return { changed: repointHook(settingsPath, command).repointed > 0 };
   const next: Json = settings ?? {};
   const hooks = { ...((next.hooks as Json | undefined) ?? {}) };
   hooks.SessionEnd = [...list, { hooks: [{ type: 'command', command, timeout: 10 }] }];
@@ -69,31 +128,14 @@ export function autoOn(settingsPath: string, command: string): { changed: boolea
   return { changed: true };
 }
 
-export function autoOff(settingsPath: string, bundleName: string): { removed: number } {
+/** Turns auto sync off by removing every hook of ours: two would start two syncs. */
+export function autoOff(settingsPath: string): { removed: number } {
   const settings = readSettings(settingsPath, '');
   if (!settings) return { removed: 0 };
-  const list = sessionEnd(settings, '');
-  let removed = 0;
-  const kept: unknown[] = [];
-  for (const entry of list) {
-    const inner = (entry as Json | null)?.hooks;
-    if (!Array.isArray(inner)) {
-      kept.push(entry);
-      continue;
-    }
-    const rest = inner.filter((h) => !isOurs((h as Json | null)?.command, bundleName));
-    removed += inner.length - rest.length;
-    if (rest.length === inner.length) kept.push(entry);
-    else if (rest.length > 0) kept.push({ ...(entry as Json), hooks: rest });
-  }
-  if (removed === 0) return { removed: 0 };
-  const hooks = { ...(settings.hooks as Json) };
-  if (kept.length > 0) hooks.SessionEnd = kept;
-  else delete hooks.SessionEnd;
-  if (Object.keys(hooks).length > 0) settings.hooks = hooks;
-  else delete settings.hooks;
-  writeSettings(settingsPath, settings, true);
-  return { removed };
+  const { list, found } = rewriteOurs(sessionEnd(settings, ''), null);
+  if (found === 0) return { removed: 0 };
+  store(settings, settingsPath, list);
+  return { removed: found };
 }
 
 function readLines(path: string): string[] {
@@ -105,7 +147,7 @@ export function autoStatus(settingsPath: string, logPath: string): { on: boolean
   let on = false;
   try {
     const settings = readSettings(settingsPath, '');
-    if (settings) on = sessionEnd(settings, '').some((e) => commandsOf(e).some((c) => isOurs(c)));
+    if (settings) on = sessionEnd(settings, '').some((e) => commandsOf(e).some(isOurHook));
   } catch {
     // an unreadable settings file means the hook is not (reliably) on
   }
