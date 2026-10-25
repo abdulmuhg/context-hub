@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { stripSecrets } from '@context-hub/core';
 
@@ -12,15 +12,33 @@ export const GIT_TIMEOUT_MS = 5000;
 export const FETCH_TIMEOUT_MS = 20_000;
 export const GH_TIMEOUT_MS = 15_000;
 
+/**
+ * The environment git and gh run in: they must never ask for anything, since a sync often runs in the
+ * background. GIT_TERMINAL_PROMPT only covers the terminal; Git Credential Manager would still open a
+ * sign-in window or account picker for an https remote unless GCM_INTERACTIVE is never.
+ */
+export function quietEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GH_PROMPT_DISABLED: '1' };
+}
+
+/**
+ * How every git and gh command is started. windowsHide matters on Windows: an automatic sync runs
+ * without a console, so without it each command would flash a console window of its own.
+ */
+export function quietOptions(cwd: string | undefined, timeoutMs: number): ExecFileSyncOptionsWithStringEncoding {
+  return {
+    ...(cwd !== undefined ? { cwd } : {}),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: timeoutMs,
+    windowsHide: true,
+    env: quietEnv(process.env),
+  };
+}
+
 export const realRunner: CommandRunner = (cmd, cwd, args, timeoutMs) => {
   try {
-    return execFileSync(cmd, args, {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: timeoutMs,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1' },
-    }).trim();
+    return execFileSync(cmd, args, quietOptions(cwd, timeoutMs)).trim();
   } catch {
     return null;
   }
