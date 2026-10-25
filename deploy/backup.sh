@@ -14,9 +14,11 @@ set -euo pipefail
 
 STACK_DIR="${STACK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 
-# Off-box settings (S3_BUCKET, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY and
-# optionally S3_REGION) live in a file that is not in git, so cron needs no
-# secrets on its command line. Without the file the upload below is skipped.
+# Off-box settings live in a file that is not in git, so cron needs no secrets
+# on its command line. S3_BUCKET, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY and
+# optionally S3_REGION name the primary bucket; the same names with an
+# S3_SECONDARY_ prefix name a second bucket that gets its own copy. Without the
+# file, or with neither bucket set, the upload below is skipped.
 if [ -f "${STACK_DIR}/.env.backup" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -44,7 +46,35 @@ LOCAL_OK=false
 SIZE_BYTES=null
 OFFSITE_OK=null
 OFFSITE_CONFIGURED=false
-if [ -n "${S3_BUCKET:-}" ]; then OFFSITE_CONFIGURED=true; fi
+if [ -n "${S3_BUCKET:-}" ] || [ -n "${S3_SECONDARY_BUCKET:-}" ]; then
+  OFFSITE_CONFIGURED=true
+fi
+
+# Copies the dump to one S3-compatible bucket. $1 is the settings prefix, S3
+# for the primary bucket or S3_SECONDARY for the second one, and $2 the folder
+# in the bucket. It returns non-zero rather than exiting, so a failed upload to
+# one bucket never stops the copy to the other.
+upload() {
+  local prefix="$1" folder="$2"
+  local bucket_var="${prefix}_BUCKET" endpoint_var="${prefix}_ENDPOINT"
+  local key_var="${prefix}_ACCESS_KEY" secret_var="${prefix}_SECRET_KEY"
+  local region_var="${prefix}_REGION"
+  if [ -z "${!endpoint_var:-}" ] || [ -z "${!key_var:-}" ] || [ -z "${!secret_var:-}" ]; then
+    echo "ERROR: ${bucket_var} is set but ${endpoint_var}, ${key_var} or ${secret_var} is not" >&2
+    return 1
+  fi
+  docker run --rm \
+    -e AWS_ACCESS_KEY_ID="${!key_var}" \
+    -e AWS_SECRET_ACCESS_KEY="${!secret_var}" \
+    -e AWS_DEFAULT_REGION="${!region_var:-auto}" \
+    -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+    -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
+    -v "${BACKUP_DIR}:/backups:ro" \
+    amazon/aws-cli:latest \
+    --endpoint-url "${!endpoint_var}" \
+    s3 cp "/backups/$(basename "${DUMP}")" "s3://${!bucket_var}/${folder}" || return 1
+  echo "uploaded to s3://${!bucket_var}/${folder}"
+}
 
 mkdir -p "${BACKUP_DIR}" "${STATUS_DIR}"
 
@@ -98,26 +128,29 @@ SIZE_BYTES="$(wc -c < "${DUMP}")"
 
 echo "wrote ${DUMP} ($(du -h "${DUMP}" | cut -f1))"
 
-# Optional off-box copy, same variables as backup-n8n.sh. Skipped entirely
-# when S3_BUCKET is unset.
-if [ -n "${S3_BUCKET:-}" ]; then
-  # false until the upload returns, so a failed one (or a missing key below,
-  # which aborts the shell) is reported as a failure rather than as "unknown".
+# Optional off-box copies, same variables as backup-n8n.sh: the primary bucket,
+# then the second one, each skipped when its bucket is unset. Both are always
+# attempted, and offsite_ok is true only when every configured bucket got the
+# dump.
+OFFSITE_FAILED=false
+if [ "${OFFSITE_CONFIGURED}" = true ]; then
+  # false until the uploads return, so a run that dies part way through is
+  # reported as a failure rather than as "unknown".
   OFFSITE_OK=false
-  docker run --rm \
-    -e AWS_ACCESS_KEY_ID="${S3_ACCESS_KEY:?S3_ACCESS_KEY required when S3_BUCKET is set}" \
-    -e AWS_SECRET_ACCESS_KEY="${S3_SECRET_KEY:?S3_SECRET_KEY required when S3_BUCKET is set}" \
-    -e AWS_DEFAULT_REGION="${S3_REGION:-auto}" \
-    -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
-    -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
-    -v "${BACKUP_DIR}:/backups:ro" \
-    amazon/aws-cli:latest \
-    --endpoint-url "${S3_ENDPOINT:?S3_ENDPOINT required when S3_BUCKET is set}" \
-    s3 cp "/backups/$(basename "${DUMP}")" "s3://${S3_BUCKET}/context-hub/"
-  OFFSITE_OK=true
-  echo "uploaded to s3://${S3_BUCKET}/context-hub/"
+  for prefix in S3 S3_SECONDARY; do
+    bucket_var="${prefix}_BUCKET"
+    if [ -z "${!bucket_var:-}" ]; then continue; fi
+    if ! upload "${prefix}" context-hub/; then OFFSITE_FAILED=true; fi
+  done
+  if [ "${OFFSITE_FAILED}" = false ]; then OFFSITE_OK=true; fi
 fi
 
 # -maxdepth 1 keeps the pruner out of status/, which is not ours to tidy.
 find "${BACKUP_DIR}" -maxdepth 1 -name 'context-hub-*.sqlite.gz' -mtime "+${RETENTION_DAYS}" -delete
 echo "pruned local backups older than ${RETENTION_DAYS} days"
+
+# Only now, so a failed upload still leaves local retention running.
+if [ "${OFFSITE_FAILED}" = true ]; then
+  echo "FATAL: an off-box upload failed; see above" >&2
+  exit 1
+fi

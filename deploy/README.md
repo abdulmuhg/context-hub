@@ -59,8 +59,15 @@ S3_ACCESS_KEY=...
 S3_SECRET_KEY=...
 ```
 
+`S3_REGION` is optional and defaults to `auto`, which suits R2; other providers
+may want their own region name. To keep a second copy with another provider,
+add the same settings again with an `S3_SECONDARY_` prefix
+(`S3_SECONDARY_BUCKET`, `S3_SECONDARY_ENDPOINT` and so on). Each backup then
+goes to both buckets, each upload is attempted even when the other fails, and
+the dashboard shows the off-site copy as OK only when both landed.
+
 Old off-site copies are not deleted by the script; set a lifecycle rule (for
-example, delete after 30 days) on the bucket.
+example, delete after 30 days) on each bucket.
 
 ## Updating
 

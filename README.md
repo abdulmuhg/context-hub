@@ -434,9 +434,9 @@ node /app/dist/admin-bin.js backup <file>
 Copying the SQLite file while the server runs is not safe. Use
 `admin-bin.js backup <file>`, which takes a consistent copy. The reference
 setup runs a nightly script that does that, keeps 14 days locally, uploads to
-S3-compatible storage (Cloudflare R2), and writes the status file the
-dashboard reads. Mount only that status folder into the container,
-read-only.
+S3-compatible storage (one bucket, or two with different providers), and
+writes the status file the dashboard reads. Mount only that status folder
+into the container, read-only.
 
 ### Monitoring
 
