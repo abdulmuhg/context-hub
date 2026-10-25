@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { factsHash, gatherFacts, renderFacts, renderSection, type CommandRunner, type Pr, type RepoFacts } from '../src/git-facts.js';
+import { factsHash, gatherFacts, quietEnv, quietOptions, renderFacts, renderSection, type CommandRunner, type Pr, type RepoFacts } from '../src/git-facts.js';
 
 const GH_LIST = 'gh pr list --state all --limit 20 --json number,title,state,headRefName,mergedAt,closedAt';
 const LOG = 'git log -15 --format=%h%x09%cs%x09%s';
@@ -142,5 +142,24 @@ describe('factsHash', () => {
   it('is equal for equal facts and differs when a PR changes state', () => {
     expect(factsHash(base({ prs: [pr(1, 'OPEN')] }))).toBe(factsHash(base({ prs: [pr(1, 'OPEN')] })));
     expect(factsHash(base({ prs: [pr(1, 'OPEN')] }))).not.toBe(factsHash(base({ prs: [pr(1, 'MERGED', '2026-10-22T08:00:00Z')] })));
+  });
+});
+
+describe('quietEnv', () => {
+  it('turns off every prompt, Git Credential Manager windows included, and keeps the rest', () => {
+    const env = quietEnv({ PATH: '/bin', GCM_INTERACTIVE: 'auto' });
+    expect(env).toEqual({ PATH: '/bin', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GH_PROMPT_DISABLED: '1' });
+  });
+});
+
+describe('quietOptions', () => {
+  it('hides the console window and starts commands with prompts off', () => {
+    const opts = quietOptions('/repo', 5000);
+    expect(opts).toMatchObject({ cwd: '/repo', timeout: 5000, windowsHide: true });
+    expect(opts.env).toMatchObject({ GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
+  });
+
+  it('leaves cwd out when none is given', () => {
+    expect('cwd' in quietOptions(undefined, 5000)).toBe(false);
   });
 });

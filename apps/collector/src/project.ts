@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { normalizeRemote } from '@context-hub/core';
+import { quietOptions } from './git-facts.js';
 
 export type GitRunner = (cwd: string, args: string[]) => string | null;
 
@@ -24,11 +25,7 @@ export interface ResolveInput {
 
 export const realGit: GitRunner = (cwd, args) => {
   try {
-    const out = execFileSync('git', ['-C', cwd, ...args], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 5000,
-    }).trim();
+    const out = execFileSync('git', ['-C', cwd, ...args], quietOptions(undefined, 5000)).trim();
     return out === '' ? null : out;
   } catch {
     return null;
