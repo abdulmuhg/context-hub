@@ -29,7 +29,11 @@ export function createLogger(
   let current = level;
   const emit = (lvl: Level, msg: string, fields?: Record<string, unknown>): void => {
     if (ORDER[lvl] < ORDER[current]) return;
-    write(JSON.stringify({ ...fields, ...{ ts: new Date().toISOString(), level: lvl, msg } }), lvl);
+    const obj: Record<string, unknown> = { ts: '', level: lvl, msg, ...fields };
+    obj.ts = new Date().toISOString();
+    obj.level = lvl;
+    obj.msg = msg;
+    write(JSON.stringify(obj), lvl);
   };
   return {
     debug: (m, f) => emit('debug', m, f),

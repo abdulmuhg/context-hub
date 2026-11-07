@@ -47,6 +47,12 @@ describe('createLogger', () => {
     expect(obj.ts).not.toBe('bad');
   });
 
+  it('emits keys in the order ts, level, msg, then fields', () => {
+    const { log, lines } = capture('info');
+    log.info('m', { level: 'error', a: 1, ts: 'bad' });
+    expect(Object.keys(JSON.parse(lines[0]!.line))).toEqual(['ts', 'level', 'msg', 'a']);
+  });
+
   it('setLevel changes filtering', () => {
     const { log, lines } = capture('error');
     log.setLevel('debug');

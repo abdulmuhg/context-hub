@@ -1,5 +1,6 @@
 import type { Trigger } from '@context-hub/core';
 import type { Db } from './db.js';
+import { logger } from './logger.js';
 
 export type Direction = 'in' | 'out';
 export type Action = 'upload' | 'delete' | 'note' | 'sync' | 'list_projects' | 'get_project' | 'search' | 'get_session';
@@ -44,7 +45,7 @@ export function logActivity(db: Db, e: ActivityEntry, now: string): void {
 }
 
 /** Like logActivity, but a failure is written to the server log and swallowed: logging must never fail a request. */
-export function logActivitySafe(db: Db, e: ActivityEntry, now: string, log: (line: string) => void = console.error): void {
+export function logActivitySafe(db: Db, e: ActivityEntry, now: string, log: (line: string) => void = (line) => logger.error(line)): void {
   try {
     logActivity(db, e, now);
   } catch (err) {

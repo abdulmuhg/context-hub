@@ -119,7 +119,7 @@ describe('signed-out access', () => {
   it('leaves /healthz alone', async () => {
     const res = await get('/healthz');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    expect(await res.json()).toEqual({ ok: true, version: 'dev' });
   });
 });
 

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { LlmRefusal, PromptedLlm, type AskCall, type Effort } from '@context-hub/core';
+import { logger } from './logger.js';
 import type { UsageRecord } from './usage.js';
 
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
@@ -47,7 +48,7 @@ export class AnthropicLlm extends PromptedLlm {
           cache_write_tokens: usage.cache_creation_input_tokens ?? 0,
         });
       } catch (e) {
-        console.error(`usage not recorded: ${e instanceof Error ? e.message : String(e)}`);
+        logger.error('usage not recorded', { err: e instanceof Error ? e.message : String(e) });
       }
     }
     // A refusal is a normal HTTP 200 response, not an exception.

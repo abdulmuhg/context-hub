@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { dirname } from 'node:path';
 import { loadClientBundle } from './client-dist.js';
 import { openDb } from './db.js';
+import { logger, parseLogLevel } from './logger.js';
 import { createHandler } from './http.js';
 import { AnthropicLlm, DEFAULT_MODEL, type Effort } from './llm-anthropic.js';
 import { handleMcp } from './mcp.js';
@@ -10,6 +11,8 @@ import { parsePublicUrl } from './oauth/config.js';
 import { parseDailyBudgetUsd, recordUsage } from './usage.js';
 import { DEFAULT_MAX_INPUT_TOKENS, startWorker } from './worker.js';
 import { secureCookiesFor, type WebConfig } from './web/routes.js';
+
+logger.setLevel(parseLogLevel(process.env.LOG_LEVEL));
 
 const path = process.env.DATABASE_PATH ?? './data/hub.sqlite';
 const port = Number(process.env.PORT ?? 3000);
@@ -37,9 +40,9 @@ const web: WebConfig = {
 const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };
 
 const server = createServer(createHandler({ db, mcp: handleMcp(db), web, client, serverSummaries: Boolean(process.env.ANTHROPIC_API_KEY), ...(publicUrl ? { oauth: { publicUrl } } : {}) }));
-console.log(publicUrl ? `oauth: on, ${publicUrl}` : 'oauth: off, no PUBLIC_URL');
-console.log(`client bundle: ${client.bundle === null ? 'off' : 'on'}`);
-console.log(`dashboard: on, secure cookies ${web.secureCookies ? 'on' : 'off'}, backup status ${web.backupStatusPath ?? 'none'}`);
+logger.info(publicUrl ? 'oauth on' : 'oauth off, no PUBLIC_URL', publicUrl ? { public_url: publicUrl } : {});
+logger.info('client bundle', { on: client.bundle !== null });
+logger.info('dashboard on', { secure_cookies: web.secureCookies, backup_status: web.backupStatusPath ?? 'none' });
 
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 let worker: { stop: () => Promise<void> } | null = null;
@@ -50,16 +53,16 @@ if (process.env.ANTHROPIC_API_KEY) {
   const maxInputTokens = Number(process.env.DIGEST_MAX_INPUT_TOKENS ?? DEFAULT_MAX_INPUT_TOKENS);
   if (!Number.isInteger(maxInputTokens) || maxInputTokens < 1000) throw new Error('DIGEST_MAX_INPUT_TOKENS must be a whole number of at least 1000');
   if (maxInputTokens > 80000) {
-    console.warn(`DIGEST_MAX_INPUT_TOKENS is ${maxInputTokens}: with 2 characters per token, a full prompt can pass 100K tokens, which some models bill at a higher rate.`);
+    logger.warn('DIGEST_MAX_INPUT_TOKENS is high: with 2 characters per token, a full prompt can pass 100K tokens, which some models bill at a higher rate', { max_input_tokens: maxInputTokens });
   }
   const model = process.env.DIGEST_MODEL ?? DEFAULT_MODEL;
   worker = startWorker({ db, llm: new AnthropicLlm({ model, effort, onUsage: (u) => recordUsage(db, u, new Date().toISOString()) }), maxInputTokens, ...(dailyBudgetUsd === null ? {} : { dailyBudgetMicroUsd: Math.round(dailyBudgetUsd * 1_000_000) }) });
-  console.log(`digests: on, model ${model}, effort ${effort}`);
+  logger.info('digests on', { model, effort });
 } else {
-  console.log('fallback summaries: off, no ANTHROPIC_API_KEY. Computers with Claude Code write their own summaries.');
+  logger.info('fallback summaries off, no ANTHROPIC_API_KEY. Computers with Claude Code write their own summaries.');
 }
 
-server.listen(port, () => console.log(`context-hub listening on :${port}, database ${path}`));
+server.listen(port, () => logger.info('listening', { port, database: path }));
 
 const stop = (): void => {
   server.closeAllConnections();

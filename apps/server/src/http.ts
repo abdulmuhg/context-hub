@@ -1,10 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { isTrigger, stripSecrets, TRIGGER_HEADER, type DigestBody, type HashedSession, type Trigger, type UploadDigest } from '@context-hub/core';
 import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, recordSyncRun, recordUploader, type PageLeft } from './activity.js';
 import { installScript, installScriptPs1 } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
+import { logger as sharedLogger, type Logger } from './logger.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProjectState, okDigestsForProject, pageInputs, projectsNeedingPage, saveComputerOutcome, savePageIfVersion } from './digest-store.js';
 import { deleteProject, deleteSession, getStoredSession, listProjectDigests, status, storeUpload } from './store.js';
@@ -25,6 +27,10 @@ export interface AppDeps {
   now?: () => Date;
   limiter?: AuthLimiter;
   log?: (line: string) => void;
+  /** Structured logger for the access log and unhandled errors. Defaults to the shared logger. */
+  logger?: Logger;
+  /** Reported by /healthz. Defaults to APP_VERSION, or 'dev'. */
+  version?: string;
   /** When set, /mcp 401s carry a WWW-Authenticate challenge and OAuth access tokens are accepted there. */
   oauth?: OAuthConfig;
   /** Handles POST /mcp once the caller is authorised. Wired in main.ts. */
@@ -167,7 +173,9 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
   const { db } = deps;
   const now = deps.now ?? (() => new Date());
   const limiter = deps.limiter ?? new AuthLimiter();
-  const log = deps.log ?? ((line: string) => console.log(line));
+  const logger = deps.logger ?? sharedLogger;
+  const version = deps.version ?? process.env.APP_VERSION ?? 'dev';
+  const log = deps.log ?? ((line: string) => logger.info(line));
 
   const challenge = (res: ServerResponse, presented: boolean): void => {
     if (!deps.oauth) return;
@@ -219,7 +227,14 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
       if (handled) return;
     }
 
-    if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) return send(res, 200, { status: 'ok' });
+    if (path === '/healthz' && (method === 'GET' || method === 'HEAD')) {
+      try {
+        db.prepare('SELECT 1').get();
+      } catch {
+        return send(res, 503, { ok: false, version });
+      }
+      return send(res, 200, { ok: true, version });
+    }
 
     if ((path === '/install' || path === '/install.ps1' || path === '/hub.mjs') && (method === 'GET' || method === 'HEAD')) {
       const publicUrl = deps.oauth?.publicUrl ?? deps.web?.publicOrigin ?? null;
@@ -493,9 +508,24 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
   };
 
   return (req, res) => {
+    const reqId = randomUUID();
+    res.setHeader('X-Request-Id', reqId);
+    const started = performance.now();
+    let path = '/';
+    try {
+      path = new URL(req.url ?? '/', 'http://local').pathname;
+    } catch {
+      // keep '/'
+    }
+    // 'close' fires once per response, including when the client aborts mid-flight.
+    res.once('close', () => {
+      const fields = { method: req.method ?? 'GET', path, status: res.statusCode, ms: Math.round((performance.now() - started) * 100) / 100, req_id: reqId };
+      if (path === '/healthz') logger.debug('request', fields);
+      else logger.info('request', fields);
+    });
     route(req, res).catch((e: unknown) => {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
-      log(`error: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+      logger.error('unhandled error', { err: e instanceof Error ? (e.stack ?? e.message) : String(e) });
       send(res, 500, { error: 'Internal error' });
     });
   };
