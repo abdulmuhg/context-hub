@@ -47,3 +47,17 @@ export function createLogger(
 }
 
 export const logger: Logger = createLogger('info');
+
+/**
+ * For the older plain-string `log(line)` call sites (worker, uploads): picks a
+ * level from the wording, so failures reach Grafana as warn/error, not info.
+ */
+export function levelOfLine(line: string): Level {
+  if (/unexpected error|activity log failed/i.test(line)) return 'error';
+  if (/\bfailed\b|refused/i.test(line)) return 'warn';
+  return 'info';
+}
+
+export function lineSink(l: Logger = logger): (line: string) => void {
+  return (line) => l[levelOfLine(line)](line);
+}

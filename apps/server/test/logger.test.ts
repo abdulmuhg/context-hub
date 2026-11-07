@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLogger, parseLogLevel, type Level } from '../src/logger.js';
+import { createLogger, levelOfLine, parseLogLevel, type Level } from '../src/logger.js';
 
 describe('parseLogLevel', () => {
   it('defaults to info', () => {
@@ -58,5 +58,15 @@ describe('createLogger', () => {
     log.setLevel('debug');
     log.debug('d');
     expect(lines).toHaveLength(1);
+  });
+});
+
+describe('levelOfLine', () => {
+  it('maps the plain-string log lines to levels', () => {
+    expect(levelOfLine('worker: unexpected error (boom)')).toBe('error');
+    expect(levelOfLine('activity log failed: disk full')).toBe('error');
+    expect(levelOfLine('digest 7: failed (timeout); attempt 2, next try x')).toBe('warn');
+    expect(levelOfLine('digest 7: refused by the model (cyber); it will not be retried')).toBe('warn');
+    expect(levelOfLine('state project 3: review skipped (no change)')).toBe('info');
   });
 });

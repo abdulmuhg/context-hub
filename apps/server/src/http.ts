@@ -6,7 +6,7 @@ import { forgetActivityForProject, forgetActivityForSession, logActivitySafe, re
 import { installScript, installScriptPs1 } from './client-dist.js';
 import type { Db } from './db.js';
 import { cleanDeviceName, exchangeDeviceCode } from './devices.js';
-import { logger as sharedLogger, type Logger } from './logger.js';
+import { lineSink, logger as sharedLogger, type Logger } from './logger.js';
 import { AuthLimiter } from './ratelimit.js';
 import { deleteProjectState, okDigestsForProject, pageInputs, projectsNeedingPage, saveComputerOutcome, savePageIfVersion } from './digest-store.js';
 import { deleteProject, deleteSession, getStoredSession, listProjectDigests, status, storeUpload } from './store.js';
@@ -175,7 +175,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
   const limiter = deps.limiter ?? new AuthLimiter();
   const logger = deps.logger ?? sharedLogger;
   const version = deps.version ?? process.env.APP_VERSION ?? 'dev';
-  const log = deps.log ?? ((line: string) => logger.info(line));
+  const log = deps.log ?? lineSink(logger);
 
   const challenge = (res: ServerResponse, presented: boolean): void => {
     if (!deps.oauth) return;

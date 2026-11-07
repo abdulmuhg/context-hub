@@ -1,5 +1,5 @@
 import type { Db } from './db.js';
-import { logger } from './logger.js';
+import { lineSink } from './logger.js';
 import {
   clearStateRetry,
   deleteProjectState,
@@ -52,7 +52,7 @@ function context(deps: WorkerDeps): Ctx {
     llm: deps.llm,
     now: () => now().toISOString(),
     maxChars: (deps.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS) * CHARS_PER_TOKEN,
-    log: deps.log ?? ((line) => logger.info(line)),
+    log: deps.log ?? lineSink(),
   };
 }
 
@@ -184,7 +184,7 @@ export async function runOnce(deps: WorkerDeps): Promise<'digest' | 'state' | 'i
 
 /** Runs jobs until stopped, resting after an idle or failed pass. */
 export function startWorker(deps: WorkerDeps, idleMs = 5000): { stop: () => Promise<void> } {
-  const log = deps.log ?? ((line: string) => logger.info(line));
+  const log = deps.log ?? lineSink();
   let stopped = false;
   let wake: (() => void) | null = null;
 
