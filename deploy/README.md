@@ -23,7 +23,7 @@ nano Caddyfile                    # replace hub.example.com
 docker compose up -d
 ```
 
-Check it: `curl https://hub.example.com/healthz` answers `{"status":"ok"}`.
+Check it: `curl https://hub.example.com/healthz` answers `{"ok":true,"version":"<sha>"}`.
 
 ## 2. Connect your first computer and browser
 

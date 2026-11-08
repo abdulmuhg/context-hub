@@ -52,6 +52,10 @@ FROM node:22-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+# The commit this image was built from, reported by /healthz. CI passes --build-arg GIT_SHA.
+ARG GIT_SHA=dev
+ENV APP_VERSION=$GIT_SHA
+
 COPY --from=build /runtime/node_modules ./node_modules
 COPY --from=build /runtime/package.json ./package.json
 COPY --from=build /runtime/dist ./dist

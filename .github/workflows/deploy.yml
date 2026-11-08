@@ -47,7 +47,9 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          build-args: HUB_VERSION=${{ steps.meta.outputs.version }}
+          build-args: |
+            HUB_VERSION=${{ steps.meta.outputs.version }}
+            GIT_SHA=${{ github.sha }}
           tags: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

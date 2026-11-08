@@ -54,7 +54,7 @@ describe('health and unknown routes', () => {
   it('healthz answers without a token', async () => {
     const res = await call('GET', '/healthz');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    expect(await res.json()).toEqual({ ok: true, version: 'dev' });
   });
 
   it('unknown paths are 404 JSON', async () => {

@@ -382,6 +382,7 @@ interface; only the proxy should reach it.
 | `DIGEST_EFFORT` | no | Default `low`. |
 | `DIGEST_DAILY_BUDGET_USD` | no | A daily limit in US dollars for the fallback's summaries (UTC day). When it is reached, they wait until 00:00 UTC; a job already running finishes, so the limit can be passed by one job. |
 | `DIGEST_MAX_INPUT_TOKENS` | no | Default `60000`, counted at 2 characters per token so a prompt stays under the 100K-token price step. Long sessions are summarised in parts of this size. |
+| `LOG_LEVEL` | no | `debug`, `info`, `warn` or `error`. Default `info`. Logs are one JSON object per line on stdout/stderr; the server refuses to start on any other value. |
 | `IMAGE_TAG` | no | Shown on the dashboard as the running version. The reference deploy sets it. |
 | `BACKUP_STATUS_PATH` | no | A JSON file the backup job writes; the dashboard shows it. Default `/backup-status/context-hub.json` when it exists. |
 | `DATABASE_PATH`, `PORT` | no | Defaults `/data/hub.sqlite` and `3000` in the image. |
@@ -438,10 +439,14 @@ S3-compatible storage (one bucket, or two with different providers), and
 writes the status file the dashboard reads. Mount only that status folder
 into the container, read-only.
 
-### Monitoring
+### Operate
 
-`/healthz` answers `{"status":"ok"}` without a sign-in. `/` is the dashboard
-and redirects to `/login` when signed out.
+- **Health:** `GET /healthz` needs no sign-in and answers `{"ok":true,"version":"<sha>"}`, or `503` with `"ok":false` when the SQLite database is unusable. `version` is the commit the image was built from.
+- **Gated path:** `GET /api/status` answers `401` without a token. `/` is the dashboard and redirects to `/login` when signed out.
+- **State:** `sqlite-volume`: one SQLite file on the `/data` volume, backed up by the stack's `backup-context-hub.sh` (see [Backups](#backups)).
+- **Required env:** `PUBLIC_URL` (sign-in and the install script). Everything else is optional; see [Settings](#settings).
+- **Logs:** one JSON object per line (`ts`, `level`, `msg`, fields). Each request gets one line with `method`, `path` (no query string), `status`, `ms` and `req_id`, which is also sent back as `X-Request-Id`. Headers, bodies and tokens are never logged. Set `LOG_LEVEL` to change verbosity.
+- **Rollback:** set `IMAGE_TAG` in the stack's `.env` to an older `sha-...` tag and run `docker compose pull && docker compose up -d`.
 
 ---
 
