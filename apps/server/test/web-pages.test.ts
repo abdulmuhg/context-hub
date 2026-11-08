@@ -449,3 +449,29 @@ describe('the Add a computer page', () => {
     expect(codePage('signin', 'ABCD-EFGH', 'https://hub.test', 'csrf-token', 'windows')).not.toContain('data-copy');
   });
 });
+
+describe('PostHog pageviews from the routes', () => {
+  it('reports each page once: signed in with an opaque per-session value, signed out with none', async () => {
+    const calls: { url: string; status: number; html: boolean; viewer: string | null }[] = [];
+    cfg.pageview = (req, status, contentType, viewer) => {
+      calls.push({ url: req.url ?? '', status, html: contentType.startsWith('text/html'), viewer });
+    };
+    await page('/projects');
+    await fetch(url + '/login');
+    await fetch(url + '/activity', { redirect: 'manual' }); // no cookie: redirected to sign-in
+    await fetch(url + '/assets/app.css', { headers: { Cookie: cookie } }); // not a page
+    await new Promise((r) => setTimeout(r, 50)); // 'finish' fires after the body is sent
+
+    expect(calls.map((c) => [c.url, c.status, c.html])).toEqual([
+      ['/projects', 200, true],
+      ['/login', 200, true],
+      ['/activity', 302, false],
+    ]);
+    const signedIn = calls[0]!.viewer;
+    expect(typeof signedIn).toBe('string');
+    expect(signedIn!.length).toBeGreaterThan(16); // the session's random value, never its sequential id
+    expect(cookie).not.toContain(signedIn!);
+    expect(calls[1]!.viewer).toBeNull();
+    expect(calls[2]!.viewer).toBeNull();
+  });
+});
