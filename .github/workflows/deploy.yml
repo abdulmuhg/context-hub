@@ -62,21 +62,33 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          script: |
-            set -euo pipefail
-            cd /opt/stack/context-hub
-            # Rewrite the pinned tag, then pull. Rollback is the same edit
-            # with an older SHA.
-            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${{ needs.build.outputs.tag }}|" .env
-            grep '^IMAGE_TAG=' .env
-            docker compose pull
-            docker compose up -d
-            docker image prune -f
-            # Fails the job unless the container is healthy, runs this tag and
-            # answers through Caddy (vps-stack's scripts/verify.sh).
-            /opt/stack/scripts/verify.sh context-hub
+      # Plain ssh (preinstalled on the runner), as in vps-stack's deploy-app.yml:
+      # appleboy/ssh-action downloads its binary from GitHub releases on every
+      # run, and release downloads returning 504 blocked deploys on 2026-11-08.
+      - name: Deploy over SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 \
+            "$SSH_USER@$SSH_HOST" bash -s -- "$TAG" <<'REMOTE'
+          set -euo pipefail
+          tag="$1"
+          cd /opt/stack/context-hub
+          # Rewrite the pinned tag, then pull. Rollback is the same edit
+          # with an older SHA.
+          sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${tag}|" .env
+          grep '^IMAGE_TAG=' .env
+          docker compose pull
+          docker compose up -d
+          docker image prune -f
+          # Fails the job unless the container is healthy, runs this tag and
+          # answers through Caddy (vps-stack's scripts/verify.sh).
+          /opt/stack/scripts/verify.sh context-hub
+          REMOTE
