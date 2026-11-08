@@ -383,6 +383,8 @@ interface; only the proxy should reach it.
 | `DIGEST_DAILY_BUDGET_USD` | no | A daily limit in US dollars for the fallback's summaries (UTC day). When it is reached, they wait until 00:00 UTC; a job already running finishes, so the limit can be passed by one job. |
 | `DIGEST_MAX_INPUT_TOKENS` | no | Default `60000`, counted at 2 characters per token so a prompt stays under the 100K-token price step. Long sessions are summarised in parts of this size. |
 | `LOG_LEVEL` | no | `debug`, `info`, `warn` or `error`. Default `info`. Logs are one JSON object per line on stdout/stderr; the server refuses to start on any other value. |
+| `POSTHOG_KEY` | no | A PostHog project key (`phc_...`). Sends a server-side `$pageview` for each dashboard page: path only (no query string), `app: context-hub`, and a hashed session id as the visitor. Unset means off. |
+| `POSTHOG_HOST` | no | PostHog ingest host. Default `https://us.i.posthog.com`. |
 | `IMAGE_TAG` | no | Shown on the dashboard as the running version. The reference deploy sets it. |
 | `BACKUP_STATUS_PATH` | no | A JSON file the backup job writes; the dashboard shows it. Default `/backup-status/context-hub.json` when it exists. |
 | `DATABASE_PATH`, `PORT` | no | Defaults `/data/hub.sqlite` and `3000` in the image. |

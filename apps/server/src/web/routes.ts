@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { PageviewCapture } from '../analytics.js';
 import type { Db } from '../db.js';
 import type { AuthLimiter } from '../ratelimit.js';
 import { consumeConnectCode, createConnectCode, revokeGrant } from '../oauth/store.js';
@@ -31,6 +32,8 @@ export interface WebConfig {
   publicOrigin: string | null;
   /** The daily limit on model spend in US dollars (UTC day), or null for none. */
   dailyBudgetUsd: number | null;
+  /** Server-side PostHog pageviews; absent when POSTHOG_KEY is unset. */
+  pageview?: PageviewCapture;
 }
 
 export interface WebCtx {
@@ -201,6 +204,13 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
 
   if (method !== 'GET' && method !== 'HEAD') return false;
 
+  // Counts each HTML page once it is sent. The session id is filled in below for signed-in pages.
+  let viewer: number | null = null;
+  if (method === 'GET' && ctx.cfg.pageview && (path === '/login' || isPage(path))) {
+    const capture = ctx.cfg.pageview;
+    res.once('finish', () => capture(req, res.statusCode, String(res.getHeader('Content-Type') ?? ''), viewer));
+  }
+
   // The sign-in page and the two assets are the only GETs that need no session.
   if (path === '/login') {
     signInPage(res, { wrongCode: false, blocked: false });
@@ -217,6 +227,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     redirectTo(res, '/login');
     return true;
   }
+  viewer = session.id;
   if (path === '/') {
     sendDocument(res, 200, overviewPage(ctx.db, ctx.cfg, ctx.now(), session.csrf));
     return true;

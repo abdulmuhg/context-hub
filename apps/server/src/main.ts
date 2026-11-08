@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname } from 'node:path';
+import { createPageviewCapture } from './analytics.js';
 import { loadClientBundle } from './client-dist.js';
 import { openDb } from './db.js';
 import { logger, parseLogLevel } from './logger.js';
@@ -27,6 +28,7 @@ const publicUrl = rawPublicUrl ? parsePublicUrl(rawPublicUrl) : undefined;
 const DEFAULT_BACKUP_STATUS = '/backup-status/context-hub.json';
 const backupStatus = process.env.BACKUP_STATUS_PATH?.trim();
 const dailyBudgetUsd = parseDailyBudgetUsd(process.env.DIGEST_DAILY_BUDGET_USD);
+const pageview = createPageviewCapture({ key: process.env.POSTHOG_KEY, host: process.env.POSTHOG_HOST });
 const web: WebConfig = {
   imageTag: process.env.IMAGE_TAG?.trim() || null,
   startedAt: new Date().toISOString(),
@@ -35,6 +37,7 @@ const web: WebConfig = {
   secureCookies: secureCookiesFor(publicUrl),
   publicOrigin: publicUrl ?? null,
   dailyBudgetUsd,
+  pageview,
 };
 
 const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };
