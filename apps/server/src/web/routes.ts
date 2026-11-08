@@ -32,7 +32,7 @@ export interface WebConfig {
   publicOrigin: string | null;
   /** The daily limit on model spend in US dollars (UTC day), or null for none. */
   dailyBudgetUsd: number | null;
-  /** Server-side PostHog pageviews; absent when POSTHOG_KEY is unset. */
+  /** Server-side PostHog pageviews; main.ts leaves it out when POSTHOG_KEY is unset. */
   pageview?: PageviewCapture;
 }
 
@@ -204,8 +204,9 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
 
   if (method !== 'GET' && method !== 'HEAD') return false;
 
-  // Counts each HTML page once it is sent. The session id is filled in below for signed-in pages.
-  let viewer: number | null = null;
+  // Counts each HTML page once it is sent. The session's random CSRF value is filled in below for
+  // signed-in pages; only its hash leaves the server.
+  let viewer: string | null = null;
   if (method === 'GET' && ctx.cfg.pageview && (path === '/login' || isPage(path))) {
     const capture = ctx.cfg.pageview;
     res.once('finish', () => capture(req, res.statusCode, String(res.getHeader('Content-Type') ?? ''), viewer));
@@ -227,7 +228,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     redirectTo(res, '/login');
     return true;
   }
-  viewer = session.id;
+  viewer = session.csrf;
   if (path === '/') {
     sendDocument(res, 200, overviewPage(ctx.db, ctx.cfg, ctx.now(), session.csrf));
     return true;

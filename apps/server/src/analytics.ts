@@ -6,7 +6,7 @@ import { logger } from './logger.js';
 export interface PageviewEvent {
   distinctId: string;
   event: '$pageview';
-  properties: { app: 'context-hub'; $current_url: string; $pathname: string };
+  properties: { app: 'context-hub'; $current_url: string; $pathname: string; $process_person_profile?: false };
 }
 
 export interface PageviewOpts {
@@ -17,7 +17,11 @@ export interface PageviewOpts {
   send?: (event: PageviewEvent) => void;
 }
 
-export type PageviewCapture = ((req: IncomingMessage, status: number, contentType: string, sessionId: number | null) => void) & {
+/**
+ * `viewerKey` is a per-session random value (the session's CSRF token), or null when signed out. Only its
+ * hash is sent: a hash of the sequential session id could be reversed by trying 1, 2, 3...
+ */
+export type PageviewCapture = ((req: IncomingMessage, status: number, contentType: string, viewerKey: string | null) => void) & {
   /** Flushes queued events; resolves even when PostHog is down. */
   shutdown?: () => Promise<void>;
 };
@@ -31,8 +35,9 @@ const DEFAULT_HOST = 'https://us.i.posthog.com';
 
 /**
  * Server-side `$pageview` for each HTML page the web UI serves (GET, 200, text/html). Only the path is
- * sent, never the query string, and the visitor is a hash of the browser session id. Capture failures
- * only log a warning; they never reach the response.
+ * sent, never the query string. A signed-in visitor is an opaque hash of a random per-session value;
+ * signed-out views are sent without a person profile, so they don't merge into one fake user. Capture
+ * failures only log a warning; they never reach the response.
  */
 export function createPageviewCapture(opts: PageviewOpts): PageviewCapture {
   const key = opts.key?.trim();
@@ -48,12 +53,16 @@ export function createPageviewCapture(opts: PageviewOpts): PageviewCapture {
   }
   const emit = send;
 
-  const capture: PageviewCapture = (req, status, contentType, sessionId) => {
+  const capture: PageviewCapture = (req, status, contentType, viewerKey) => {
     if (req.method !== 'GET' || status !== 200 || !contentType.toLowerCase().startsWith('text/html')) return;
     try {
       const path = templatePath((req.url ?? '/').split(/[?#]/, 1)[0] || '/');
-      const distinctId = sessionId === null ? 'anonymous' : createHash('sha256').update(`context-hub:${sessionId}`).digest('hex');
-      emit({ distinctId, event: '$pageview', properties: { app: 'context-hub', $current_url: path, $pathname: path } });
+      const properties: PageviewEvent['properties'] = { app: 'context-hub', $current_url: path, $pathname: path };
+      if (viewerKey === null) {
+        emit({ distinctId: 'anonymous', event: '$pageview', properties: { ...properties, $process_person_profile: false } });
+      } else {
+        emit({ distinctId: createHash('sha256').update(`context-hub:${viewerKey}`).digest('hex'), event: '$pageview', properties });
+      }
     } catch (err) {
       logger.warn('posthog capture failed', { error: String(err) });
     }

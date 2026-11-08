@@ -29,6 +29,7 @@ const DEFAULT_BACKUP_STATUS = '/backup-status/context-hub.json';
 const backupStatus = process.env.BACKUP_STATUS_PATH?.trim();
 const dailyBudgetUsd = parseDailyBudgetUsd(process.env.DIGEST_DAILY_BUDGET_USD);
 const pageview = createPageviewCapture({ key: process.env.POSTHOG_KEY, host: process.env.POSTHOG_HOST });
+const posthogOn = Boolean(process.env.POSTHOG_KEY?.trim());
 const web: WebConfig = {
   imageTag: process.env.IMAGE_TAG?.trim() || null,
   startedAt: new Date().toISOString(),
@@ -37,7 +38,7 @@ const web: WebConfig = {
   secureCookies: secureCookiesFor(publicUrl),
   publicOrigin: publicUrl ?? null,
   dailyBudgetUsd,
-  pageview,
+  ...(posthogOn ? { pageview } : {}),
 };
 
 const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };
@@ -70,8 +71,8 @@ server.listen(port, () => logger.info('listening', { port, database: path }));
 const stop = (): void => {
   server.closeAllConnections();
   server.close(async () => {
-    await pageview.shutdown?.();
-    await worker?.stop(); // lets a digest that is mid-call finish and be saved
+    // In parallel: the PostHog flush (at most 3 s) must not eat into the digest's time to finish.
+    await Promise.all([pageview.shutdown?.(), worker?.stop()]); // lets a digest that is mid-call finish and be saved
     db.close();
     process.exit(0);
   });
