@@ -1,40 +1,82 @@
 name: Deploy
 
-# Every commit to main deploys; workflow_dispatch is kept for redeploying an
+# Every commit to main deploys. Enabled after a manual dispatch went green
+# against a provisioned server; workflow_dispatch is kept for redeploying an
 # unchanged tree and for rollback testing.
 #
-# The steps live in vps-stack's shared workflow (build, push to GHCR as
-# sha-<12 hex>, set IMAGE_TAG over SSH, restart, then scripts/verify.sh), so a
-# green run means the hub answers through Caddy. Needs the SSH_HOST, SSH_USER
-# and SSH_KEY secrets in this repo; `secrets: inherit` passes them on.
+# Not vps-stack's shared deploy-app.yml: this repo is public and vps-stack is
+# private, and GitHub lets only private repos call a private repo's reusable
+# workflows. The steps below mirror it, including verify.sh at the end.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-# A reusable workflow can only use the permissions its caller grants.
-permissions:
-  contents: read
-  packages: write
+# Two deploys racing would leave IMAGE_TAG and the running container
+# disagreeing. Queue instead of cancelling.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
 
 jobs:
-  # The collector's version string (`hub --version`): the UTC build date plus
-  # the short commit. Computed here because the shared workflow only knows
-  # GIT_SHA; it goes in as an extra build arg.
-  version:
-    # Forks inherit this workflow but have no server or secrets.
+  build:
+    # Forks inherit this workflow but have no server or secrets: deploy only from the owner's repository.
     if: github.repository == 'abdulmuhg/context-hub'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
-      hub: ${{ steps.v.outputs.hub }}
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - id: v
-        run: echo "hub=$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+
+      - id: meta
+        run: |
+          echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "version=$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Dockerfile runs the typecheck and the whole test suite before
+      # bundling. That is the correctness gate; there is no separate test job.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            HUB_VERSION=${{ steps.meta.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+          tags: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
-    needs: version
-    uses: abdulmuhg/vps-stack/.github/workflows/deploy-app.yml@main
-    with:
-      app: context-hub
-      build-args: HUB_VERSION=${{ needs.version.outputs.hub }}
-    secrets: inherit
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/stack/context-hub
+            # Rewrite the pinned tag, then pull. Rollback is the same edit
+            # with an older SHA.
+            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${{ needs.build.outputs.tag }}|" .env
+            grep '^IMAGE_TAG=' .env
+            docker compose pull
+            docker compose up -d
+            docker image prune -f
+            # Fails the job unless the container is healthy, runs this tag and
+            # answers through Caddy (vps-stack's scripts/verify.sh).
+            /opt/stack/scripts/verify.sh context-hub
