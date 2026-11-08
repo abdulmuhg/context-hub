@@ -70,6 +70,7 @@ server.listen(port, () => logger.info('listening', { port, database: path }));
 const stop = (): void => {
   server.closeAllConnections();
   server.close(async () => {
+    await pageview.shutdown?.();
     await worker?.stop(); // lets a digest that is mid-call finish and be saved
     db.close();
     process.exit(0);

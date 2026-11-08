@@ -19,9 +19,12 @@ describe('createPageviewCapture', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.event).toBe('$pageview');
     expect(sent[0]?.properties).toEqual({ app: 'context-hub', $current_url: '/projects', $pathname: '/projects' });
-    const text = JSON.stringify(sent[0]);
-    expect(text).not.toContain('q');
-    expect(text).not.toContain('secret');
+  });
+
+  it('collapses a project key so it never leaves the server', () => {
+    const { sent, capture } = setup();
+    capture(req('/projects/local%3Asecret-app?x=1'), 200, HTML, 3);
+    expect(sent[0]?.properties).toEqual({ app: 'context-hub', $current_url: '/projects/:key', $pathname: '/projects/:key' });
   });
 
   it('hashes the session id, and uses "anonymous" without one', () => {
