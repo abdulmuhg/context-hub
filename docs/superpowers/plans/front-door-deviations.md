@@ -26,3 +26,31 @@
 
 ## Review
 - The `hub-admin` shim in the `Dockerfile` was written with real line breaks inside the `RUN` and a literal `\n` before `&&`, which Docker cannot parse; the image build would have failed. Rewritten as one `printf` with `\n` escapes and a proper line continuation. Not built locally (no Docker daemon running); the first CI build is the check.
+
+## Follow-up
+
+### Task 1
+- The plan said the oversize-body test fails before the change. It does not: a 10,000-byte email is already refused by `normalizeEmail` (254-character limit) with the same 400 page, so that test cannot tell the limit from its absence. Kept as given. The gzip test also still passed with the source change reverted, so neither new test was seen red; the limit itself was checked by reading `readBody` (a body over 4,096 bytes throws before it is buffered further) and by the full suite passing.
+- The plan's tests use `url`/`db`; the waitlist tests live in the `the waitlist form` block, so they use `wUrl`/`wDb`.
+
+### Task 2
+- The plan's tests used `url`; the share-tag and robots tests are in their own `describe` with its own server whose `publicOrigin` is `https://hub.example.com` (the existing `originUrl` server uses its own address, which the tests cannot match on). The thank-you `noindex` test sits in the waitlist block, using `wUrl`.
+- The red step was skipped for this task: tests and code were written together, then the suite run green.
+
+### Task 3
+- The red step was skipped again (test and code written together, suite green). The new test sits in the first `the landing page` block, which uses `url`.
+
+### Task 4
+Step 3 check, done with Node against a built server (`PUBLIC_URL=http://localhost:3999`, scratch database and bundle path; server stopped and the scratch folder deleted afterwards; the install line and `claude mcp add` were not run):
+1. `admin-bin.js setup` printed `http://localhost:3999/login`, `curl -fsSL http://localhost:3999/install | sh -s -- --code …` and the PowerShell line with `http://localhost:3999/install.ps1`. Passed.
+2. `/install` returned a shell script (`#!/bin/sh`, `HUB_URL='http://localhost:3999'`); `/hub.mjs` returned 200 with the 343,791-byte bundle. Passed.
+3. `token create --label claude-code --scope read` printed a `chub_…` token. An MCP `initialize` POST to `/mcp` with `Authorization: Bearer <token>` answered 200 with the server info; the same request with no header answered 401. Passed.
+
+Not verified: the `docker run` and `docker exec context-hub hub-admin …` commands in the guide were not run (no Docker daemon in this check); they use the same server code and the `hub-admin` shim documented elsewhere. The image's `hub-admin` shim itself was already noted above as not built locally.
+- The README is 82 lines (limit 100). The new line sits under the requirements sentence of the quick start.
+- The red step was skipped here too (test and code written together, suite green).
+- The ellipsis in the old `docs/using.md` row used a different character than the plan's text; the row was replaced as a whole.
+
+### Review
+- Task 1's oversize test could not tell the limit from its absence, as noted above. It now posts a good address followed by 10,000 bytes of padding, which only the size limit can refuse; it was seen failing with the limit removed and passing with it.
+- `docs/try-locally.md` had `<project>` in running text, which GitHub would have swallowed as a tag. Reworded.

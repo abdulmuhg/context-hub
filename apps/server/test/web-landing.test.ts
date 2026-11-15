@@ -61,6 +61,22 @@ describe('the landing page', () => {
     expect(res.headers.get('content-security-policy')).toBe(CSP);
   });
 
+  it('answers the common questions without any script', async () => {
+    const html = await (await fetch(`${url}/`)).text();
+    expect(html).toContain('<h2>Questions</h2>');
+    expect((html.match(/<details/g) ?? []).length).toBe(5);
+    for (const q of ['What gets uploaded?', 'Which assistants does it work with?', 'What does it cost?', 'Can a team share one hub?', 'What if I stop using it?']) {
+      expect(html).toContain(`<summary>${q}</summary>`);
+    }
+    expect(html).not.toMatch(/\sstyle=|<style/);
+  });
+
+  it('points to the try-it-locally guide', async () => {
+    const html = await (await fetch(`${url}/`)).text();
+    expect(html).toContain('No server yet?');
+    expect(html).toContain('href="https://github.com/abdulmuhg/context-hub/blob/main/docs/try-locally.md"');
+  });
+
   it('still shows the Overview at / to a signed-in browser', async () => {
     const html = await (await fetch(`${url}/`, { headers: { cookie } })).text();
     expect(html).toContain('<h1>Overview</h1>');
@@ -92,6 +108,51 @@ describe('the landing page', () => {
     expect(parseLanding('off')).toBe(false);
     expect(parseLanding('on')).toBe(true);
     expect(() => parseLanding('yes')).toThrow(/LANDING must be on or off/);
+  });
+});
+
+describe('share tags and robots.txt', () => {
+  const DESCRIPTION = 'One private briefing per project, written from your Claude Code, Codex and Antigravity sessions. Self-hosted and open source.';
+  let originUrl: string;
+
+  beforeEach(async () => {
+    const cfg = config(true);
+    cfg.publicOrigin = 'https://hub.example.com';
+    const s = await startServer({ db: openDb(':memory:'), now: () => NOW, web: cfg });
+    originUrl = s.url;
+    closers.push(s.close);
+  });
+
+  it('carries share tags built from the public address', async () => {
+    const html = await (await fetch(`${originUrl}/`)).text();
+    expect(html).toContain(`<meta name="description" content="${DESCRIPTION}">`);
+    expect(html).toContain('<meta property="og:title" content="context-hub: your AI assistants forget, your hub does not">');
+    expect(html).toContain(`<meta property="og:description" content="${DESCRIPTION}">`);
+    expect(html).toContain('<meta property="og:type" content="website">');
+    expect(html).toContain('<meta property="og:url" content="https://hub.example.com/">');
+    expect(html).toContain('<meta property="og:image" content="https://hub.example.com/apple-touch-icon.png">');
+    expect(html).toContain('<meta name="twitter:card" content="summary">');
+    expect(html).toContain('<link rel="canonical" href="https://hub.example.com/">');
+  });
+
+  it('leaves out the address tags when no public address is set', async () => {
+    const html = await (await fetch(`${url}/`)).text();
+    expect(html).toContain('<meta name="description"');
+    expect(html).not.toContain('og:url');
+    expect(html).not.toContain('og:image');
+    expect(html).not.toContain('rel="canonical"');
+    expect(html).not.toContain('null');
+  });
+
+  it('robots.txt lets crawlers read only the landing page when it is on', async () => {
+    const res = await fetch(`${url}/robots.txt`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/^text\/plain/);
+    expect(await res.text()).toBe('User-agent: *\nAllow: /$\nDisallow: /\n');
+  });
+
+  it('robots.txt keeps crawlers out entirely when the landing page is off', async () => {
+    expect(await (await fetch(`${offUrl}/robots.txt`)).text()).toBe('User-agent: *\nDisallow: /\n');
   });
 });
 
@@ -154,9 +215,29 @@ describe('the waitlist form', () => {
     expect(countWaitlist(wDb)).toBe(0);
   });
 
+  it('refuses a waitlist body over the limit and keeps answering', async () => {
+    // A good address with padding after it: only the size limit can refuse this one.
+    const res = await post(wUrl, `email=ada%40example.com&pad=${'a'.repeat(10_000)}`);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('That does not look like an email address.');
+    expect(countWaitlist(wDb)).toBe(0);
+    expect((await post(wUrl, 'email=ada%40example.com')).status).toBe(200);
+  });
+
+  it('refuses a gzip-marked waitlist body', async () => {
+    const res = await post(wUrl, 'email=ada%40example.com', { 'content-encoding': 'gzip' });
+    expect(res.status).toBe(400);
+    expect(countWaitlist(wDb)).toBe(0);
+  });
+
   it('is a 404 that stores nothing when LANDING is off', async () => {
     expect((await post(wOffUrl, 'email=ada%40example.com')).status).toBe(404);
     expect(countWaitlist(offDb)).toBe(0);
+  });
+
+  it('keeps the thank-you page out of search results', async () => {
+    const html = await (await post(wUrl, 'email=ada%40example.com')).text();
+    expect(html).toContain('<meta name="robots" content="noindex">');
   });
 
   it('refuses a post from another origin', async () => {

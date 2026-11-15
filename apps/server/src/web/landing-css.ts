@@ -65,6 +65,10 @@ export const LANDING_CSS = `/* context-hub landing page */
   min-height: 42px;
 }
 .landing [role="alert"] { color: var(--danger); }
+.landing details { border-bottom: 1px solid var(--hairline); padding: 12px 0; }
+.landing details:first-of-type { border-top: 1px solid var(--hairline); }
+.landing summary { font-weight: 500; cursor: pointer; }
+.landing details p { color: var(--muted); margin: 8px 0 0; }
 .landing-footer { display: flex; flex-wrap: wrap; gap: 16px; padding-top: 24px; border-top: 1px solid var(--hairline); color: var(--muted); }
 @media (max-width: 480px) {
   .landing h1 { font-size: 28px; }
