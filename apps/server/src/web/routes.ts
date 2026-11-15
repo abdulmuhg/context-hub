@@ -3,8 +3,9 @@ import type { Db } from '../db.js';
 import type { AuthLimiter } from '../ratelimit.js';
 import { consumeConnectCode, createConnectCode, revokeGrant } from '../oauth/store.js';
 import { revokeToken } from '../tokens.js';
+import { addToWaitlist, normalizeEmail } from '../waitlist.js';
 import { isAsset, serveAsset } from './assets.js';
-import { landingPage } from './landing.js';
+import { landingPage, waitlistThanksPage } from './landing.js';
 import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
 import {
   activityPage,
@@ -40,6 +41,8 @@ export interface WebCtx {
   db: Db;
   cfg: WebConfig;
   limiter: AuthLimiter;
+  /** A second limiter, so waitlist posts never count against sign-in. */
+  waitlistLimiter: AuthLimiter;
   address: string;
   now: () => string;
   readBody: () => Promise<Buffer>;
@@ -132,6 +135,22 @@ async function login(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Pr
   redirectTo(res, '/');
 }
 
+/**
+ * The landing page's waitlist form. Every post that gets past the origin check counts against the
+ * address (not only bad ones), so the form cannot be used to fill the table quickly. A repeat
+ * address gets the same thank-you page as a new one, so the form never says who is listed.
+ */
+async function joinWaitlist(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Promise<void> {
+  if (!originAllowed(req, ctx.cfg)) return forbiddenPage(res);
+  if (ctx.waitlistLimiter.isBlocked(ctx.address)) return sendDocument(res, 429, landingPage('busy'));
+  ctx.waitlistLimiter.recordFailure(ctx.address);
+  const form = new URLSearchParams((await ctx.readBody()).toString('utf8'));
+  const email = normalizeEmail(form.get('email'));
+  if (email === null) return sendDocument(res, 400, landingPage('invalid'));
+  if (addToWaitlist(ctx.db, email, ctx.now()) === 'full') return sendDocument(res, 503, landingPage('full'));
+  sendDocument(res, 200, waitlistThanksPage());
+}
+
 function logout(res: ServerResponse, session: WebSession, ctx: WebCtx): void {
   revokeWebSession(ctx.db, session.id, ctx.now());
   res.setHeader('Set-Cookie', clearedCookie(ctx.cfg.secureCookies));
@@ -180,6 +199,12 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     // Sign-in is the one action a browser without a session may post. Everything else is refused.
     if (path === '/login') {
       await login(req, res, ctx);
+      return true;
+    }
+    // The waitlist form is the other. With the landing page off it does not exist: the caller's 404.
+    if (path === '/waitlist') {
+      if (!ctx.cfg.landing) return false;
+      await joinWaitlist(req, res, ctx);
       return true;
     }
     // A POST to a path the dashboard does not own is left to the 404, so the cookie is never

@@ -3,6 +3,7 @@ import { openDb, type Db } from '../src/db.js';
 import { createConnectCode } from '../src/oauth/store.js';
 import { CSP } from '../src/web/html.js';
 import { parseLanding, type WebConfig } from '../src/web/routes.js';
+import { countWaitlist, listWaitlist, WAITLIST_MAX } from '../src/waitlist.js';
 import { startServer } from './helpers.js';
 
 const NOW = new Date('2026-11-15T12:00:00.000Z');
@@ -91,5 +92,96 @@ describe('the landing page', () => {
     expect(parseLanding('off')).toBe(false);
     expect(parseLanding('on')).toBe(true);
     expect(() => parseLanding('yes')).toThrow(/LANDING must be on or off/);
+  });
+});
+
+describe('the waitlist form', () => {
+  let wUrl: string;
+  let wDb: Db;
+  let offDb: Db;
+  let wOffUrl: string;
+  let originUrl: string;
+  let originCfg: WebConfig;
+  const closeAll: Array<() => Promise<void>> = [];
+
+  beforeEach(async () => {
+    wDb = openDb(':memory:');
+    offDb = openDb(':memory:');
+    const a = await startServer({ db: wDb, now: () => NOW, web: config(true) });
+    const b = await startServer({ db: offDb, now: () => NOW, web: config(false) });
+    originCfg = config(true);
+    const c = await startServer({ db: openDb(':memory:'), now: () => NOW, web: originCfg });
+    originCfg.publicOrigin = c.url; // this server is started with publicOrigin set to its own address
+    wUrl = a.url;
+    wOffUrl = b.url;
+    originUrl = c.url;
+    closeAll.push(a.close, b.close, c.close);
+  });
+
+  afterEach(async () => {
+    await Promise.all(closeAll.splice(0).map((c) => c()));
+  });
+
+  const post = (base: string, body: string, headers: Record<string, string> = {}): Promise<Response> =>
+    fetch(`${base}/waitlist`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+      body,
+    });
+
+  it('stores a new address, lowercased, and thanks the visitor', async () => {
+    const res = await post(wUrl, 'email=%20Ada%40Example.com%20');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('You are on the list');
+    expect(html).not.toContain('ada@example.com');
+    expect(listWaitlist(wDb).map((r) => r.email)).toEqual(['ada@example.com']);
+  });
+
+  it('answers a repeat exactly like a first time', async () => {
+    const first = await (await post(wUrl, 'email=ada%40example.com')).text();
+    const again = await post(wUrl, 'email=ada%40example.com');
+    expect(again.status).toBe(200);
+    expect(await again.text()).toBe(first);
+    expect(countWaitlist(wDb)).toBe(1);
+  });
+
+  it.each(['', 'email=', 'email=nope', `email=${'a'.repeat(300)}%40x.co`, 'other=1'])('refuses %j with the form again', async (body) => {
+    const res = await post(wUrl, body);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('That does not look like an email address.');
+    expect(countWaitlist(wDb)).toBe(0);
+  });
+
+  it('is a 404 that stores nothing when LANDING is off', async () => {
+    expect((await post(wOffUrl, 'email=ada%40example.com')).status).toBe(404);
+    expect(countWaitlist(offDb)).toBe(0);
+  });
+
+  it('refuses a post from another origin', async () => {
+    expect((await post(originUrl, 'email=ada%40example.com', { origin: 'https://evil.example' })).status).toBe(403);
+  });
+
+  it('blocks the eleventh post in five minutes, without blocking sign-in', async () => {
+    for (let i = 0; i < 10; i++) await post(wUrl, `email=u${i}%40example.com`);
+    const res = await post(wUrl, 'email=u10%40example.com');
+    expect(res.status).toBe(429);
+    expect(await res.text()).toContain('Too many tries from this address.');
+    expect(countWaitlist(wDb)).toBe(10);
+    const login = await fetch(`${wUrl}/login`, { method: 'POST', body: 'code=WRONG', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+    expect(login.status).toBe(200);
+    expect(await login.text()).toContain('wrong or has expired');
+  });
+
+  it('says the waitlist is full with a 503 and stores nothing more', async () => {
+    const insert = wDb.prepare('INSERT INTO waitlist(email, created_at) VALUES (?, ?)');
+    wDb.transaction(() => {
+      for (let i = 0; i < WAITLIST_MAX; i++) insert.run(`u${i}@example.com`, NOW.toISOString());
+    })();
+    const res = await post(wUrl, 'email=late%40example.com');
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain('The waitlist is full right now.');
+    expect(countWaitlist(wDb)).toBe(WAITLIST_MAX);
   });
 });

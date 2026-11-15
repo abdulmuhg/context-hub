@@ -8,6 +8,7 @@ import { listTokens } from '../tokens.js';
 import { formatUsd } from '../usage.js';
 import { computeHealth, type Health, type Problem } from './health.js';
 import { escapeHtml, pageShell } from './html.js';
+import { countWaitlist } from '../waitlist.js';
 import { renderMarkdown } from './markdown.js';
 import type { WebConfig } from './routes.js';
 import { listBrowsers } from './session.js';
@@ -221,6 +222,7 @@ export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string):
     cfg.imageTag === null
       ? `<p class="footnote">Server started ${timeTag(cfg.startedAt, 'inline')}</p>`
       : `<p class="footnote">Running <code>${escapeHtml(cfg.imageTag)}</code> · started ${timeTag(cfg.startedAt, 'inline')}</p>`;
+  const waitlist = cfg.landing ? `<p class="footnote">Waitlist: ${countWaitlist(db)}</p>` : '';
   return pageShell({
     title: 'Overview',
     active: 'overview',
@@ -231,7 +233,8 @@ export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string):
       problems +
       notices +
       `<section class="card"><h2>Recent activity</h2>${activityTable(rows)}<p class="card-foot"><a href="/activity">All activity</a></p></section>` +
-      version,
+      version +
+      waitlist,
   });
 }
 

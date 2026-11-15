@@ -13,3 +13,8 @@
 - `head` is exported from `html.ts`, and the theme button markup is now an exported `THEME_BUTTON` constant that `pageShell` reuses (output unchanged), so the landing page draws the same button.
 - The landing check in `handleWeb` sits just after the session lookup instead of before it; the behaviour is the same (signed-in `/` is still the Overview).
 - Step 8 (look at it): done in the in-app browser against a built server with `LANDING=on`, at desktop-pane width and 375px, in both colour schemes: no horizontal page overflow at 375px; code rows scroll inside themselves. Screenshots were taken at reduced scale and the pane showed some rendering artefacts in one capture, so this is a visual sanity check, not a pixel review.
+
+## Task 5
+- The waitlist limiter is built inside `createHandler` in `http.ts` next to the sign-in limiter and is not an `AppDeps` option (tests use the real default, which is enough for the eleventh-post test).
+- Added one test the plan did not list: a full waitlist answers 503 with the "full" note and stores nothing more.
+- Step 6 was done by hand against a built server on a scratch database: good address stored lowercased, bad one 400, repeat gives the same thank-you page, and `admin-bin.js waitlist` listed one entry.
