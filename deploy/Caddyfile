@@ -1,6 +1,7 @@
-# Replace hub.example.com with your hub's address. Its DNS must point at this
-# server before Caddy starts, so Caddy can get the HTTPS certificate.
-hub.example.com {
+# The address comes from HUB_DOMAIN in .env; this file needs no editing. Its DNS
+# must point at this server before Caddy starts, so Caddy can get the HTTPS
+# certificate.
+{$HUB_DOMAIN} {
 	# No `encode gzip`: the MCP endpoint streams server-sent events, and the
 	# upload endpoint already receives gzip from the hub command.
 

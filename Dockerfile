@@ -74,5 +74,10 @@ ENV PORT=3000
 ENV DATABASE_PATH=/data/hub.sqlite
 EXPOSE 3000
 
+# `docker compose exec context-hub hub-admin <command>` instead of the long path.
+RUN printf '#!/bin/sh
+exec node /app/dist/admin-bin.js "$@"
+' > /usr/local/bin/hub-admin \n && chmod 755 /usr/local/bin/hub-admin
+
 USER node
 CMD ["node", "--enable-source-maps", "/app/dist/main.js"]

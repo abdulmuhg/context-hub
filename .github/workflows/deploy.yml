@@ -54,7 +54,10 @@ jobs:
           build-args: |
             HUB_VERSION=${{ steps.meta.outputs.version }}
             GIT_SHA=${{ github.sha }}
-          tags: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.tag }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
