@@ -7,6 +7,7 @@ import { recordUsage } from '../src/usage.js';
 import { openDb } from '../src/db.js';
 import { consumeConnectCode, createGrant, issueTokens } from '../src/oauth/store.js';
 import { upsertSession } from '../src/store.js';
+import { addToWaitlist, countWaitlist } from '../src/waitlist.js';
 import { checkCredential, verifyToken } from '../src/tokens.js';
 import { makeSession } from './helpers.js';
 
@@ -205,5 +206,17 @@ describe('hub-admin setup', () => {
     const code = /Sign-in code: (\S+)/.exec(out.join('\n'))![1]!;
     expect(consumeConnectCode(io.db, code, NOW.toISOString())).toBe(true);
     expect(consumeConnectCode(io.db, code, NOW.toISOString())).toBe(false);
+  });
+});
+
+describe('hub-admin waitlist', () => {
+  it('waitlist lists addresses with a count, and remove deletes one', async () => {
+    addToWaitlist(io.db, 'ada@example.com', NOW.toISOString());
+    expect(await runAdmin(['waitlist'], io)).toBe(0);
+    expect(out.join('\n')).toContain('ada@example.com');
+    expect(out.join('\n')).toMatch(/1 on the waitlist/);
+    expect(await runAdmin(['waitlist', 'remove', 'ADA@example.com'], io)).toBe(0);
+    expect(countWaitlist(io.db)).toBe(0);
+    expect(await runAdmin(['waitlist', 'remove', 'ada@example.com'], io)).toBe(1);
   });
 });
