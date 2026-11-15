@@ -27,7 +27,7 @@ export function securityHeaders(): Record<string, string> {
 }
 
 /** The head every page shares. The script sits in the head, unblocked by layout, so a stored theme applies before first paint. */
-export function head(title: string, extraStyles: string[] = []): string {
+export function head(title: string, extraStyles: string[] = [], extraHead = ''): string {
   return (
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>${escapeHtml(title)}</title>` +
@@ -37,6 +37,7 @@ export function head(title: string, extraStyles: string[] = []): string {
     `<link rel="apple-touch-icon" href="/apple-touch-icon.png">` +
     `<link rel="stylesheet" href="${assetHref('/assets/app.css')}">` +
     extraStyles.map((href) => `<link rel="stylesheet" href="${href}">`).join('') +
+    extraHead +
     `<script src="${assetHref('/assets/app.js')}"></script>`
   );
 }

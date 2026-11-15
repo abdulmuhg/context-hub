@@ -6,8 +6,8 @@ import { consumeConnectCode, createConnectCode, revokeGrant } from '../oauth/sto
 import { revokeToken } from '../tokens.js';
 import { addToWaitlist, normalizeEmail } from '../waitlist.js';
 import { isAsset, serveAsset } from './assets.js';
-import { landingPage, waitlistThanksPage } from './landing.js';
-import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
+import { landingPage, robotsTxt, waitlistThanksPage } from './landing.js';
+import { forbiddenPage, redirectTo, securityHeaders, sendDocument, signInPage } from './html.js';
 import {
   activityPage,
   codePage,
@@ -149,17 +149,17 @@ async function login(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Pr
  */
 async function joinWaitlist(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Promise<void> {
   if (!originAllowed(req, ctx.cfg)) return forbiddenPage(res);
-  if (ctx.waitlistLimiter.isBlocked(ctx.address)) return sendDocument(res, 429, landingPage('busy'));
+  if (ctx.waitlistLimiter.isBlocked(ctx.address)) return sendDocument(res, 429, landingPage('busy', ctx.cfg.publicOrigin));
   ctx.waitlistLimiter.recordFailure(ctx.address);
   let form: URLSearchParams;
   try {
     form = new URLSearchParams((await ctx.readBody(WAITLIST_MAX_BODY)).toString('utf8'));
   } catch {
-    return sendDocument(res, 400, landingPage('invalid'));
+    return sendDocument(res, 400, landingPage('invalid', ctx.cfg.publicOrigin));
   }
   const email = normalizeEmail(form.get('email'));
-  if (email === null) return sendDocument(res, 400, landingPage('invalid'));
-  if (addToWaitlist(ctx.db, email, ctx.now()) === 'full') return sendDocument(res, 503, landingPage('full'));
+  if (email === null) return sendDocument(res, 400, landingPage('invalid', ctx.cfg.publicOrigin));
+  if (addToWaitlist(ctx.db, email, ctx.now()) === 'full') return sendDocument(res, 503, landingPage('full', ctx.cfg.publicOrigin));
   sendDocument(res, 200, waitlistThanksPage());
 }
 
@@ -257,6 +257,13 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
     res.once('finish', () => capture(req, res.statusCode, String(res.getHeader('Content-Type') ?? ''), viewer));
   }
 
+  if (path === '/robots.txt') {
+    const text = robotsTxt(ctx.cfg.landing);
+    res.writeHead(200, { ...securityHeaders(), 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': Buffer.byteLength(text) });
+    res.end(method === 'HEAD' ? undefined : text);
+    return true;
+  }
+
   // The sign-in page and the two assets are the only GETs that need no session.
   if (path === '/login') {
     signInPage(res, { wrongCode: false, blocked: false, landing: ctx.cfg.landing });
@@ -270,7 +277,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
 
   const session = currentSession(req, ctx);
   if (session === null && path === '/' && ctx.cfg.landing) {
-    sendDocument(res, 200, landingPage());
+    sendDocument(res, 200, landingPage(undefined, ctx.cfg.publicOrigin));
     return true;
   }
   if (session === null) {

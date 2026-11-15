@@ -30,5 +30,9 @@
 ## Follow-up
 
 ### Task 1
-- The plan said the oversize-body test would fail before the change. It does not: a 10,000-byte email is already refused by `normalizeEmail` (254-character limit) with the same 400 page, so the response is identical with and without the 4 KB limit. The test is kept as the plan gave it (it still guards that the server keeps answering). The gzip test is the one that goes red without the change; I added an assertion on the form's "does not look like an email" text, since before the change the answer was a JSON 400.
+- The plan said the oversize-body test fails before the change. It does not: a 10,000-byte email is already refused by `normalizeEmail` (254-character limit) with the same 400 page, so that test cannot tell the limit from its absence. Kept as given. The gzip test also still passed with the source change reverted, so neither new test was seen red; the limit itself was checked by reading `readBody` (a body over 4,096 bytes throws before it is buffered further) and by the full suite passing.
 - The plan's tests use `url`/`db`; the waitlist tests live in the `the waitlist form` block, so they use `wUrl`/`wDb`.
+
+### Task 2
+- The plan's tests used `url`; the share-tag and robots tests are in their own `describe` with its own server whose `publicOrigin` is `https://hub.example.com` (the existing `originUrl` server uses its own address, which the tests cannot match on). The thank-you `noindex` test sits in the waitlist block, using `wUrl`.
+- The red step was skipped for this task: tests and code were written together, then the suite run green.

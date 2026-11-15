@@ -95,6 +95,51 @@ describe('the landing page', () => {
   });
 });
 
+describe('share tags and robots.txt', () => {
+  const DESCRIPTION = 'One private briefing per project, written from your Claude Code, Codex and Antigravity sessions. Self-hosted and open source.';
+  let originUrl: string;
+
+  beforeEach(async () => {
+    const cfg = config(true);
+    cfg.publicOrigin = 'https://hub.example.com';
+    const s = await startServer({ db: openDb(':memory:'), now: () => NOW, web: cfg });
+    originUrl = s.url;
+    closers.push(s.close);
+  });
+
+  it('carries share tags built from the public address', async () => {
+    const html = await (await fetch(`${originUrl}/`)).text();
+    expect(html).toContain(`<meta name="description" content="${DESCRIPTION}">`);
+    expect(html).toContain('<meta property="og:title" content="context-hub: your AI assistants forget, your hub does not">');
+    expect(html).toContain(`<meta property="og:description" content="${DESCRIPTION}">`);
+    expect(html).toContain('<meta property="og:type" content="website">');
+    expect(html).toContain('<meta property="og:url" content="https://hub.example.com/">');
+    expect(html).toContain('<meta property="og:image" content="https://hub.example.com/apple-touch-icon.png">');
+    expect(html).toContain('<meta name="twitter:card" content="summary">');
+    expect(html).toContain('<link rel="canonical" href="https://hub.example.com/">');
+  });
+
+  it('leaves out the address tags when no public address is set', async () => {
+    const html = await (await fetch(`${url}/`)).text();
+    expect(html).toContain('<meta name="description"');
+    expect(html).not.toContain('og:url');
+    expect(html).not.toContain('og:image');
+    expect(html).not.toContain('rel="canonical"');
+    expect(html).not.toContain('null');
+  });
+
+  it('robots.txt lets crawlers read only the landing page when it is on', async () => {
+    const res = await fetch(`${url}/robots.txt`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/^text\/plain/);
+    expect(await res.text()).toBe('User-agent: *\nAllow: /$\nDisallow: /\n');
+  });
+
+  it('robots.txt keeps crawlers out entirely when the landing page is off', async () => {
+    expect(await (await fetch(`${offUrl}/robots.txt`)).text()).toBe('User-agent: *\nDisallow: /\n');
+  });
+});
+
 describe('the waitlist form', () => {
   let wUrl: string;
   let wDb: Db;
@@ -171,6 +216,11 @@ describe('the waitlist form', () => {
   it('is a 404 that stores nothing when LANDING is off', async () => {
     expect((await post(wOffUrl, 'email=ada%40example.com')).status).toBe(404);
     expect(countWaitlist(offDb)).toBe(0);
+  });
+
+  it('keeps the thank-you page out of search results', async () => {
+    const html = await (await post(wUrl, 'email=ada%40example.com')).text();
+    expect(html).toContain('<meta name="robots" content="noindex">');
   });
 
   it('refuses a post from another origin', async () => {
