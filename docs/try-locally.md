@@ -34,7 +34,7 @@ It is shown once. Add the hub to Claude Code, with the token in place of `<the t
 claude mcp add --transport http context-hub http://localhost:3000/mcp --header "Authorization: Bearer <the token>"
 ```
 
-Then ask "where did we leave off on <project>?" in a new Claude Code session.
+Then, in a new Claude Code session, ask where you left off on one of your projects by name.
 
 ## Moving to a real server later
 

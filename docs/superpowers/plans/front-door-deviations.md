@@ -50,3 +50,7 @@ Not verified: the `docker run` and `docker exec context-hub hub-admin …` comma
 - The README is 82 lines (limit 100). The new line sits under the requirements sentence of the quick start.
 - The red step was skipped here too (test and code written together, suite green).
 - The ellipsis in the old `docs/using.md` row used a different character than the plan's text; the row was replaced as a whole.
+
+### Review
+- Task 1's oversize test could not tell the limit from its absence, as noted above. It now posts a good address followed by 10,000 bytes of padding, which only the size limit can refuse; it was seen failing with the limit removed and passing with it.
+- `docs/try-locally.md` had `<project>` in running text, which GitHub would have swallowed as a tag. Reworded.

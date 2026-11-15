@@ -216,7 +216,8 @@ describe('the waitlist form', () => {
   });
 
   it('refuses a waitlist body over the limit and keeps answering', async () => {
-    const res = await post(wUrl, `email=${'a'.repeat(10_000)}%40example.com`);
+    // A good address with padding after it: only the size limit can refuse this one.
+    const res = await post(wUrl, `email=ada%40example.com&pad=${'a'.repeat(10_000)}`);
     expect(res.status).toBe(400);
     expect(await res.text()).toContain('That does not look like an email address.');
     expect(countWaitlist(wDb)).toBe(0);
