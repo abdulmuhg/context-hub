@@ -103,18 +103,18 @@ function clientAddress(req: IncomingMessage): string {
 }
 
 /** Reads the request body, refusing anything over the limit before or after decompression. */
-async function readBody(req: IncomingMessage): Promise<Buffer> {
+async function readBody(req: IncomingMessage, limit: number = MAX_BODY): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new HttpError(413, 'The upload is larger than 20 MB');
+    if (size > limit) throw new HttpError(413, 'The upload is larger than 20 MB');
     chunks.push(chunk as Buffer);
   }
   const raw = Buffer.concat(chunks);
   if (req.headers['content-encoding'] !== 'gzip') return raw;
   try {
-    return gunzipSync(raw, { maxOutputLength: MAX_BODY });
+    return gunzipSync(raw, { maxOutputLength: limit });
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ERR_BUFFER_TOO_LARGE') throw new HttpError(413, 'The upload is larger than 20 MB once decompressed');
@@ -502,7 +502,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         waitlistLimiter,
         address: clientAddress(req),
         now: () => now().toISOString(),
-        readBody: () => readBody(req),
+        readBody: (limit) => readBody(req, limit),
       });
       if (handled) return;
     }

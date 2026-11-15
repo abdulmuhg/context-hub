@@ -24,6 +24,9 @@ import {
 } from './pages.js';
 import { checkWebSession, clearedCookie, createWebSession, parseCookies, revokeWebSession, sameCsrf, sessionCookie } from './session.js';
 
+/** The most bytes the public waitlist form may send. */
+export const WAITLIST_MAX_BODY = 4096;
+
 export interface WebConfig {
   imageTag: string | null;
   startedAt: string;
@@ -48,7 +51,8 @@ export interface WebCtx {
   waitlistLimiter: AuthLimiter;
   address: string;
   now: () => string;
-  readBody: () => Promise<Buffer>;
+  /** Reads the request body; `limit` (bytes) replaces the 20 MB default for this call. */
+  readBody: (limit?: number) => Promise<Buffer>;
 }
 
 /** The browser session behind the current request. */
@@ -147,7 +151,12 @@ async function joinWaitlist(req: IncomingMessage, res: ServerResponse, ctx: WebC
   if (!originAllowed(req, ctx.cfg)) return forbiddenPage(res);
   if (ctx.waitlistLimiter.isBlocked(ctx.address)) return sendDocument(res, 429, landingPage('busy'));
   ctx.waitlistLimiter.recordFailure(ctx.address);
-  const form = new URLSearchParams((await ctx.readBody()).toString('utf8'));
+  let form: URLSearchParams;
+  try {
+    form = new URLSearchParams((await ctx.readBody(WAITLIST_MAX_BODY)).toString('utf8'));
+  } catch {
+    return sendDocument(res, 400, landingPage('invalid'));
+  }
   const email = normalizeEmail(form.get('email'));
   if (email === null) return sendDocument(res, 400, landingPage('invalid'));
   if (addToWaitlist(ctx.db, email, ctx.now()) === 'full') return sendDocument(res, 503, landingPage('full'));

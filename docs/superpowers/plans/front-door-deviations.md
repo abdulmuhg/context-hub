@@ -26,3 +26,9 @@
 
 ## Review
 - The `hub-admin` shim in the `Dockerfile` was written with real line breaks inside the `RUN` and a literal `\n` before `&&`, which Docker cannot parse; the image build would have failed. Rewritten as one `printf` with `\n` escapes and a proper line continuation. Not built locally (no Docker daemon running); the first CI build is the check.
+
+## Follow-up
+
+### Task 1
+- The plan said the oversize-body test would fail before the change. It does not: a 10,000-byte email is already refused by `normalizeEmail` (254-character limit) with the same 400 page, so the response is identical with and without the 4 KB limit. The test is kept as the plan gave it (it still guards that the server keeps answering). The gzip test is the one that goes red without the change; I added an assertion on the form's "does not look like an email" text, since before the change the answer was a JSON 400.
+- The plan's tests use `url`/`db`; the waitlist tests live in the `the waitlist form` block, so they use `wUrl`/`wDb`.

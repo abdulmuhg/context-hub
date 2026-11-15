@@ -154,6 +154,20 @@ describe('the waitlist form', () => {
     expect(countWaitlist(wDb)).toBe(0);
   });
 
+  it('refuses a waitlist body over the limit and keeps answering', async () => {
+    const res = await post(wUrl, `email=${'a'.repeat(10_000)}%40example.com`);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('That does not look like an email address.');
+    expect(countWaitlist(wDb)).toBe(0);
+    expect((await post(wUrl, 'email=ada%40example.com')).status).toBe(200);
+  });
+
+  it('refuses a gzip-marked waitlist body', async () => {
+    const res = await post(wUrl, 'email=ada%40example.com', { 'content-encoding': 'gzip' });
+    expect(res.status).toBe(400);
+    expect(countWaitlist(wDb)).toBe(0);
+  });
+
   it('is a 404 that stores nothing when LANDING is off', async () => {
     expect((await post(wOffUrl, 'email=ada%40example.com')).status).toBe(404);
     expect(countWaitlist(offDb)).toBe(0);
