@@ -71,6 +71,12 @@ describe('the landing page', () => {
     expect(html).not.toMatch(/\sstyle=|<style/);
   });
 
+  it('points to the try-it-locally guide', async () => {
+    const html = await (await fetch(`${url}/`)).text();
+    expect(html).toContain('No server yet?');
+    expect(html).toContain('href="https://github.com/abdulmuhg/context-hub/blob/main/docs/try-locally.md"');
+  });
+
   it('still shows the Overview at / to a signed-in browser', async () => {
     const html = await (await fetch(`${url}/`, { headers: { cookie } })).text();
     expect(html).toContain('<h1>Overview</h1>');

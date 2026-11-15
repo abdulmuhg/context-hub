@@ -97,6 +97,7 @@ export function landingPage(note?: WaitlistNote, origin: string | null = null): 
 <section id="self-host">
 <h2>Self-host in 3 commands</h2>
 <p>You need a Linux server with Docker and a domain name pointing at it.</p>
+<p>No server yet? <a href="https://github.com/abdulmuhg/context-hub/blob/main/docs/try-locally.md">Try it on your own computer first</a>.</p>
 ${QUICK_START.map(copyRow).join('\n')}
 <p>Then run <code>docker compose exec context-hub hub-admin setup</code> for your sign-in code and the line that connects your first computer.</p>
 <p><a href="${REPO}/blob/main/deploy/README.md">Full guide</a></p>

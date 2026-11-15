@@ -53,7 +53,7 @@ flowchart TD
 |---|---|
 | **Adding another computer** (one computer or browser is already signed in) | The dashboard: **Sign-ins > Add a computer**. It also shows the line to paste for each OS, with the code inside. |
 | **Using someone else's hub** | The hub's owner, from their **Sign-ins > Add a computer**. You never need server access. |
-| **Hosting the hub, first computer ever** (nothing is signed in yet) | The server: `docker exec context-hub node /app/dist/admin-bin.js device-code` (or `docker compose exec … device-code`). |
+| **Hosting the hub, first computer ever** (nothing is signed in yet) | The server: `docker compose exec context-hub hub-admin setup`, which prints the install line with the code inside. |
 
 A computer code only works in the install line or `hub login`, and a sign-in code (for browsers
 and the Claude apps, see [Sign-in codes](#sign-in-codes)) only works there.

@@ -25,6 +25,7 @@ Claude   From your hub, last synced 2 hours ago:
 ## Quick start: self-host
 
 You need a Linux server with Docker and a domain name pointing at it.
+No server yet? [Try it on your own computer first](docs/try-locally.md).
 
 ```bash
 mkdir -p context-hub/backups/status && cd context-hub && curl -fsSLO https://raw.githubusercontent.com/abdulmuhg/context-hub/main/deploy/docker-compose.yml -O https://raw.githubusercontent.com/abdulmuhg/context-hub/main/deploy/Caddyfile
@@ -50,6 +51,7 @@ Not open yet. [Join the waitlist](https://hub.abdulmughnialfikri.com/#waitlist).
 ## Docs
 
 - [Using a hub](docs/using.md): connect computers and the Claude apps, sync, notes, the dashboard, sign-in codes.
+- [Try it on your own computer](docs/try-locally.md): run a hub locally, with no server or domain.
 - [Self-hosting reference](docs/self-hosting.md): settings, admin commands, backups, operating, developing.
 - [Deploy guide](deploy/README.md): the single-server setup in detail.
 - [Designs and plans](docs/superpowers/): how it was built.
