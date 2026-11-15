@@ -234,10 +234,43 @@ describe('the Overview page', () => {
   });
 });
 
-describe('the waitlist count', () => {
-  it('shows the waitlist count on the Overview only when LANDING is on', () => {
+describe('the waitlist card', () => {
+  const on = () => overviewPage(db, { ...cfg, landing: true }, START.toISOString(), 'csrf');
+
+  it('lists who joined, newest first, only when LANDING is on', () => {
+    addToWaitlist(db, 'ada@example.com', new Date(START.getTime() - 60_000).toISOString());
+    addToWaitlist(db, 'grace@example.com', START.toISOString());
+    const html = on();
+    expect(html).toContain('<h2>Waitlist</h2>');
+    expect(html).toContain('2 people want to hear when the hosted hub opens.');
+    expect(html.indexOf('grace@example.com')).toBeLessThan(html.indexOf('ada@example.com'));
+    expect(html.indexOf('<h2>Waitlist</h2>')).toBeLessThan(html.indexOf('<h2>Recent activity</h2>'));
+    const off = overviewPage(db, { ...cfg, landing: false }, START.toISOString(), 'csrf');
+    expect(off).not.toContain('Waitlist');
+    expect(off).not.toContain('ada@example.com');
+  });
+
+  it('says so when nobody has joined, and counts one person as one', () => {
+    expect(on()).toContain('Nobody has joined yet.');
     addToWaitlist(db, 'ada@example.com', START.toISOString());
-    expect(overviewPage(db, { ...cfg, landing: true }, START.toISOString(), 'csrf')).toContain('Waitlist: 1');
-    expect(overviewPage(db, { ...cfg, landing: false }, START.toISOString(), 'csrf')).not.toContain('Waitlist');
+    expect(on()).toContain('1 person wants to hear when the hosted hub opens.');
+  });
+
+  it('escapes what was typed into the form', () => {
+    db.prepare('INSERT INTO waitlist(email, created_at) VALUES (?, ?)').run('<b>x</b>@example.com', START.toISOString());
+    const html = on();
+    expect(html).toContain('&lt;b&gt;x&lt;/b&gt;@example.com');
+    expect(html).not.toContain('<b>x</b>');
+  });
+
+  it('shows the newest 50 and says how many more there are', () => {
+    const insert = db.prepare('INSERT INTO waitlist(email, created_at) VALUES (?, ?)');
+    for (let i = 0; i < 53; i++) insert.run(`u${i}@example.com`, new Date(START.getTime() - i * 1000).toISOString());
+    const html = on();
+    expect(html).toContain('u0@example.com');
+    expect(html).toContain('u49@example.com');
+    expect(html).not.toContain('u50@example.com');
+    expect(html).toContain('and 3 more');
+    expect(html).toContain('hub-admin waitlist');
   });
 });
