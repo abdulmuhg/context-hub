@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import type { Db } from './db.js';
 import { digestCounts, getProjectState, markDigestPending, markStateDirty } from './digest-store.js';
+import { installLines } from './client-dist.js';
 import { createConnectCode, listGrants, revokeGrant } from './oauth/store.js';
 import { resolveProject, splitPublicId } from './store.js';
 import { formatUsd, usageReport, type Totals } from './usage.js';
@@ -11,6 +12,8 @@ export interface AdminIo {
   out: (line: string) => void;
   err: (line: string) => void;
   now?: () => Date;
+  /** The hub's public https address (PUBLIC_URL), when set. */
+  publicUrl?: string | null;
 }
 
 const USAGE = `Usage: hub-admin <command>
@@ -18,6 +21,7 @@ const USAGE = `Usage: hub-admin <command>
   token create --label <name> --scope <ingest or read>   create a token (shown once)
   token list                                             list tokens
   token revoke <id>                                      revoke a token
+  setup                                                  print the codes and install lines for a new hub's first browser and computer
   connect-code                                           print a one-time sign-in code for claude.ai or a browser (10 minutes)
   device-code                                            print a one-time code that connects a computer with hub login (10 minutes)
   oauth list                                             list Claude app sign-ins
@@ -68,6 +72,31 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
     if (!Number.isInteger(id)) throw new Fail('Give the numeric id from `hub-admin token list`.');
     if (!revokeToken(io.db, id, now)) throw new Fail(`No active token with id ${id}.`);
     io.out(`Token ${id} revoked.`);
+    return 0;
+  }
+
+  // Everything a new hub needs in one go: a code for the first browser and one for the first computer.
+  if (command === 'setup') {
+    const signin = createConnectCode(io.db, now);
+    const device = createConnectCode(io.db, now, 'device');
+    const base = io.publicUrl?.replace(/\/+$/, '') || null;
+    io.out('1. Open the dashboard');
+    if (base) io.out(`   ${base}/login`);
+    io.out(`   Sign-in code: ${signin.code}`);
+    io.out('');
+    io.out('2. Connect your first computer');
+    if (base) {
+      const lines = installLines(base, device.code);
+      io.out('   macOS / Linux:');
+      io.out(`   ${lines.unix}`);
+      io.out('   Windows (PowerShell):');
+      io.out(`   ${lines.windows}`);
+    } else {
+      io.out(`   Computer code: ${device.code}`);
+      io.out('   Install the hub command, then run hub login and enter this code.');
+    }
+    io.out('');
+    io.out('Both codes are valid for 10 minutes, for one use.');
     return 0;
   }
 

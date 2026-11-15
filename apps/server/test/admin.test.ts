@@ -177,3 +177,33 @@ describe('hub-admin usage', () => {
     expect(out.join('\n')).toMatch(/2026-10-11 +1 calls +10000 in +1000 out +—/);
   });
 });
+
+describe('hub-admin setup', () => {
+  it('prints a sign-in code and both install lines carrying a computer code', async () => {
+    io.publicUrl = 'https://hub.example.com';
+    expect(await runAdmin(['setup'], io)).toBe(0);
+    const text = out.join('\n');
+    const codes = text.match(/[A-Z0-9]{4}-[A-Z0-9]{4}/g)!;
+    expect(new Set(codes).size).toBe(2);
+    expect(text).toContain('curl -fsSL https://hub.example.com/install | sh -s -- --code ');
+    expect(text).toContain('irm https://hub.example.com/install.ps1 | iex');
+    expect(text).toContain('https://hub.example.com/login');
+    expect(text).toMatch(/10 minutes/);
+  });
+
+  it('without a public address prints both codes and the hub login hint', async () => {
+    expect(await runAdmin(['setup'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/Sign-in code: /);
+    expect(text).toMatch(/Computer code: /);
+    expect(text).toContain('hub login');
+    expect(text).not.toContain('curl');
+  });
+
+  it('the sign-in code it prints signs a browser in once', async () => {
+    await runAdmin(['setup'], io);
+    const code = /Sign-in code: (\S+)/.exec(out.join('\n'))![1]!;
+    expect(consumeConnectCode(io.db, code, NOW.toISOString())).toBe(true);
+    expect(consumeConnectCode(io.db, code, NOW.toISOString())).toBe(false);
+  });
+});
