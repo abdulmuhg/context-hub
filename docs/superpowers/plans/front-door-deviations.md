@@ -23,3 +23,6 @@
 - The only link into the old README found by the search was the text in `apps/collector/src/cli.ts` (`README: "Read from the hub in the Claude apps"`), now pointing at `docs/using.md`; no test asserted it. No README anchors (`#which-path`, `#sign-in-codes`, `#settings`, `#backups`) were linked from code, installers, `deploy/`, `CONTRIBUTING.md` or `SECURITY.md`. Anchors inside the moved text were kept valid by checking each heading's slug after the heading levels shifted.
 - `docs/using.md` keeps the old "hosting, first computer ever" row verbatim (`docker exec … node /app/dist/admin-bin.js device-code`). That spelling still works in every image; `docs/self-hosting.md` and `deploy/README.md` use `hub-admin`.
 - The README is 80 lines. Its quick-start block is Task 1's block verbatim.
+
+## Review
+- The `hub-admin` shim in the `Dockerfile` was written with real line breaks inside the `RUN` and a literal `\n` before `&&`, which Docker cannot parse; the image build would have failed. Rewritten as one `printf` with `\n` escapes and a proper line continuation. Not built locally (no Docker daemon running); the first CI build is the check.
