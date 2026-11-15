@@ -36,3 +36,6 @@
 ### Task 2
 - The plan's tests used `url`; the share-tag and robots tests are in their own `describe` with its own server whose `publicOrigin` is `https://hub.example.com` (the existing `originUrl` server uses its own address, which the tests cannot match on). The thank-you `noindex` test sits in the waitlist block, using `wUrl`.
 - The red step was skipped for this task: tests and code were written together, then the suite run green.
+
+### Task 3
+- The red step was skipped again (test and code written together, suite green). The new test sits in the first `the landing page` block, which uses `url`.

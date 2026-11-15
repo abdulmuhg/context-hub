@@ -61,6 +61,16 @@ describe('the landing page', () => {
     expect(res.headers.get('content-security-policy')).toBe(CSP);
   });
 
+  it('answers the common questions without any script', async () => {
+    const html = await (await fetch(`${url}/`)).text();
+    expect(html).toContain('<h2>Questions</h2>');
+    expect((html.match(/<details/g) ?? []).length).toBe(5);
+    for (const q of ['What gets uploaded?', 'Which assistants does it work with?', 'What does it cost?', 'Can a team share one hub?', 'What if I stop using it?']) {
+      expect(html).toContain(`<summary>${q}</summary>`);
+    }
+    expect(html).not.toMatch(/\sstyle=|<style/);
+  });
+
   it('still shows the Overview at / to a signed-in browser', async () => {
     const html = await (await fetch(`${url}/`, { headers: { cookie } })).text();
     expect(html).toContain('<h1>Overview</h1>');

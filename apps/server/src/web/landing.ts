@@ -101,6 +101,14 @@ ${QUICK_START.map(copyRow).join('\n')}
 <p>Then run <code>docker compose exec context-hub hub-admin setup</code> for your sign-in code and the line that connects your first computer.</p>
 <p><a href="${REPO}/blob/main/deploy/README.md">Full guide</a></p>
 </section>
+<section id="questions">
+<h2>Questions</h2>
+<details><summary>What gets uploaded?</summary><p>Only the projects you say yes to. For each AI session in them, the hub gets the conversation and a short summary of it, with tokens, keys and passwords stripped out first. The files in your repository are not uploaded, unless you add a notes folder yourself.</p></details>
+<details><summary>Which assistants does it work with?</summary><p>Sessions are collected from Claude Code, Codex and Antigravity. They can then be read from Claude Code, claude.ai, Claude desktop and mobile, or another tool that speaks MCP.</p></details>
+<details><summary>What does it cost?</summary><p>The software is free. You pay for a small server. Summaries are written by Claude Code on your own computer and count against your Claude plan, so the hub needs no API key.</p></details>
+<details><summary>Can a team share one hub?</summary><p>Not yet. A hub has no separate users: everyone with access sees everything in it. For now, run one hub per person.</p></details>
+<details><summary>What if I stop using it?</summary><p><code>hub forget &lt;project&gt;</code> deletes a project from the hub, and removing the server removes everything. The files on your computer are never touched.</p></details>
+</section>
 <section id="waitlist">
 <h2>Hosted hub</h2>
 <p>A hosted hub, with nothing to run yourself, is not open yet. Leave your email and we will tell you when it is.</p>
