@@ -10,7 +10,7 @@ import { handleMcp } from './mcp.js';
 import { parsePublicUrl } from './oauth/config.js';
 import { parseDailyBudgetUsd, recordUsage } from './usage.js';
 import { DEFAULT_MAX_INPUT_TOKENS, startWorker } from './worker.js';
-import { secureCookiesFor, type WebConfig } from './web/routes.js';
+import { parseLanding, secureCookiesFor, type WebConfig } from './web/routes.js';
 
 logger.setLevel(parseLogLevel(process.env.LOG_LEVEL));
 
@@ -35,6 +35,7 @@ const web: WebConfig = {
   secureCookies: secureCookiesFor(publicUrl),
   publicOrigin: publicUrl ?? null,
   dailyBudgetUsd,
+  landing: parseLanding(process.env.LANDING),
 };
 
 const client = { bundle: loadClientBundle(process.env.CLIENT_BUNDLE_PATH?.trim() || '/app/client/hub.mjs') };

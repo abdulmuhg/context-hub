@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import { securityHeaders } from './html.js';
+import { LANDING_CSS } from './landing-css.js';
 import { ICON_SVG, iconPng } from './icon.js';
 
 // Everything the pages look like and do lives here, because the Content-Security-Policy
@@ -399,6 +400,7 @@ const JS = `(function () {
 
 const FILES: Record<string, { type: string; body: string | Buffer }> = {
   '/assets/app.css': { type: 'text/css; charset=utf-8', body: CSS },
+  '/assets/landing.css': { type: 'text/css; charset=utf-8', body: LANDING_CSS },
   '/assets/app.js': { type: 'text/javascript; charset=utf-8', body: JS },
   // The app icon. Browsers fetch /favicon.ico by habit, so it is served there too (as a PNG,
   // which every browser accepts at that address). The home-screen icon is a full square: phones
@@ -440,4 +442,4 @@ const FINGERPRINT: Record<string, string> = Object.fromEntries(
     [...createHash('sha256').update(f.body).digest().subarray(0, 8)].map((b) => String.fromCharCode(97 + (b % 16))).join(''),
   ]),
 );
-export const assetHref = (path: '/assets/app.css' | '/assets/app.js' | '/favicon.svg'): string => `${path}?v=${FINGERPRINT[path]}`;
+export const assetHref = (path: '/assets/app.css' | '/assets/app.js' | '/assets/landing.css' | '/favicon.svg'): string => `${path}?v=${FINGERPRINT[path]}`;

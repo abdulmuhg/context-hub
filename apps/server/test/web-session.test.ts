@@ -27,6 +27,7 @@ const web = (over: Partial<WebConfig> = {}): WebConfig => ({
   // On by default so every action test also exercises the Origin check; Node's fetch sends no Origin.
   publicOrigin: HUB,
   dailyBudgetUsd: null,
+  landing: false,
   ...over,
 });
 
@@ -131,7 +132,7 @@ describe('GET /login', () => {
     expect(res.headers.get('content-type')).toContain('text/html');
     const html = await res.text();
     expect(html).toContain('name="code"');
-    expect(html).toContain('Run hub connect on your PC to get one.');
+    expect(html).toContain('<code>hub connect</code>');
     expect(html).not.toContain('alpha');
   });
 

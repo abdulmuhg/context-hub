@@ -17,6 +17,7 @@ const web = (publicOrigin: string | null) => ({
   secureCookies: false,
   publicOrigin,
   dailyBudgetUsd: null,
+  landing: false,
 });
 
 let close: (() => Promise<void>) | null = null;

@@ -42,7 +42,7 @@ beforeEach(async () => {
     now: () => NOW,
     limiter: new AuthLimiter(),
     log: (l) => logs.push(l),
-    web: { imageTag: null, startedAt: NOW.toISOString(), digestsOn: false, backupStatusPath: null, secureCookies: false, publicOrigin: null, dailyBudgetUsd: null },
+    web: { imageTag: null, startedAt: NOW.toISOString(), digestsOn: false, backupStatusPath: null, secureCookies: false, publicOrigin: null, dailyBudgetUsd: null, landing: false },
   }));
 });
 

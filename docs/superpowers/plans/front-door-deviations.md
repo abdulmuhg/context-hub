@@ -6,3 +6,10 @@
 
 ## Task 3
 - `db.test.ts` (and `digest-store.test.ts`) rewind to older schema versions by dropping later migrations' objects by hand. They now also drop the `waitlist` table (`unmigrate14`, called from `unmigrate13`), and `db.test.ts` has a small test for migration 14. The plan only mentioned a schema-version assertion, which uses `SCHEMA_VERSION` and needed no change.
+
+## Task 4
+- `WebConfig.landing` is a required field, so every test that builds a `WebConfig` literal (nine files) gained `landing: false`.
+- `web-session.test.ts` asserted the old sign-in hint ("Run hub connect on your PC to get one."); it now asserts the reworded hint (`<code>hub connect</code>`), as the plan's reworded hint requires.
+- `head` is exported from `html.ts`, and the theme button markup is now an exported `THEME_BUTTON` constant that `pageShell` reuses (output unchanged), so the landing page draws the same button.
+- The landing check in `handleWeb` sits just after the session lookup instead of before it; the behaviour is the same (signed-in `/` is still the Overview).
+- Step 8 (look at it): done in the in-app browser against a built server with `LANDING=on`, at desktop-pane width and 375px, in both colour schemes: no horizontal page overflow at 375px; code rows scroll inside themselves. Screenshots were taken at reduced scale and the pane showed some rendering artefacts in one capture, so this is a visual sanity check, not a pixel review.

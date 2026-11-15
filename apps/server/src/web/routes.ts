@@ -4,6 +4,7 @@ import type { AuthLimiter } from '../ratelimit.js';
 import { consumeConnectCode, createConnectCode, revokeGrant } from '../oauth/store.js';
 import { revokeToken } from '../tokens.js';
 import { isAsset, serveAsset } from './assets.js';
+import { landingPage } from './landing.js';
 import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
 import {
   activityPage,
@@ -31,6 +32,8 @@ export interface WebConfig {
   publicOrigin: string | null;
   /** The daily limit on model spend in US dollars (UTC day), or null for none. */
   dailyBudgetUsd: number | null;
+  /** Show the public landing page at / to signed-out visitors (LANDING=on). Off by default. */
+  landing: boolean;
 }
 
 export interface WebCtx {
@@ -71,6 +74,14 @@ function projectKeyFrom(path: string): string | null {
 /** The POST forms the dashboard owns. `/sign-ins/disconnect` is Task 8's; it is listed so no POST path is ambiguous. */
 const ACTIONS = new Set(['/logout', '/sign-ins/disconnect', '/sign-ins/code']);
 
+/** LANDING: unset, empty or `off` is off, `on` is on, anything else is a mistake worth stopping for. */
+export function parseLanding(raw: string | undefined): boolean {
+  const v = raw?.trim().toLowerCase() ?? '';
+  if (v === '' || v === 'off') return false;
+  if (v === 'on') return true;
+  throw new Error('LANDING must be on or off');
+}
+
 /**
  * Whether the browser cookie is marked `Secure`. Keyed off the scheme, not the host: a
  * `Secure` cookie is dropped on any plain-http origin, and `PUBLIC_URL` also allows
@@ -109,12 +120,12 @@ async function login(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Pr
   // get their address blocked by submitting guesses from the owner's browser.
   if (!originAllowed(req, ctx.cfg)) return forbiddenPage(res);
   // The address is checked before the code, so a blocked address cannot keep guessing.
-  if (ctx.limiter.isBlocked(ctx.address)) return signInPage(res, { wrongCode: false, blocked: true });
+  if (ctx.limiter.isBlocked(ctx.address)) return signInPage(res, { wrongCode: false, blocked: true, landing: ctx.cfg.landing });
   const form = new URLSearchParams((await ctx.readBody()).toString('utf8'));
   const now = ctx.now();
   if (!consumeConnectCode(ctx.db, form.get('code') ?? '', now)) {
     ctx.limiter.recordFailure(ctx.address);
-    return signInPage(res, { wrongCode: true, blocked: false });
+    return signInPage(res, { wrongCode: true, blocked: false, landing: ctx.cfg.landing });
   }
   const { cookie } = createWebSession(ctx.db, now);
   res.setHeader('Set-Cookie', sessionCookie(cookie, ctx.cfg.secureCookies));
@@ -203,7 +214,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
 
   // The sign-in page and the two assets are the only GETs that need no session.
   if (path === '/login') {
-    signInPage(res, { wrongCode: false, blocked: false });
+    signInPage(res, { wrongCode: false, blocked: false, landing: ctx.cfg.landing });
     return true;
   }
   if (isAsset(path)) {
@@ -213,6 +224,10 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
   if (!isPage(path)) return false;
 
   const session = currentSession(req, ctx);
+  if (session === null && path === '/' && ctx.cfg.landing) {
+    sendDocument(res, 200, landingPage());
+    return true;
+  }
   if (session === null) {
     redirectTo(res, '/login');
     return true;

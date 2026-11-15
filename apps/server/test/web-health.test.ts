@@ -63,6 +63,7 @@ const cfg = (over: Partial<WebConfig> = {}): WebConfig => ({
   secureCookies: false,
   publicOrigin: null,
   dailyBudgetUsd: null,
+  landing: false,
   ...over,
 });
 
