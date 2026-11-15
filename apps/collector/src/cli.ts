@@ -761,7 +761,7 @@ async function doctorCase(io: Io): Promise<number> {
   if (!claude.found) add('–', 'Claude Code', 'not installed here, skipped');
   else if (hubLines.some((l) => /✓|✔|connected/i.test(l) && !/failed|✗|needs/i.test(l))) add('✓', 'Claude Code', 'context-hub connected');
   else if (hubLines.length > 0) add('!', 'Claude Code', `context-hub listed but not connected: ${hubLines[0]!.trim()}`);
-  else add('!', 'Claude Code', 'no context-hub connection. Add the connector to this Claude account (README: "Read from the hub in the Claude apps").');
+  else add('!', 'Claude Code', 'no context-hub connection. Add the connector to this Claude account (docs/using.md: "Read from the hub in the Claude apps").');
 
   // Summaries: written here by Claude Code, on its sign-in.
   const [summariesMark, summariesText] = summariesRow(io, cfg, hubWritesSummaries);

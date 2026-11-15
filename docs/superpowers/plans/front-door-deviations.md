@@ -18,3 +18,8 @@
 - The waitlist limiter is built inside `createHandler` in `http.ts` next to the sign-in limiter and is not an `AppDeps` option (tests use the real default, which is enough for the eleventh-post test).
 - Added one test the plan did not list: a full waitlist answers 503 with the "full" note and stores nothing more.
 - Step 6 was done by hand against a built server on a scratch database: good address stored lowercased, bad one 400, repeat gives the same thank-you page, and `admin-bin.js waitlist` listed one entry.
+
+## Task 6
+- The only link into the old README found by the search was the text in `apps/collector/src/cli.ts` (`README: "Read from the hub in the Claude apps"`), now pointing at `docs/using.md`; no test asserted it. No README anchors (`#which-path`, `#sign-in-codes`, `#settings`, `#backups`) were linked from code, installers, `deploy/`, `CONTRIBUTING.md` or `SECURITY.md`. Anchors inside the moved text were kept valid by checking each heading's slug after the heading levels shifted.
+- `docs/using.md` keeps the old "hosting, first computer ever" row verbatim (`docker exec … node /app/dist/admin-bin.js device-code`). That spelling still works in every image; `docs/self-hosting.md` and `deploy/README.md` use `hub-admin`.
+- The README is 80 lines. Its quick-start block is Task 1's block verbatim.
