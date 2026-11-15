@@ -33,3 +33,8 @@ export function listWaitlist(db: Db): Array<{ email: string; created_at: string 
 export function removeFromWaitlist(db: Db, email: string): boolean {
   return db.prepare('DELETE FROM waitlist WHERE email = ?').run(email).changes === 1;
 }
+
+/** The newest addresses first, at most `limit` of them: what the dashboard shows. */
+export function recentWaitlist(db: Db, limit: number): Array<{ email: string; created_at: string }> {
+  return db.prepare('SELECT email, created_at FROM waitlist ORDER BY created_at DESC, rowid DESC LIMIT ?').all(limit) as Array<{ email: string; created_at: string }>;
+}

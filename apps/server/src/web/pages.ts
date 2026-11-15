@@ -8,7 +8,7 @@ import { listTokens } from '../tokens.js';
 import { formatUsd } from '../usage.js';
 import { computeHealth, type Health, type Problem } from './health.js';
 import { escapeHtml, pageShell } from './html.js';
-import { countWaitlist } from '../waitlist.js';
+import { countWaitlist, recentWaitlist } from '../waitlist.js';
 import { renderMarkdown } from './markdown.js';
 import type { WebConfig } from './routes.js';
 import { listBrowsers } from './session.js';
@@ -203,6 +203,25 @@ function activityTable(rows: ActivityRow[]): string {
   );
 }
 
+/** How many waitlist addresses the Overview lists; the rest are a count and a pointer to the admin command. */
+const WAITLIST_ROWS = 50;
+
+/** Who asked to hear about the hosted hub, newest first. Only drawn when the landing page is on. */
+function waitlistCard(db: Db): string {
+  const total = countWaitlist(db);
+  if (total === 0) return `<section class="card"><h2>Waitlist</h2><p class="muted">Nobody has joined yet.</p></section>`;
+  const rows = recentWaitlist(db, WAITLIST_ROWS)
+    .map((r) => `<tr><td>${timeTag(r.created_at)}</td><td>${escapeHtml(r.email)}</td></tr>`)
+    .join('');
+  const more = total > WAITLIST_ROWS ? `Showing the newest ${WAITLIST_ROWS}, and ${total - WAITLIST_ROWS} more. ` : '';
+  return (
+    `<section class="card"><h2>Waitlist</h2>` +
+    `<p class="muted">${total} ${total === 1 ? 'person wants' : 'people want'} to hear when the hosted hub opens.</p>` +
+    `<div class="table-wrap"><table><thead><tr><th>Joined</th><th>Email</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    `<p class="card-foot">${more}On the server, <code>hub-admin waitlist</code> lists everyone and <code>hub-admin waitlist remove &lt;email&gt;</code> removes one.</p></section>`
+  );
+}
+
 /** The Overview page (spec 3.2): the five cards, the problems, recent activity and the version. */
 export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string): string {
   const health = computeHealth(db, cfg, now);
@@ -222,7 +241,6 @@ export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string):
     cfg.imageTag === null
       ? `<p class="footnote">Server started ${timeTag(cfg.startedAt, 'inline')}</p>`
       : `<p class="footnote">Running <code>${escapeHtml(cfg.imageTag)}</code> · started ${timeTag(cfg.startedAt, 'inline')}</p>`;
-  const waitlist = cfg.landing ? `<p class="footnote">Waitlist: ${countWaitlist(db)}</p>` : '';
   return pageShell({
     title: 'Overview',
     active: 'overview',
@@ -232,9 +250,9 @@ export function overviewPage(db: Db, cfg: WebConfig, now: string, csrf: string):
       cards(health, cfg.dailyBudgetUsd) +
       problems +
       notices +
+      (cfg.landing ? waitlistCard(db) : '') +
       `<section class="card"><h2>Recent activity</h2>${activityTable(rows)}<p class="card-foot"><a href="/activity">All activity</a></p></section>` +
-      version +
-      waitlist,
+      version,
   });
 }
 
