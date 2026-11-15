@@ -27,6 +27,7 @@ const web = (over: Partial<WebConfig> = {}): WebConfig => ({
   // On by default so every action test also exercises the Origin check; Node's fetch sends no Origin.
   publicOrigin: HUB,
   dailyBudgetUsd: null,
+  landing: false,
   ...over,
 });
 

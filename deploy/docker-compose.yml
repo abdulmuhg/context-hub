@@ -1,11 +1,11 @@
 # A complete single-server context-hub: the hub and Caddy for HTTPS.
-# See deploy/README.md. Copy this folder to the server, fill in .env and the
-# Caddyfile, then: docker compose up -d
+# See deploy/README.md. Put this file and the Caddyfile on the server, set
+# HUB_DOMAIN in .env, then: docker compose up -d
 services:
   context-hub:
-    # Build it yourself (`docker build -t context-hub .` in the repository) or
-    # use an image your CI pushes. Pin a tag; avoid :latest on a server.
-    image: ${HUB_IMAGE:?set HUB_IMAGE in .env}
+    # The default is the public image. Set HUB_IMAGE in .env to pin a tag on a
+    # server you care about.
+    image: ${HUB_IMAGE:-ghcr.io/abdulmuhg/context-hub:latest}
     restart: unless-stopped
     # Not published to the host: only Caddy reaches it.
     expose:
@@ -15,6 +15,7 @@ services:
     environment:
       PORT: "3000"
       DATABASE_PATH: /data/hub.sqlite
+      PUBLIC_URL: https://${HUB_DOMAIN:?set HUB_DOMAIN in .env, for example HUB_DOMAIN=hub.example.com}
     volumes:
       # The hub's only state: one SQLite file. Back it up with backup.sh.
       - hub_data:/data
@@ -32,6 +33,8 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    environment:
+      HUB_DOMAIN: ${HUB_DOMAIN}
     ports:
       - "80:80"
       - "443:443"

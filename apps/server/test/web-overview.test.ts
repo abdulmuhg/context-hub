@@ -9,6 +9,8 @@ import { recordUsage } from '../src/usage.js';
 import { createConnectCode } from '../src/oauth/store.js';
 import { AuthLimiter } from '../src/ratelimit.js';
 import type { WebConfig } from '../src/web/routes.js';
+import { overviewPage } from '../src/web/pages.js';
+import { addToWaitlist } from '../src/waitlist.js';
 import { startServer } from './helpers.js';
 
 const START = new Date('2026-10-20T12:00:00.000Z');
@@ -65,6 +67,7 @@ beforeEach(async () => {
     secureCookies: false,
     publicOrigin: null,
     dailyBudgetUsd: null,
+    landing: false,
   };
   const s = await startServer({ db, now: () => clock, limiter: new AuthLimiter(() => clock.getTime()), web: cfg });
   url = s.url;
@@ -228,5 +231,13 @@ describe('the Overview page', () => {
     const html = await overview();
     expect(html).toContain('Needs attention');
     expect(html).toMatch(/no sync run/i);
+  });
+});
+
+describe('the waitlist count', () => {
+  it('shows the waitlist count on the Overview only when LANDING is on', () => {
+    addToWaitlist(db, 'ada@example.com', START.toISOString());
+    expect(overviewPage(db, { ...cfg, landing: true }, START.toISOString(), 'csrf')).toContain('Waitlist: 1');
+    expect(overviewPage(db, { ...cfg, landing: false }, START.toISOString(), 'csrf')).not.toContain('Waitlist');
   });
 });

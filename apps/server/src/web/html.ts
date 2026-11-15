@@ -27,7 +27,7 @@ export function securityHeaders(): Record<string, string> {
 }
 
 /** The head every page shares. The script sits in the head, unblocked by layout, so a stored theme applies before first paint. */
-function head(title: string): string {
+export function head(title: string, extraStyles: string[] = []): string {
   return (
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>${escapeHtml(title)}</title>` +
@@ -36,6 +36,7 @@ function head(title: string): string {
     `<link rel="icon" href="${assetHref('/favicon.svg')}" type="image/svg+xml">` +
     `<link rel="apple-touch-icon" href="/apple-touch-icon.png">` +
     `<link rel="stylesheet" href="${assetHref('/assets/app.css')}">` +
+    extraStyles.map((href) => `<link rel="stylesheet" href="${href}">`).join('') +
     `<script src="${assetHref('/assets/app.js')}"></script>`
   );
 }
@@ -47,6 +48,9 @@ const MOON = `<svg class="icon-moon" ${ICON_ATTRS}><path d="M21 12.8A9 9 0 1 1 1
 const SUN =
   `<svg class="icon-sun" ${ICON_ATTRS}><circle cx="12" cy="12" r="4"/>` +
   `<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>`;
+
+/** The button that switches between light and dark, as the dashboard header draws it. */
+export const THEME_BUTTON = `<button type="button" class="icon-button" data-theme-toggle aria-label="Switch between light and dark theme" title="Switch theme">${MOON}${SUN}</button>`;
 
 /** Writes a finished document with the security headers. */
 export function sendDocument(res: ServerResponse, status: number, html: string): void {
@@ -89,7 +93,7 @@ export function pageShell(o: { title: string; active: NavKey; csrf: string; body
     `<form method="post" action="/logout"><input type="hidden" name="csrf" value="${escapeHtml(o.csrf)}"><button type="submit">Sign out</button></form></aside>` +
     `<div class="main"><header class="topbar"><button type="button" class="menu-button" data-menu-toggle aria-controls="sidebar" aria-expanded="false">Menu</button>` +
     `<span class="topbar-title">${escapeHtml(o.title)}</span>` +
-    `<div class="topbar-actions"><button type="button" class="icon-button" data-theme-toggle aria-label="Switch between light and dark theme" title="Switch theme">${MOON}${SUN}</button></div></header>` +
+    `<div class="topbar-actions">${THEME_BUTTON}</div></header>` +
     `<main class="content">${o.body}</main></div></div></body></html>`
   );
 }
@@ -107,6 +111,8 @@ export interface SignInView {
   wrongCode: boolean;
   /** This address has failed too often and is waiting out the block. */
   blocked: boolean;
+  /** The landing page is on, so the page links back to it. */
+  landing: boolean;
 }
 
 /** The only page a signed-out browser is shown. It says nothing about what is stored. */
@@ -124,10 +130,11 @@ export function signInPage(res: ServerResponse, v: SignInView): void {
 ${note}
 <form method="post" action="/login" autocomplete="off">
 <label for="code">Sign-in code</label>
-<p>Run hub connect on your PC to get one.</p>
+<p>Get a code from a connected computer with <code>hub connect</code>, or from the dashboard's Sign-ins page.</p>
 <input type="text" id="code" name="code" required autocomplete="off" autocapitalize="characters" spellcheck="false">
 <button type="submit">Sign in</button>
-</form></main>`,
+</form>
+${v.landing ? '<p><a href="/">What is context-hub?</a></p>' : ''}</main>`,
   );
 }
 

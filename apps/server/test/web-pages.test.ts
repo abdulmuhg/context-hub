@@ -79,6 +79,7 @@ beforeEach(async () => {
     secureCookies: false,
     publicOrigin: null,
     dailyBudgetUsd: null,
+    landing: false,
   };
   const s = await startServer({ db, now: () => clock, limiter: new AuthLimiter(() => clock.getTime()), web: cfg });
   url = s.url;

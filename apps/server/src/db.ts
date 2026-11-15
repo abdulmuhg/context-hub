@@ -278,6 +278,10 @@ const MIGRATIONS: string[] = [
   -- What started a computer's upload or sync (types.ts TRIGGERS); null for reads and older collectors.
   ALTER TABLE activity ADD COLUMN trigger TEXT;
   `,
+  `
+  -- Email addresses left on the landing page's waitlist form; only written when LANDING is on.
+  CREATE TABLE waitlist (email TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -5,8 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { openDb, SCHEMA_VERSION, type Db } from '../src/db.js';
 import { projectsNeedingPage } from '../src/digest-store.js';
 
-/** Undoes migration 13, for a test that rewinds to an earlier version and runs the later ones again. */
+/** Undoes migration 14 (the waitlist), for the same rewinds. */
+function unmigrate14(db: Db): void {
+  db.exec('DROP TABLE waitlist');
+}
+
+/** Undoes migrations 13 and 14, for a test that rewinds to an earlier version and runs the later ones again. */
 function unmigrate13(db: Db): void {
+  unmigrate14(db);
   db.exec('ALTER TABLE activity DROP COLUMN trigger');
 }
 
@@ -200,6 +206,20 @@ describe('migration 13', () => {
     old.close();
     const db = openDb(path);
     expect(db.prepare('SELECT actor, trigger FROM activity').all()).toEqual([{ actor: 'pc', trigger: null }]);
+    db.close();
+  });
+});
+
+describe('migration 14', () => {
+  it('creates the waitlist table on an older database', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hub-db-')), 'hub.sqlite');
+    const old = openDb(path);
+    unmigrate14(old);
+    old.pragma('user_version = 13');
+    old.close();
+    const db = openDb(path);
+    db.prepare("INSERT INTO waitlist(email, created_at) VALUES ('a@b.co', '2026-11-15T00:00:00Z')").run();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM waitlist').get()).toEqual({ n: 1 });
     db.close();
   });
 });

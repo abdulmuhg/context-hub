@@ -6,8 +6,8 @@ certificate by itself, plus a nightly backup script.
 | File | What it is |
 |---|---|
 | `docker-compose.yml` | The hub and Caddy |
-| `Caddyfile` | HTTPS and headers for your hub's address |
-| `.env.example` | The hub's settings; copy to `.env` |
+| `Caddyfile` | HTTPS and headers; the address comes from `HUB_DOMAIN` |
+| `.env.example` | The hub's settings; the quick start below needs only `HUB_DOMAIN` |
 | `backup.sh` | A consistent nightly backup, with optional off-site upload |
 
 ## 1. Set up
@@ -15,13 +15,14 @@ certificate by itself, plus a nightly backup script.
 On a Linux server with Docker, with your hub's DNS name pointing at it:
 
 ```bash
-mkdir -p ~/context-hub && cd ~/context-hub
-# copy the four files from this folder here, then:
-cp .env.example .env              # fill in HUB_IMAGE and PUBLIC_URL (ANTHROPIC_API_KEY is optional)
-mkdir -p backups/status           # before the first start, so it is not owned by root
-nano Caddyfile                    # replace hub.example.com
+mkdir -p context-hub/backups/status && cd context-hub && curl -fsSLO https://raw.githubusercontent.com/abdulmuhg/context-hub/main/deploy/docker-compose.yml -O https://raw.githubusercontent.com/abdulmuhg/context-hub/main/deploy/Caddyfile
+echo "HUB_DOMAIN=hub.example.com" > .env
 docker compose up -d
 ```
+
+The compose file runs the public image and builds `PUBLIC_URL` from
+`HUB_DOMAIN`. Other settings (for example `ANTHROPIC_API_KEY`, which is
+optional) are listed in `.env.example`.
 
 Check it: `curl https://hub.example.com/healthz` answers `{"ok":true,"version":"<sha>"}`.
 
@@ -30,12 +31,14 @@ Check it: `curl https://hub.example.com/healthz` answers `{"ok":true,"version":"
 Nothing is signed in on a new hub, so the first codes come from the server:
 
 ```bash
-docker compose exec context-hub node /app/dist/admin-bin.js device-code    # for hub login on your computer
-docker compose exec context-hub node /app/dist/admin-bin.js connect-code   # for the dashboard or claude.ai
+docker compose exec context-hub hub-admin setup
 ```
 
-Then follow the main [README](../README.md#which-path-are-you-on). After that,
-the dashboard's **Sign-ins** page makes both kinds of code.
+It prints a sign-in code for the dashboard and the line that connects your
+first computer, both valid for 10 minutes and for one use.
+
+Then follow [Using a hub](../docs/using.md). After that, the dashboard's
+**Sign-ins** page makes both kinds of code.
 
 ## 3. Back up every night
 
@@ -71,5 +74,7 @@ example, delete after 30 days) on each bucket.
 
 ## Updating
 
-Change `HUB_IMAGE` in `.env` to the new tag, then `docker compose up -d`.
+To follow `latest`: `docker compose pull && docker compose up -d`. To pin a
+version, set `HUB_IMAGE` in `.env` to a tag (for example
+`ghcr.io/abdulmuhg/context-hub:sha-0123456789ab`), then `docker compose up -d`.
 The database migrates itself on start. Take a backup first.

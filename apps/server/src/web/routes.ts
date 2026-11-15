@@ -4,7 +4,9 @@ import type { Db } from '../db.js';
 import type { AuthLimiter } from '../ratelimit.js';
 import { consumeConnectCode, createConnectCode, revokeGrant } from '../oauth/store.js';
 import { revokeToken } from '../tokens.js';
+import { addToWaitlist, normalizeEmail } from '../waitlist.js';
 import { isAsset, serveAsset } from './assets.js';
+import { landingPage, waitlistThanksPage } from './landing.js';
 import { forbiddenPage, redirectTo, sendDocument, signInPage } from './html.js';
 import {
   activityPage,
@@ -32,6 +34,8 @@ export interface WebConfig {
   publicOrigin: string | null;
   /** The daily limit on model spend in US dollars (UTC day), or null for none. */
   dailyBudgetUsd: number | null;
+  /** Show the public landing page at / to signed-out visitors (LANDING=on). Off by default. */
+  landing: boolean;
   /** Server-side PostHog pageviews; main.ts leaves it out when POSTHOG_KEY is unset. */
   pageview?: PageviewCapture;
 }
@@ -40,6 +44,8 @@ export interface WebCtx {
   db: Db;
   cfg: WebConfig;
   limiter: AuthLimiter;
+  /** A second limiter, so waitlist posts never count against sign-in. */
+  waitlistLimiter: AuthLimiter;
   address: string;
   now: () => string;
   readBody: () => Promise<Buffer>;
@@ -73,6 +79,14 @@ function projectKeyFrom(path: string): string | null {
 
 /** The POST forms the dashboard owns. `/sign-ins/disconnect` is Task 8's; it is listed so no POST path is ambiguous. */
 const ACTIONS = new Set(['/logout', '/sign-ins/disconnect', '/sign-ins/code']);
+
+/** LANDING: unset, empty or `off` is off, `on` is on, anything else is a mistake worth stopping for. */
+export function parseLanding(raw: string | undefined): boolean {
+  const v = raw?.trim().toLowerCase() ?? '';
+  if (v === '' || v === 'off') return false;
+  if (v === 'on') return true;
+  throw new Error('LANDING must be on or off');
+}
 
 /**
  * Whether the browser cookie is marked `Secure`. Keyed off the scheme, not the host: a
@@ -112,16 +126,32 @@ async function login(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Pr
   // get their address blocked by submitting guesses from the owner's browser.
   if (!originAllowed(req, ctx.cfg)) return forbiddenPage(res);
   // The address is checked before the code, so a blocked address cannot keep guessing.
-  if (ctx.limiter.isBlocked(ctx.address)) return signInPage(res, { wrongCode: false, blocked: true });
+  if (ctx.limiter.isBlocked(ctx.address)) return signInPage(res, { wrongCode: false, blocked: true, landing: ctx.cfg.landing });
   const form = new URLSearchParams((await ctx.readBody()).toString('utf8'));
   const now = ctx.now();
   if (!consumeConnectCode(ctx.db, form.get('code') ?? '', now)) {
     ctx.limiter.recordFailure(ctx.address);
-    return signInPage(res, { wrongCode: true, blocked: false });
+    return signInPage(res, { wrongCode: true, blocked: false, landing: ctx.cfg.landing });
   }
   const { cookie } = createWebSession(ctx.db, now);
   res.setHeader('Set-Cookie', sessionCookie(cookie, ctx.cfg.secureCookies));
   redirectTo(res, '/');
+}
+
+/**
+ * The landing page's waitlist form. Every post that gets past the origin check counts against the
+ * address (not only bad ones), so the form cannot be used to fill the table quickly. A repeat
+ * address gets the same thank-you page as a new one, so the form never says who is listed.
+ */
+async function joinWaitlist(req: IncomingMessage, res: ServerResponse, ctx: WebCtx): Promise<void> {
+  if (!originAllowed(req, ctx.cfg)) return forbiddenPage(res);
+  if (ctx.waitlistLimiter.isBlocked(ctx.address)) return sendDocument(res, 429, landingPage('busy'));
+  ctx.waitlistLimiter.recordFailure(ctx.address);
+  const form = new URLSearchParams((await ctx.readBody()).toString('utf8'));
+  const email = normalizeEmail(form.get('email'));
+  if (email === null) return sendDocument(res, 400, landingPage('invalid'));
+  if (addToWaitlist(ctx.db, email, ctx.now()) === 'full') return sendDocument(res, 503, landingPage('full'));
+  sendDocument(res, 200, waitlistThanksPage());
 }
 
 function logout(res: ServerResponse, session: WebSession, ctx: WebCtx): void {
@@ -174,6 +204,12 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
       await login(req, res, ctx);
       return true;
     }
+    // The waitlist form is the other. With the landing page off it does not exist: the caller's 404.
+    if (path === '/waitlist') {
+      if (!ctx.cfg.landing) return false;
+      await joinWaitlist(req, res, ctx);
+      return true;
+    }
     // A POST to a path the dashboard does not own is left to the 404, so the cookie is never
     // even looked up on, say, an unknown /api/ path.
     if (!ACTIONS.has(path) && !isPage(path)) return false;
@@ -214,7 +250,7 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
 
   // The sign-in page and the two assets are the only GETs that need no session.
   if (path === '/login') {
-    signInPage(res, { wrongCode: false, blocked: false });
+    signInPage(res, { wrongCode: false, blocked: false, landing: ctx.cfg.landing });
     return true;
   }
   if (isAsset(path)) {
@@ -224,6 +260,10 @@ export async function handleWeb(req: IncomingMessage, res: ServerResponse, path:
   if (!isPage(path)) return false;
 
   const session = currentSession(req, ctx);
+  if (session === null && path === '/' && ctx.cfg.landing) {
+    sendDocument(res, 200, landingPage());
+    return true;
+  }
   if (session === null) {
     redirectTo(res, '/login');
     return true;

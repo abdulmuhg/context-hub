@@ -173,6 +173,8 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
   const { db } = deps;
   const now = deps.now ?? (() => new Date());
   const limiter = deps.limiter ?? new AuthLimiter();
+  // Its own counts: waitlist posts must never lock anyone out of signing in.
+  const waitlistLimiter = new AuthLimiter();
   const logger = deps.logger ?? sharedLogger;
   const version = deps.version ?? process.env.APP_VERSION ?? 'dev';
   const log = deps.log ?? lineSink(logger);
@@ -497,6 +499,7 @@ export function createHandler(deps: AppDeps): (req: IncomingMessage, res: Server
         db,
         cfg: deps.web,
         limiter,
+        waitlistLimiter,
         address: clientAddress(req),
         now: () => now().toISOString(),
         readBody: () => readBody(req),

@@ -1,9 +1,11 @@
 import { parseArgs } from 'node:util';
 import type { Db } from './db.js';
 import { digestCounts, getProjectState, markDigestPending, markStateDirty } from './digest-store.js';
+import { installLines } from './client-dist.js';
 import { createConnectCode, listGrants, revokeGrant } from './oauth/store.js';
 import { resolveProject, splitPublicId } from './store.js';
 import { formatUsd, usageReport, type Totals } from './usage.js';
+import { countWaitlist, listWaitlist, normalizeEmail, removeFromWaitlist } from './waitlist.js';
 import { createToken, listTokens, revokeToken, type Scope } from './tokens.js';
 
 export interface AdminIo {
@@ -11,6 +13,8 @@ export interface AdminIo {
   out: (line: string) => void;
   err: (line: string) => void;
   now?: () => Date;
+  /** The hub's public https address (PUBLIC_URL), when set. */
+  publicUrl?: string | null;
 }
 
 const USAGE = `Usage: hub-admin <command>
@@ -18,8 +22,11 @@ const USAGE = `Usage: hub-admin <command>
   token create --label <name> --scope <ingest or read>   create a token (shown once)
   token list                                             list tokens
   token revoke <id>                                      revoke a token
+  setup                                                  print the codes and install lines for a new hub's first browser and computer
   connect-code                                           print a one-time sign-in code for claude.ai or a browser (10 minutes)
   device-code                                            print a one-time code that connects a computer with hub login (10 minutes)
+  waitlist                                               list the emails on the landing page's waitlist
+  waitlist remove <email>                                remove one address from the waitlist
   oauth list                                             list Claude app sign-ins
   oauth revoke <id>                                      revoke a Claude app sign-in
   backup <file>                                          write a consistent copy of the database
@@ -71,6 +78,31 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
     return 0;
   }
 
+  // Everything a new hub needs in one go: a code for the first browser and one for the first computer.
+  if (command === 'setup') {
+    const signin = createConnectCode(io.db, now);
+    const device = createConnectCode(io.db, now, 'device');
+    const base = io.publicUrl?.replace(/\/+$/, '') || null;
+    io.out('1. Open the dashboard');
+    if (base) io.out(`   ${base}/login`);
+    io.out(`   Sign-in code: ${signin.code}`);
+    io.out('');
+    io.out('2. Connect your first computer');
+    if (base) {
+      const lines = installLines(base, device.code);
+      io.out('   macOS / Linux:');
+      io.out(`   ${lines.unix}`);
+      io.out('   Windows (PowerShell):');
+      io.out(`   ${lines.windows}`);
+    } else {
+      io.out(`   Computer code: ${device.code}`);
+      io.out('   Install the hub command, then run hub login and enter this code.');
+    }
+    io.out('');
+    io.out('Both codes are valid for 10 minutes, for one use.');
+    return 0;
+  }
+
   if (command === 'connect-code') {
     const { code, expiresAt } = createConnectCode(io.db, now);
     io.out(`Sign-in code: ${code}`);
@@ -83,6 +115,21 @@ async function dispatch(argv: string[], io: AdminIo): Promise<number> {
     const { code, expiresAt } = createConnectCode(io.db, now, 'device');
     io.out(`Computer code: ${code}`);
     io.out(`Valid until ${expiresAt}, for one use. Enter it when hub login asks for a code on the new computer.`);
+    return 0;
+  }
+
+  if (command === 'waitlist' && sub === undefined) {
+    const rows = listWaitlist(io.db);
+    for (const r of rows) io.out(`${r.created_at.slice(0, 10)}  ${r.email}`);
+    io.out(rows.length === 0 ? 'Nobody is on the waitlist yet.' : `${rows.length} on the waitlist.`);
+    return 0;
+  }
+
+  if (command === 'waitlist' && sub === 'remove') {
+    const email = normalizeEmail(rest[0] ?? null);
+    if (!email) throw new Fail('Give the email address to remove.');
+    if (!removeFromWaitlist(io.db, email)) throw new Fail(`${email} is not on the waitlist.`);
+    io.out(`Removed ${email}.`);
     return 0;
   }
 
