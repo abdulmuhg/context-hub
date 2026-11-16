@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Fail } from './errors.js';
-import { LOCK_FILE, releaseLock, startLockHeartbeat, takeLock, type Held } from './lock.js';
+import { LOCK_FILE, markRerun, releaseLock, startLockHeartbeat, takeLock, type Held } from './lock.js';
 import { runSync, type SyncOptions } from './sync.js';
 
 const HOOK_SUFFIX = ' sync --auto';
@@ -166,7 +166,10 @@ export async function runAutoChild(opts: SyncOptions): Promise<void> {
   try {
     mkdirSync(opts.hubDir, { recursive: true });
     held = takeLock(lockPath, now());
-    if (!held) return;
+    if (!held) {
+      markRerun(opts.hubDir);
+      return;
+    }
     stopHeartbeat = startLockHeartbeat(held, now);
     const { project: _project, session: _session, dryRun: _dryRun, ...rest } = opts;
     let line: string;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export const LOCK_FILE = 'auto.lock';
 export const RERUN_FILE = 'auto.rerun';
@@ -76,6 +77,25 @@ export function startLockHeartbeat(held: Held, now: () => Date, everyMs = 60_000
   }, everyMs);
   timer.unref();
   return () => clearInterval(timer);
+}
+
+/** Asks whoever holds the lock for one more pass. */
+export function markRerun(hubDir: string): void {
+  try {
+    writeFileSync(join(hubDir, RERUN_FILE), '');
+  } catch {
+    // best effort
+  }
+}
+
+/** Clears the rerun flag. True when it was there. */
+export function takeRerun(hubDir: string): boolean {
+  try {
+    unlinkSync(join(hubDir, RERUN_FILE));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Unlinks the lock only while it still carries held.token. */

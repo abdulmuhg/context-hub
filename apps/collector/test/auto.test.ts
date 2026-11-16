@@ -214,6 +214,15 @@ describe('runAutoChild', () => {
     expect(existsSync(join(hubDir, 'auto.lock'))).toBe(true);
   });
 
+  it('a held lock leaves a rerun flag', async () => {
+    const held = JSON.stringify({ token: 'someone-else', at: new Date(T0.getTime() - 60 * 1000).toISOString() });
+    writeRaw(join(hubDir, 'auto.lock'), held);
+    await runAutoChild(opts);
+    expect(puts).toEqual([]);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(true);
+    expect(readFileSync(join(hubDir, 'auto.lock'), 'utf8')).toBe(held);
+  });
+
   it('takes over a stale lock, logs one line and keeps only the last 200', async () => {
     writeRaw(join(hubDir, 'auto.lock'), new Date(T0.getTime() - 11 * 60 * 1000).toISOString());
     writeRaw(join(hubDir, 'auto.log'), Array.from({ length: 250 }, (_, i) => `old ${i}`).join('\n') + '\n');
