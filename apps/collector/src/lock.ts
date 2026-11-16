@@ -54,6 +54,35 @@ export function takeLock(lockPath: string, now: Date, token: string = `${process
   }
 }
 
+/**
+ * Takes the lock, waiting for whoever holds it. Null when it is still held after timeoutMs.
+ * onWait runs once, just before the first sleep.
+ */
+export async function waitForLock(
+  lockPath: string,
+  opts: {
+    now: () => Date;
+    sleep: (ms: number) => Promise<void>;
+    timeoutMs?: number;
+    pollMs?: number;
+    onWait?: () => void;
+  },
+): Promise<Held | null> {
+  const { now, sleep, timeoutMs = 15 * 60 * 1000, pollMs = 2000 } = opts;
+  const start = now().getTime();
+  let waited = false;
+  for (;;) {
+    const held = takeLock(lockPath, now());
+    if (held) return held;
+    if (now().getTime() - start >= timeoutMs) return null;
+    if (!waited) {
+      waited = true;
+      opts.onWait?.();
+    }
+    await sleep(pollMs);
+  }
+}
+
 function owns(held: Held): boolean {
   try {
     return readLock(held.path)?.token === held.token;

@@ -20,6 +20,7 @@ import {
   type Config,
 } from './config.js';
 import { HUB_VERSION } from './version.js';
+import { LOCK_FILE, RERUN_FILE, releaseLock, startLockHeartbeat, waitForLock, type Held } from './lock.js';
 import { Fail, friendlyMessage } from './errors.js';
 import { setupCase } from './setup.js';
 import { runResummarize } from './resummarize.js';
@@ -57,6 +58,21 @@ export interface Io {
   runClaude?: (args: string[]) => { found: boolean; output: string };
   /** Runs the handler if the person presses Ctrl+C, and returns a function that stops listening. Only set for a terminal. */
   onInterrupt?: (handler: () => void) => () => void;
+  /** Waits this many ms. Left out, a real timer. Tests pass a fake. */
+  sleep?: (ms: number) => Promise<void>;
+  /** The clock for the sync lock. Left out, the real time. Tests pass a fake. */
+  now?: () => Date;
+}
+
+/** Starts `hub sync --auto-child` detached, so the caller is never delayed. */
+function spawnAutoChild(io: Io): void {
+  const child = (io.spawn ?? spawn)(io.execPath ?? process.execPath, [bundleOf(io), 'sync', '--auto-child'], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.on?.('error', () => {});
+  child.unref();
 }
 
 const USAGE = `Usage: hub <command>
@@ -496,13 +512,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       });
       if (values.auto) {
         // Return at once so closing Claude Code is never delayed; a detached child does the work.
-        const child = (io.spawn ?? spawn)(io.execPath ?? process.execPath, [bundleOf(io), 'sync', '--auto-child'], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-        child.on?.('error', () => {});
-        child.unref();
+        spawnAutoChild(io);
         return 0;
       }
       if (values['auto-child']) {
@@ -521,25 +531,52 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const progress = io.interactive && !dryRun ? io.progress : undefined;
       let shown = false;
       if (io.interactive && !dryRun) io.out(`Syncing ${plural(loadConfig(io.hubDir).tracked.length, 'tracked project')}…`);
-      const report = await runSync({
-        ...scanOpts(io),
-        fetchImpl: io.fetchImpl,
-        ...(io.llm !== undefined ? { llm: io.llm } : {}),
-        dryRun,
-        all: values.all === true,
-        project: values.project,
-        session: values.session,
-        trigger,
-        ...(io.cwd ? { cwd: io.cwd } : {}),
-        ...(io.runCommand ? { run: io.runCommand } : {}),
-        onProgress:
-          progress &&
-          ((p) => {
-            shown = true;
-            const part = p.part ? ` (part ${p.part.index}/${p.part.total})` : '';
-            progress(`${PROGRESS_STEP[p.step]} ${p.done}/${p.total}  ${shortName(p.project)}${part}`);
-          }),
-      });
+      // A real sync shares the auto sync's lock, so the two never summarize the same sessions at once.
+      const now = io.now ?? (() => new Date());
+      const lockPath = join(io.hubDir, LOCK_FILE);
+      let held: Held | null = null;
+      if (!dryRun) {
+        held = await waitForLock(lockPath, {
+          now,
+          sleep: io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+          onWait: () => io.out('Another sync is running on this computer. Waiting for it to finish…'),
+        });
+        if (!held) {
+          throw new Fail(
+            'A sync is still running on this computer after 15 minutes. Run hub sync again once it finishes; hub auto status shows its last line.',
+          );
+        }
+      }
+      const stopHeartbeat = held ? startLockHeartbeat(held, now) : undefined;
+      const stopInterrupt = held && io.onInterrupt ? io.onInterrupt(() => releaseLock(held)) : undefined;
+      let report: SyncReport;
+      try {
+        report = await runSync({
+          ...scanOpts(io),
+          fetchImpl: io.fetchImpl,
+          ...(io.llm !== undefined ? { llm: io.llm } : {}),
+          dryRun,
+          all: values.all === true,
+          project: values.project,
+          session: values.session,
+          trigger,
+          ...(io.cwd ? { cwd: io.cwd } : {}),
+          ...(io.runCommand ? { run: io.runCommand } : {}),
+          onProgress:
+            progress &&
+            ((p) => {
+              shown = true;
+              const part = p.part ? ` (part ${p.part.index}/${p.part.total})` : '';
+              progress(`${PROGRESS_STEP[p.step]} ${p.done}/${p.total}  ${shortName(p.project)}${part}`);
+            }),
+        });
+      } finally {
+        stopHeartbeat?.();
+        if (held) releaseLock(held);
+        stopInterrupt?.();
+      }
+      // An auto sync that found the lock taken left a flag; nobody else is running now, so let a child take it.
+      if (held && existsSync(join(io.hubDir, RERUN_FILE))) spawnAutoChild(io);
       if (progress && shown) progress('');
       printReport(io, report, dryRun);
       return report.errors.length > 0 ? 1 : 0;
