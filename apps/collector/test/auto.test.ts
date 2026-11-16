@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild, startLockHeartbeat, takeLock } from '../src/auto.js';
+import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild } from '../src/auto.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
@@ -318,35 +318,6 @@ describe('hub sync --auto', () => {
 
 
 describe('the auto-sync lock while summaries are written', () => {
-  const lockPath = () => join(tempDir(), 'auto.lock');
-
-  it('a heartbeat keeps the lock fresh past 10 minutes', async () => {
-    const path = lockPath();
-    let clock = T0;
-    expect(takeLock(path, clock)).toBe(true);
-    const stop = startLockHeartbeat(path, () => clock, 5);
-    clock = new Date(T0.getTime() + 11 * 60 * 1000);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(takeLock(path, clock)).toBe(false);
-    stop();
-  });
-
-  it('without a heartbeat the lock is taken over after 10 minutes', () => {
-    const path = lockPath();
-    expect(takeLock(path, T0)).toBe(true);
-    expect(takeLock(path, new Date(T0.getTime() + 11 * 60 * 1000))).toBe(true);
-  });
-
-  it('the heartbeat never brings back a lock that was removed', async () => {
-    const path = lockPath();
-    takeLock(path, T0);
-    const stop = startLockHeartbeat(path, () => T0, 5);
-    unlinkSync(path);
-    await new Promise((r) => setTimeout(r, 40));
-    stop();
-    expect(existsSync(path)).toBe(false);
-  });
-
   it('the lock is removed after the run, and the heartbeat stops', async () => {
     const hubDir = tempDir();
     saveConfig(hubDir, { ...loadConfig(hubDir), server_url: 'https://hub.example.com', tracked: [] });

@@ -1,10 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Fail } from './errors.js';
+import { LOCK_FILE, releaseLock, startLockHeartbeat, takeLock, type Held } from './lock.js';
 import { runSync, type SyncOptions } from './sync.js';
 
 const HOOK_SUFFIX = ' sync --auto';
-const LOCK_MAX_AGE_MS = 10 * 60 * 1000;
 const LOG_KEEP = 200;
 
 type Json = Record<string, unknown>;
@@ -154,53 +154,20 @@ export function autoStatus(settingsPath: string, logPath: string): { on: boolean
   return { on, lastLine: readLines(logPath).at(-1) ?? null };
 }
 
-/** Takes the lock, or returns false when a younger one exists. A stale lock is taken over. */
-export function takeLock(lockPath: string, now: Date): boolean {
-  try {
-    writeFileSync(lockPath, now.toISOString(), { flag: 'wx' });
-    return true;
-  } catch {
-    // held, or left behind
-  }
-  try {
-    const started = Date.parse(readFileSync(lockPath, 'utf8').trim());
-    if (Number.isFinite(started) && now.getTime() - started < LOCK_MAX_AGE_MS) return false;
-    writeFileSync(lockPath, now.toISOString());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Keeps the lock fresh while a sync works. Writing summaries can take longer
- * than the lock's 10 minutes, and a second auto-sync must not start meanwhile
- * and write the same ones. It only touches a lock that still exists. Returns the function that stops it.
- */
-export function startLockHeartbeat(lockPath: string, now: () => Date, everyMs = 60_000): () => void {
-  const timer = setInterval(() => {
-    try {
-      if (existsSync(lockPath)) writeFileSync(lockPath, now().toISOString());
-    } catch {
-      // the lock is only a courtesy to the next run
-    }
-  }, everyMs);
-  timer.unref();
-  return () => clearInterval(timer);
-}
+export { startLockHeartbeat, takeLock };
 
 /** The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line, never throws. */
 export async function runAutoChild(opts: SyncOptions): Promise<void> {
   const now = opts.now ?? (() => new Date());
-  const lockPath = join(opts.hubDir, 'auto.lock');
+  const lockPath = join(opts.hubDir, LOCK_FILE);
   const logPath = join(opts.hubDir, 'auto.log');
-  let locked = false;
+  let held: Held | null = null;
   let stopHeartbeat = (): void => {};
   try {
     mkdirSync(opts.hubDir, { recursive: true });
-    if (!takeLock(lockPath, now())) return;
-    locked = true;
-    stopHeartbeat = startLockHeartbeat(lockPath, now);
+    held = takeLock(lockPath, now());
+    if (!held) return;
+    stopHeartbeat = startLockHeartbeat(held, now);
     const { project: _project, session: _session, dryRun: _dryRun, ...rest } = opts;
     let line: string;
     try {
@@ -218,12 +185,6 @@ export async function runAutoChild(opts: SyncOptions): Promise<void> {
     // nothing may reach the terminal or the caller
   } finally {
     stopHeartbeat();
-    if (locked) {
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // best effort
-      }
-    }
+    if (held) releaseLock(held);
   }
 }
