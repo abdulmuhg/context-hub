@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Fail } from './errors.js';
-import { LOCK_FILE, markRerun, releaseLock, startLockHeartbeat, takeLock, type Held } from './lock.js';
+import { LOCK_FILE, markRerun, releaseLock, RERUN_FILE, startLockHeartbeat, takeLock, takeRerun, type Held } from './lock.js';
 import { runSync, type SyncOptions } from './sync.js';
 
 const HOOK_SUFFIX = ' sync --auto';
@@ -156,11 +156,18 @@ export function autoStatus(settingsPath: string, logPath: string): { on: boolean
 
 export { startLockHeartbeat, takeLock };
 
-/** The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line, never throws. */
-export async function runAutoChild(opts: SyncOptions): Promise<void> {
+export const MAX_PASSES = 3;
+
+/**
+ * The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line per pass, never throws.
+ * A child that finds the lock held leaves a rerun flag; the holder runs another pass for it (at most MAX_PASSES).
+ * `onPassEnd` is for tests; production leaves it unset.
+ */
+export async function runAutoChild(opts: SyncOptions & { onPassEnd?: (pass: number) => void }): Promise<void> {
   const now = opts.now ?? (() => new Date());
   const lockPath = join(opts.hubDir, LOCK_FILE);
   const logPath = join(opts.hubDir, 'auto.log');
+  const rerunPath = join(opts.hubDir, RERUN_FILE);
   let held: Held | null = null;
   let stopHeartbeat = (): void => {};
   try {
@@ -170,20 +177,36 @@ export async function runAutoChild(opts: SyncOptions): Promise<void> {
       markRerun(opts.hubDir);
       return;
     }
-    stopHeartbeat = startLockHeartbeat(held, now);
-    const { project: _project, session: _session, dryRun: _dryRun, ...rest } = opts;
-    let line: string;
-    try {
-      const r = await runSync({ ...rest, trigger: 'auto' });
-      const counts = `${r.uploaded.length} uploaded, ${r.unchanged} unchanged, ${r.summarized.length} summarized, ${r.waiting.count} waiting`;
-      line =
-        r.errors.length === 0
-          ? `${now().toISOString()} ok ${counts}`
-          : `${now().toISOString()} error ${counts}, ${r.errors.length} errors: ${r.errors[0]}`;
-    } catch (e) {
-      line = `${now().toISOString()} error 0 uploaded, 0 unchanged, 0 summarized, 0 waiting, 1 errors: ${(e as Error).message}`;
+    const { project: _project, session: _session, dryRun: _dryRun, onPassEnd, ...rest } = opts;
+    let passes = 0;
+    while (held) {
+      stopHeartbeat = startLockHeartbeat(held, now);
+      for (;;) {
+        takeRerun(opts.hubDir); // before the pass, so a flag set during it survives
+        let line: string;
+        try {
+          const r = await runSync({ ...rest, trigger: 'auto' });
+          const counts = `${r.uploaded.length} uploaded, ${r.unchanged} unchanged, ${r.summarized.length} summarized, ${r.waiting.count} waiting`;
+          line =
+            r.errors.length === 0
+              ? `${now().toISOString()} ok ${counts}`
+              : `${now().toISOString()} error ${counts}, ${r.errors.length} errors: ${r.errors[0]}`;
+        } catch (e) {
+          line = `${now().toISOString()} error 0 uploaded, 0 unchanged, 0 summarized, 0 waiting, 1 errors: ${(e as Error).message}`;
+        }
+        writeFileSync(logPath, [...readLines(logPath), line.replace(/\r?\n/g, ' ')].slice(-LOG_KEEP).join('\n') + '\n');
+        passes++;
+        onPassEnd?.(passes);
+        if (passes < MAX_PASSES && existsSync(rerunPath)) continue;
+        break;
+      }
+      stopHeartbeat();
+      stopHeartbeat = (): void => {};
+      releaseLock(held);
+      held = null;
+      // A child that lost the race just before the release left a flag nobody is left to drain.
+      if (passes < MAX_PASSES && existsSync(rerunPath)) held = takeLock(lockPath, now());
     }
-    writeFileSync(logPath, [...readLines(logPath), line.replace(/\r?\n/g, ' ')].slice(-LOG_KEEP).join('\n') + '\n');
   } catch {
     // nothing may reach the terminal or the caller
   } finally {

@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild } from '../src/auto.js';
+import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, MAX_PASSES, repointHook, runAutoChild } from '../src/auto.js';
+import { markRerun } from '../src/lock.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
@@ -221,6 +222,37 @@ describe('runAutoChild', () => {
     expect(puts).toEqual([]);
     expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(true);
     expect(readFileSync(join(hubDir, 'auto.lock'), 'utf8')).toBe(held);
+  });
+
+  it('drains a flag set during the run', async () => {
+    let first = true;
+    opts.fetchImpl = async (input, init) => {
+      if (init?.method === 'PUT') puts.push(String(input));
+      if (first) {
+        first = false;
+        markRerun(hubDir);
+      }
+      return new Response('{}', { status: 200 });
+    };
+    await runAutoChild(opts);
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(2);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('drains a flag that appears after the last pass', async () => {
+    await runAutoChild({ ...opts, onPassEnd: (pass) => pass === 1 && markRerun(hubDir) });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(2);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('stops at the pass cap and keeps the flag', async () => {
+    await runAutoChild({ ...opts, onPassEnd: () => markRerun(hubDir) });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(MAX_PASSES);
+    expect(MAX_PASSES).toBe(3);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(true);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
   });
 
   it('takes over a stale lock, logs one line and keeps only the last 200', async () => {
