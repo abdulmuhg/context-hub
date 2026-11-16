@@ -10,8 +10,10 @@ export function toFtsQuery(input: string): string | null {
   const terms: string[] = [];
   const re = /"([^"]*)"|(\S+)/g;
   // Control characters (NUL above all) can end the query string early inside SQLite.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
   const cleaned = input.replace(/[\x00-\x1f\x7f]/g, ' ');
   let m: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: the standard regex exec loop
   while ((m = re.exec(cleaned)) !== null) {
     const term = (m[1] ?? m[2] ?? '').replace(/"/g, ' ').trim();
     if (term !== '') terms.push(`"${term}"`);
