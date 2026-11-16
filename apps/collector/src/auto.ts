@@ -161,9 +161,11 @@ export const MAX_PASSES = 3;
 /**
  * The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line per pass, never throws.
  * A child that finds the lock held leaves a rerun flag; the holder runs another pass for it (at most MAX_PASSES).
- * `onPassEnd` is for tests; production leaves it unset.
+ * `onPassEnd`, `beforeRelease` and `afterMarkRerun` are for tests; production leaves them unset.
  */
-export async function runAutoChild(opts: SyncOptions & { onPassEnd?: (pass: number) => void }): Promise<void> {
+export async function runAutoChild(
+  opts: SyncOptions & { onPassEnd?: (pass: number) => void; beforeRelease?: () => void; afterMarkRerun?: () => void },
+): Promise<void> {
   const now = opts.now ?? (() => new Date());
   const lockPath = join(opts.hubDir, LOCK_FILE);
   const logPath = join(opts.hubDir, 'auto.log');
@@ -172,12 +174,15 @@ export async function runAutoChild(opts: SyncOptions & { onPassEnd?: (pass: numb
   let stopHeartbeat = (): void => {};
   try {
     mkdirSync(opts.hubDir, { recursive: true });
+    const { project: _project, session: _session, dryRun: _dryRun, onPassEnd, beforeRelease, afterMarkRerun, ...rest } = opts;
     held = takeLock(lockPath, now());
     if (!held) {
+      // Flag first, then one more try: the holder may have checked for the flag before it was written.
       markRerun(opts.hubDir);
-      return;
+      afterMarkRerun?.();
+      held = takeLock(lockPath, now());
+      if (!held) return;
     }
-    const { project: _project, session: _session, dryRun: _dryRun, onPassEnd, ...rest } = opts;
     let passes = 0;
     while (held) {
       stopHeartbeat = startLockHeartbeat(held, now);
@@ -202,6 +207,7 @@ export async function runAutoChild(opts: SyncOptions & { onPassEnd?: (pass: numb
       }
       stopHeartbeat();
       stopHeartbeat = (): void => {};
+      beforeRelease?.();
       releaseLock(held);
       held = null;
       // A child that lost the race just before the release left a flag nobody is left to drain.

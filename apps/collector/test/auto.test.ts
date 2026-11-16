@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, MAX_PASSES, repointHook, runAutoChild } from '../src/auto.js';
@@ -243,6 +243,30 @@ describe('runAutoChild', () => {
   it('drains a flag that appears after the last pass', async () => {
     await runAutoChild({ ...opts, onPassEnd: (pass) => pass === 1 && markRerun(hubDir) });
     expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(2);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('drains a flag that appears between the last check and release', async () => {
+    let first = true;
+    await runAutoChild({
+      ...opts,
+      beforeRelease: () => {
+        if (!first) return;
+        first = false;
+        markRerun(hubDir);
+      },
+    });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(2);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('a child that loses then wins drains its own flag', async () => {
+    writeRaw(join(hubDir, 'auto.lock'), JSON.stringify({ token: 'someone-else', at: new Date(T0.getTime() - 60 * 1000).toISOString() }));
+    await runAutoChild({ ...opts, afterMarkRerun: () => unlinkSync(join(hubDir, 'auto.lock')) });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(1);
+    expect(puts).toHaveLength(1);
     expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
     expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
   });
