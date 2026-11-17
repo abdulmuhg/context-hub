@@ -22,8 +22,8 @@
     "@anthropic-ai/sdk": "^1.8.0",
     "@context-hub/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "better-sqlite3": "^13.1.1",
-    "posthog-node": "^5.69.0",
+    "better-sqlite3": "^13.2.0",
+    "posthog-node": "^5.73.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
