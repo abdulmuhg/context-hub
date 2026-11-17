@@ -388,6 +388,18 @@ describe('hub sync: shares the lock with the auto sync', () => {
     expect(goneAfterInterrupt).toBe(true);
   });
 
+  it('does not wait on a hub folder that does not exist yet', async () => {
+    io.hubDir = join(io.hubDir, 'not-created-yet');
+    let slept = false;
+    io.sleep = async () => {
+      slept = true;
+      throw new Error('waited on a missing folder');
+    };
+    await run(['sync'], io).catch(() => {});
+    expect(slept).toBe(false);
+    expect(out.join(' ')).not.toMatch(/Another sync is running/);
+  });
+
   it('hands a pending rerun to the auto child', async () => {
     const spawned: string[][] = [];
     io.spawn = ((_cmd: string, args: string[]) => {

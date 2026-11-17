@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { releaseLock, startLockHeartbeat, takeLock } from '../src/lock.js';
@@ -76,9 +76,21 @@ describe('the sync lock', () => {
     expect(takeLock(path, new Date(T0.getTime() + 11 * MIN))).not.toBeNull();
   });
 
-  it('counts an unreadable lock as stale', () => {
+  it('treats an unreadable lock as held while its file is fresh', () => {
     const path = lockPath();
     writeRaw(path, 'garbage');
-    expect(takeLock(path, T0)).not.toBeNull();
+    expect(takeLock(path, new Date())).toBeNull();
+  });
+
+  it('takes over an unreadable lock once its file is older than 10 minutes', () => {
+    const path = lockPath();
+    writeRaw(path, 'garbage');
+    const old = new Date(Date.now() - 11 * MIN);
+    utimesSync(path, old, old);
+    expect(takeLock(path, new Date())).not.toBeNull();
+  });
+
+  it('throws, rather than reporting the lock held, when the folder is missing', () => {
+    expect(() => takeLock(join(tempDir(), 'no-such-folder', 'auto.lock'), T0)).toThrow();
   });
 });

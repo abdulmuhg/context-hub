@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const LOCK_FILE = 'auto.lock';
@@ -36,17 +36,19 @@ function body(token: string, at: Date): string {
   return JSON.stringify({ token, at: at.toISOString() });
 }
 
-/** Creates or takes over a stale lock. Null when a fresh one exists. */
+/** Creates or takes over a stale lock. Null when a fresh one exists. Throws when the lock cannot be written at all. */
 export function takeLock(lockPath: string, now: Date, token: string = `${process.pid}-${randomUUID()}`): Held | null {
   try {
     writeFileSync(lockPath, body(token, now), { flag: 'wx' });
     return { path: lockPath, token };
-  } catch {
-    // held, or left behind
+  } catch (e) {
+    // Only an existing file means held or left behind; a missing folder or a denied write is a real error.
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
   }
   try {
-    const cur = readLock(lockPath);
-    if (cur && now.getTime() - cur.at < LOCK_MAX_AGE_MS) return null;
+    // An unparseable lock (a holder caught mid-write) ages by its file time instead of counting as stale.
+    const at = readLock(lockPath)?.at ?? statSync(lockPath).mtimeMs;
+    if (now.getTime() - at < LOCK_MAX_AGE_MS) return null;
     writeFileSync(lockPath, body(token, now));
     return { path: lockPath, token };
   } catch {

@@ -537,6 +537,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const waitMinutes = 15;
       let held: Held | null = null;
       if (!dryRun) {
+        mkdirSync(io.hubDir, { recursive: true });
         held = await waitForLock(lockPath, {
           now,
           sleep: io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),

@@ -55,8 +55,10 @@ describe('overlapping syncs', () => {
       llm,
       fetchImpl,
       sleep: delay.bind(null, 10),
+      spawn: (() => ({ on: () => {}, unref: () => {} })) as unknown as Io['spawn'],
     };
 
+    // The auto child takes the lock first: the manual path awaits before it calls waitForLock.
     const [code] = await Promise.all([
       run(['sync'], io),
       runAutoChild({ home, hubDir, exists: () => true, git, fetchImpl, llm }),
