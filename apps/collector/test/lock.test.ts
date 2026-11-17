@@ -1,8 +1,13 @@
-import { existsSync, readFileSync, unlinkSync, utimesSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { releaseLock, startLockHeartbeat, takeLock } from '../src/lock.js';
 import { tempDir, writeRaw } from './helpers.js';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
+});
 
 const T0 = new Date('2026-10-21T10:00:00.000Z');
 const MIN = 60 * 1000;
@@ -88,6 +93,15 @@ describe('the sync lock', () => {
     const old = new Date(Date.now() - 11 * MIN);
     utimesSync(path, old, old);
     expect(takeLock(path, new Date())).not.toBeNull();
+  });
+
+  it('treats a busy lock file (EPERM) as held', () => {
+    const path = lockPath();
+    expect(takeLock(path, T0)).not.toBeNull();
+    vi.mocked(writeFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    });
+    expect(takeLock(path, new Date(T0.getTime() + MIN))).toBeNull();
   });
 
   it('throws, rather than reporting the lock held, when the folder is missing', () => {

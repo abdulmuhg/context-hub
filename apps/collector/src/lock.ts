@@ -42,8 +42,10 @@ export function takeLock(lockPath: string, now: Date, token: string = `${process
     writeFileSync(lockPath, body(token, now), { flag: 'wx' });
     return { path: lockPath, token };
   } catch (e) {
-    // Only an existing file means held or left behind; a missing folder or a denied write is a real error.
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    // Only a missing folder is a real error. Anything else (EEXIST, or EPERM/EBUSY on Windows while the file is
+    // being deleted or scanned) means the lock is held or left behind, so fall through to the staleness check.
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') throw e;
   }
   try {
     // An unparseable lock (a holder caught mid-write) ages by its file time instead of counting as stale.
