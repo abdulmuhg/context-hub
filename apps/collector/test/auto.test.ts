@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild, startLockHeartbeat, takeLock } from '../src/auto.js';
+import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild } from '../src/auto.js';
+import { markRerun } from '../src/lock.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
@@ -214,6 +215,69 @@ describe('runAutoChild', () => {
     expect(existsSync(join(hubDir, 'auto.lock'))).toBe(true);
   });
 
+  it('a held lock leaves a rerun flag', async () => {
+    const held = JSON.stringify({ token: 'someone-else', at: new Date(T0.getTime() - 60 * 1000).toISOString() });
+    writeRaw(join(hubDir, 'auto.lock'), held);
+    await runAutoChild(opts);
+    expect(puts).toEqual([]);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(true);
+    expect(readFileSync(join(hubDir, 'auto.lock'), 'utf8')).toBe(held);
+  });
+
+  it('drains a flag set during the run', async () => {
+    let first = true;
+    opts.fetchImpl = async (input, init) => {
+      if (init?.method === 'PUT') puts.push(String(input));
+      if (first) {
+        first = false;
+        markRerun(hubDir);
+      }
+      return new Response('{}', { status: 200 });
+    };
+    await runAutoChild(opts);
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(2);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('drains a flag that appears after the last pass', async () => {
+    await runAutoChild({ ...opts, onPassEnd: (pass) => pass === 1 && markRerun(hubDir) });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(2);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('drains a flag that appears between the last check and release', async () => {
+    let first = true;
+    await runAutoChild({
+      ...opts,
+      beforeRelease: () => {
+        if (!first) return;
+        first = false;
+        markRerun(hubDir);
+      },
+    });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(2);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('a child that loses then wins drains its own flag', async () => {
+    writeRaw(join(hubDir, 'auto.lock'), JSON.stringify({ token: 'someone-else', at: new Date(T0.getTime() - 60 * 1000).toISOString() }));
+    await runAutoChild({ ...opts, afterMarkRerun: () => unlinkSync(join(hubDir, 'auto.lock')) });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(1);
+    expect(puts).toHaveLength(1);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(false);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
+  it('stops at the pass cap and keeps the flag', async () => {
+    await runAutoChild({ ...opts, onPassEnd: () => markRerun(hubDir) });
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(3);
+    expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(true);
+    expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
+  });
+
   it('takes over a stale lock, logs one line and keeps only the last 200', async () => {
     writeRaw(join(hubDir, 'auto.lock'), new Date(T0.getTime() - 11 * 60 * 1000).toISOString());
     writeRaw(join(hubDir, 'auto.log'), Array.from({ length: 250 }, (_, i) => `old ${i}`).join('\n') + '\n');
@@ -318,35 +382,6 @@ describe('hub sync --auto', () => {
 
 
 describe('the auto-sync lock while summaries are written', () => {
-  const lockPath = () => join(tempDir(), 'auto.lock');
-
-  it('a heartbeat keeps the lock fresh past 10 minutes', async () => {
-    const path = lockPath();
-    let clock = T0;
-    expect(takeLock(path, clock)).toBe(true);
-    const stop = startLockHeartbeat(path, () => clock, 5);
-    clock = new Date(T0.getTime() + 11 * 60 * 1000);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(takeLock(path, clock)).toBe(false);
-    stop();
-  });
-
-  it('without a heartbeat the lock is taken over after 10 minutes', () => {
-    const path = lockPath();
-    expect(takeLock(path, T0)).toBe(true);
-    expect(takeLock(path, new Date(T0.getTime() + 11 * 60 * 1000))).toBe(true);
-  });
-
-  it('the heartbeat never brings back a lock that was removed', async () => {
-    const path = lockPath();
-    takeLock(path, T0);
-    const stop = startLockHeartbeat(path, () => T0, 5);
-    unlinkSync(path);
-    await new Promise((r) => setTimeout(r, 40));
-    stop();
-    expect(existsSync(path)).toBe(false);
-  });
-
   it('the lock is removed after the run, and the heartbeat stops', async () => {
     const hubDir = tempDir();
     saveConfig(hubDir, { ...loadConfig(hubDir), server_url: 'https://hub.example.com', tracked: [] });

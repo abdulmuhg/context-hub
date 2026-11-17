@@ -1,10 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Fail } from './errors.js';
+import { LOCK_FILE, markRerun, releaseLock, RERUN_FILE, startLockHeartbeat, takeLock, takeRerun, type Held } from './lock.js';
 import { runSync, type SyncOptions } from './sync.js';
 
 const HOOK_SUFFIX = ' sync --auto';
-const LOCK_MAX_AGE_MS = 10 * 60 * 1000;
 const LOG_KEEP = 200;
 
 type Json = Record<string, unknown>;
@@ -154,76 +154,67 @@ export function autoStatus(settingsPath: string, logPath: string): { on: boolean
   return { on, lastLine: readLines(logPath).at(-1) ?? null };
 }
 
-/** Takes the lock, or returns false when a younger one exists. A stale lock is taken over. */
-export function takeLock(lockPath: string, now: Date): boolean {
-  try {
-    writeFileSync(lockPath, now.toISOString(), { flag: 'wx' });
-    return true;
-  } catch {
-    // held, or left behind
-  }
-  try {
-    const started = Date.parse(readFileSync(lockPath, 'utf8').trim());
-    if (Number.isFinite(started) && now.getTime() - started < LOCK_MAX_AGE_MS) return false;
-    writeFileSync(lockPath, now.toISOString());
-    return true;
-  } catch {
-    return false;
-  }
-}
+const MAX_PASSES = 3;
 
 /**
- * Keeps the lock fresh while a sync works. Writing summaries can take longer
- * than the lock's 10 minutes, and a second auto-sync must not start meanwhile
- * and write the same ones. It only touches a lock that still exists. Returns the function that stops it.
+ * The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line per pass, never throws.
+ * A child that finds the lock held leaves a rerun flag; the holder runs another pass for it (at most MAX_PASSES).
+ * `onPassEnd`, `beforeRelease` and `afterMarkRerun` are for tests; production leaves them unset.
  */
-export function startLockHeartbeat(lockPath: string, now: () => Date, everyMs = 60_000): () => void {
-  const timer = setInterval(() => {
-    try {
-      if (existsSync(lockPath)) writeFileSync(lockPath, now().toISOString());
-    } catch {
-      // the lock is only a courtesy to the next run
-    }
-  }, everyMs);
-  timer.unref();
-  return () => clearInterval(timer);
-}
-
-/** The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line, never throws. */
-export async function runAutoChild(opts: SyncOptions): Promise<void> {
+export async function runAutoChild(
+  opts: SyncOptions & { onPassEnd?: (pass: number) => void; beforeRelease?: () => void; afterMarkRerun?: () => void },
+): Promise<void> {
   const now = opts.now ?? (() => new Date());
-  const lockPath = join(opts.hubDir, 'auto.lock');
+  const lockPath = join(opts.hubDir, LOCK_FILE);
   const logPath = join(opts.hubDir, 'auto.log');
-  let locked = false;
+  const rerunPath = join(opts.hubDir, RERUN_FILE);
+  let held: Held | null = null;
   let stopHeartbeat = (): void => {};
   try {
     mkdirSync(opts.hubDir, { recursive: true });
-    if (!takeLock(lockPath, now())) return;
-    locked = true;
-    stopHeartbeat = startLockHeartbeat(lockPath, now);
-    const { project: _project, session: _session, dryRun: _dryRun, ...rest } = opts;
-    let line: string;
-    try {
-      const r = await runSync({ ...rest, trigger: 'auto' });
-      const counts = `${r.uploaded.length} uploaded, ${r.unchanged} unchanged, ${r.summarized.length} summarized, ${r.waiting.count} waiting`;
-      line =
-        r.errors.length === 0
-          ? `${now().toISOString()} ok ${counts}`
-          : `${now().toISOString()} error ${counts}, ${r.errors.length} errors: ${r.errors[0]}`;
-    } catch (e) {
-      line = `${now().toISOString()} error 0 uploaded, 0 unchanged, 0 summarized, 0 waiting, 1 errors: ${(e as Error).message}`;
+    const { project: _project, session: _session, dryRun: _dryRun, onPassEnd, beforeRelease, afterMarkRerun, ...rest } = opts;
+    held = takeLock(lockPath, now());
+    if (!held) {
+      // Flag first, then one more try: the holder may have checked for the flag before it was written.
+      markRerun(opts.hubDir);
+      afterMarkRerun?.();
+      held = takeLock(lockPath, now());
+      if (!held) return;
     }
-    writeFileSync(logPath, [...readLines(logPath), line.replace(/\r?\n/g, ' ')].slice(-LOG_KEEP).join('\n') + '\n');
+    let passes = 0;
+    while (held) {
+      stopHeartbeat = startLockHeartbeat(held, now);
+      for (;;) {
+        takeRerun(opts.hubDir); // before the pass, so a flag set during it survives
+        let line: string;
+        try {
+          const r = await runSync({ ...rest, trigger: 'auto' });
+          const counts = `${r.uploaded.length} uploaded, ${r.unchanged} unchanged, ${r.summarized.length} summarized, ${r.waiting.count} waiting`;
+          line =
+            r.errors.length === 0
+              ? `${now().toISOString()} ok ${counts}`
+              : `${now().toISOString()} error ${counts}, ${r.errors.length} errors: ${r.errors[0]}`;
+        } catch (e) {
+          line = `${now().toISOString()} error 0 uploaded, 0 unchanged, 0 summarized, 0 waiting, 1 errors: ${(e as Error).message}`;
+        }
+        writeFileSync(logPath, [...readLines(logPath), line.replace(/\r?\n/g, ' ')].slice(-LOG_KEEP).join('\n') + '\n');
+        passes++;
+        onPassEnd?.(passes);
+        if (passes < MAX_PASSES && existsSync(rerunPath)) continue;
+        break;
+      }
+      stopHeartbeat();
+      stopHeartbeat = (): void => {};
+      beforeRelease?.();
+      releaseLock(held);
+      held = null;
+      // A child that lost the race just before the release left a flag nobody is left to drain.
+      if (passes < MAX_PASSES && existsSync(rerunPath)) held = takeLock(lockPath, now());
+    }
   } catch {
     // nothing may reach the terminal or the caller
   } finally {
     stopHeartbeat();
-    if (locked) {
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // best effort
-      }
-    }
+    if (held) releaseLock(held);
   }
 }

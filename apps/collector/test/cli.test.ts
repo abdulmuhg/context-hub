@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newProjects, run, type Io } from '../src/cli.js';
 import { SLASH_COMMANDS } from '../src/commands.js';
 import { HUB_VERSION } from '../src/version.js';
+import { LOCK_FILE, RERUN_FILE } from '../src/lock.js';
 import { UsageLimitError } from '../src/claude-llm.js';
 import { loadConfig, loadPersonal, loadToken, saveConfig, saveState, settingsFingerprint } from '../src/config.js';
 import { FakeLlm } from '../../../packages/core/test/fake-llm.js';
@@ -315,6 +316,116 @@ describe('hub sync', () => {
     io.fetchImpl = async () => new Response('no', { status: 401 });
     expect(await run(['sync'], io)).toBe(1);
     expect(err.join('\n')).toMatch(/401/);
+  });
+});
+
+describe('hub sync: shares the lock with the auto sync', () => {
+  const lockPath = (): string => join(io.hubDir, LOCK_FILE);
+  const foreignBody = (at: Date): string => JSON.stringify({ token: 'foreign', at: at.toISOString() });
+  const WAITING = 'Another sync is running on this computer. Waiting for it to finish…';
+
+  beforeEach(async () => {
+    await run(['init', '--url', 'https://hub.example.com', '--token', 'tok'], io);
+    await run(['track', 'alpha'], io);
+    out = [];
+  });
+
+  it('waits for a running sync, then runs', async () => {
+    writeFileSync(lockPath(), foreignBody(new Date()));
+    let sleeps = 0;
+    io.sleep = async () => {
+      sleeps++;
+      if (sleeps === 2) unlinkSync(lockPath());
+    };
+    expect(await run(['sync'], io)).toBe(0);
+    expect(out.filter((l) => l === WAITING)).toHaveLength(1);
+    expect(requests.some((r) => r.method === 'PUT')).toBe(true);
+    expect(existsSync(lockPath())).toBe(false);
+  });
+
+  it('times out with a clear message', async () => {
+    let t = Date.now();
+    const clock = (): Date => new Date(t);
+    io.now = clock;
+    writeFileSync(lockPath(), foreignBody(clock()));
+    io.sleep = async () => {
+      t += 2000;
+      writeFileSync(lockPath(), foreignBody(clock()));
+    };
+    expect(await run(['sync'], io)).toBe(1);
+    expect(err.join('\n')).toContain('still running');
+    expect(err.join('\n')).toContain('hub sync again');
+    expect(requests).toEqual([]);
+  });
+
+  it('dry run never waits', async () => {
+    writeFileSync(lockPath(), foreignBody(new Date()));
+    let slept = false;
+    io.sleep = async () => {
+      slept = true;
+    };
+    expect(await run(['sync', '--dry-run'], io)).toBe(0);
+    expect(slept).toBe(false);
+    expect(out.join('\n')).toMatch(/Would upload 1 session/);
+  });
+
+  it('interrupt releases the lock', async () => {
+    let fire: (() => void) | undefined;
+    io.onInterrupt = (h) => {
+      fire = h;
+      return () => {};
+    };
+    let goneAfterInterrupt: boolean | undefined;
+    const real = io.fetchImpl!;
+    io.fetchImpl = async (input, init) => {
+      if (goneAfterInterrupt === undefined) {
+        fire?.();
+        goneAfterInterrupt = !existsSync(lockPath());
+      }
+      return real(input, init);
+    };
+    await run(['sync'], io);
+    expect(goneAfterInterrupt).toBe(true);
+  });
+
+  it('does not wait on a hub folder that does not exist yet', async () => {
+    io.hubDir = join(io.hubDir, 'not-created-yet');
+    let slept = false;
+    io.sleep = async () => {
+      slept = true;
+      throw new Error('waited on a missing folder');
+    };
+    await run(['sync'], io).catch(() => {});
+    expect(slept).toBe(false);
+    expect(out.join(' ')).not.toMatch(/Another sync is running/);
+  });
+
+  it('hands a pending rerun to the auto child', async () => {
+    const spawned: string[][] = [];
+    io.spawn = ((_cmd: string, args: string[]) => {
+      spawned.push(args);
+      return { on: () => {}, unref: () => {} };
+    }) as unknown as typeof io.spawn;
+    io.bundlePath = '/hub.js';
+    const real = io.fetchImpl!;
+    io.fetchImpl = async (input, init) => {
+      writeFileSync(join(io.hubDir, RERUN_FILE), '');
+      return real(input, init);
+    };
+    expect(await run(['sync'], io)).toBe(0);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]?.slice(-2)).toEqual(['sync', '--auto-child']);
+    expect(existsSync(join(io.hubDir, RERUN_FILE))).toBe(true);
+  });
+
+  it('does not spawn when no rerun is pending', async () => {
+    let spawned = 0;
+    io.spawn = (() => {
+      spawned++;
+      return { on: () => {}, unref: () => {} };
+    }) as unknown as typeof io.spawn;
+    expect(await run(['sync'], io)).toBe(0);
+    expect(spawned).toBe(0);
   });
 });
 

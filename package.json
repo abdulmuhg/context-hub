@@ -14,9 +14,11 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint ."
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.8",
     "@types/node": "^26.6.6",
     "tsup": "^8.5.1",
     "tsx": "^4.23.15",
