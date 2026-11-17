@@ -19,7 +19,7 @@
     "dev": "tsx src/main.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0",
+    "@anthropic-ai/sdk": "^1.8.0",
     "@context-hub/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "better-sqlite3": "^13.1.1",
