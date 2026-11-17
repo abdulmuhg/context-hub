@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 export const LOCK_FILE = 'auto.lock';
 export const RERUN_FILE = 'auto.rerun';
-export const LOCK_MAX_AGE_MS = 10 * 60 * 1000;
+const LOCK_MAX_AGE_MS = 10 * 60 * 1000;
 
 export interface Held {
   path: string;
@@ -63,12 +63,12 @@ export async function waitForLock(
   opts: {
     now: () => Date;
     sleep: (ms: number) => Promise<void>;
-    timeoutMs?: number;
+    timeoutMs: number;
     pollMs?: number;
     onWait?: () => void;
   },
 ): Promise<Held | null> {
-  const { now, sleep, timeoutMs = 15 * 60 * 1000, pollMs = 2000 } = opts;
+  const { now, sleep, timeoutMs, pollMs = 2000 } = opts;
   const start = now().getTime();
   let waited = false;
   for (;;) {

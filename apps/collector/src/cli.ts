@@ -534,16 +534,18 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       // A real sync shares the auto sync's lock, so the two never summarize the same sessions at once.
       const now = io.now ?? (() => new Date());
       const lockPath = join(io.hubDir, LOCK_FILE);
+      const waitMinutes = 15;
       let held: Held | null = null;
       if (!dryRun) {
         held = await waitForLock(lockPath, {
           now,
           sleep: io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+          timeoutMs: waitMinutes * 60 * 1000,
           onWait: () => io.out('Another sync is running on this computer. Waiting for it to finish…'),
         });
         if (!held) {
           throw new Fail(
-            'A sync is still running on this computer after 15 minutes. Run hub sync again once it finishes; hub auto status shows its last line.',
+            `A sync is still running on this computer after ${waitMinutes} minutes. Run hub sync again once it finishes; hub auto status shows its last line.`,
           );
         }
       }

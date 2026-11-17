@@ -297,8 +297,7 @@ describe('the PowerShell install script', () => {
   });
 
   it('is plain ASCII, so a console in any code page shows it and a saved copy still parses', () => {
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: an ASCII range check needs the NUL bound
-    expect(script).not.toMatch(/[^\x00-\x7F]/);
+    expect(script).not.toMatch(/[\u0080-￿]/);
   });
 
   it('puts the bin folder first in the user PATH only once, keeping %VARS% unexpanded', () => {

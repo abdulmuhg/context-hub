@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, MAX_PASSES, repointHook, runAutoChild } from '../src/auto.js';
+import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild } from '../src/auto.js';
 import { markRerun } from '../src/lock.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
@@ -273,8 +273,7 @@ describe('runAutoChild', () => {
 
   it('stops at the pass cap and keeps the flag', async () => {
     await runAutoChild({ ...opts, onPassEnd: () => markRerun(hubDir) });
-    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(MAX_PASSES);
-    expect(MAX_PASSES).toBe(3);
+    expect(readFileSync(join(hubDir, 'auto.log'), 'utf8').trimEnd().split('\n')).toHaveLength(3);
     expect(existsSync(join(hubDir, 'auto.rerun'))).toBe(true);
     expect(existsSync(join(hubDir, 'auto.lock'))).toBe(false);
   });

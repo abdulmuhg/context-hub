@@ -154,9 +154,7 @@ export function autoStatus(settingsPath: string, logPath: string): { on: boolean
   return { on, lastLine: readLines(logPath).at(-1) ?? null };
 }
 
-export { startLockHeartbeat, takeLock };
-
-export const MAX_PASSES = 3;
+const MAX_PASSES = 3;
 
 /**
  * The detached child of `hub sync --auto`. Syncs tracked projects only, logs one line per pass, never throws.
