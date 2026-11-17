@@ -6,7 +6,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build and test
 # ---------------------------------------------------------------------------
-FROM node:22-slim AS build
+FROM node:26-slim AS build
 WORKDIR /app
 
 ENV PNPM_HOME=/pnpm
@@ -48,7 +48,7 @@ RUN pnpm --filter @context-hub/server deploy --prod --legacy /runtime \
 # ---------------------------------------------------------------------------
 # Stage 2: runtime
 # ---------------------------------------------------------------------------
-FROM node:22-slim AS runtime
+FROM node:26-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
