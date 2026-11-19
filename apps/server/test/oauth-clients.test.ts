@@ -80,6 +80,18 @@ describe('resolveClient', () => {
     expect(getClient(db, URL_)).not.toBeNull();
   });
 
+  it.each([
+    'https://claude.ai/oauth/client-metadata.json',
+    'https://claude.com/oauth/client-metadata.json',
+    'https://claude.ai/oauth/client-metadata.json?v=1',
+  ])('fetches exactly %s from the fixed Claude origin', async (u) => {
+    const f = vi.fn(respond(JSON.stringify({ client_id: u, redirect_uris: [OK] })));
+    const r = await resolveClient(db, cfgWith(f), u, NOW);
+    expect(r.ok).toBe(true);
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls[0]![0]).toBe(u);
+  });
+
   it('refuses a client_id that does not match the URL', async () => {
     const r = await resolveClient(db, cfgWith(respond(doc({ client_id: 'https://other.example/x' }))), URL_, NOW);
     expect(r.ok).toBe(false);
