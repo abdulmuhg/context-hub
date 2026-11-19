@@ -101,7 +101,7 @@ async function readCapped(res: Response): Promise<string | null> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function fetchDocument(url: URL, cfg: OAuthConfig): Promise<string | null> {
+async function fetchDocument(href: string, cfg: OAuthConfig): Promise<string | null> {
   const ctrl = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => {
@@ -112,7 +112,7 @@ async function fetchDocument(url: URL, cfg: OAuthConfig): Promise<string | null>
   });
   const run = (async () => {
     // Redirects are not followed: a public name could bounce to an internal address.
-    const res = await (cfg.fetchImpl ?? fetch)(url.href, { signal: ctrl.signal, redirect: 'manual', headers: { Accept: 'application/json' } });
+    const res = await (cfg.fetchImpl ?? fetch)(href, { signal: ctrl.signal, redirect: 'manual', headers: { Accept: 'application/json' } });
     if (res.status !== 200) return null;
     return readCapped(res);
   })().catch(() => null);
@@ -139,7 +139,9 @@ async function resolveCimd(db: Db, cfg: OAuthConfig, clientId: string, now: stri
   // caller from making the hub fetch arbitrary addresses, as Anthropic's guidance suggests.
   if (!CIMD_ORIGINS.has(url.origin)) return { ok: false, reason: 'client_id is not on a Claude site' };
   if (!(await hostIsPublic(url.hostname, cfg))) return { ok: false, reason: 'client_id points at a private or unresolvable address' };
-  const text = await fetchDocument(url, cfg);
+  // Rebuild the URL on a literal origin so no caller-supplied host reaches fetch.
+  const base = url.hostname === 'claude.ai' ? 'https://claude.ai/' : 'https://claude.com/';
+  const text = await fetchDocument(base + url.pathname.slice(1) + url.search, cfg);
   if (text === null) return { ok: false, reason: 'client metadata document could not be fetched' };
   let doc: unknown;
   try {
