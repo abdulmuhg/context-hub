@@ -140,8 +140,9 @@ async function resolveCimd(db: Db, cfg: OAuthConfig, clientId: string, now: stri
   if (!CIMD_ORIGINS.has(url.origin)) return { ok: false, reason: 'client_id is not on a Claude site' };
   if (!(await hostIsPublic(url.hostname, cfg))) return { ok: false, reason: 'client_id points at a private or unresolvable address' };
   // Rebuild the URL on a literal origin so no caller-supplied host reaches fetch.
-  const base = url.hostname === 'claude.ai' ? 'https://claude.ai/' : 'https://claude.com/';
-  const text = await fetchDocument(base + url.pathname.slice(1) + url.search, cfg);
+  const rest = url.pathname.slice(1) + url.search;
+  const href = url.hostname === 'claude.ai' ? `https://claude.ai/${rest}` : `https://claude.com/${rest}`;
+  const text = await fetchDocument(href, cfg);
   if (text === null) return { ok: false, reason: 'client metadata document could not be fetched' };
   let doc: unknown;
   try {
