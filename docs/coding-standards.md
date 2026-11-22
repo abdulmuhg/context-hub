@@ -9,6 +9,7 @@ The standards reviewer applies this file to each branch diff. Implementers don't
 - No test that reads source files to check their text or order.
 - No mock that makes the failure under test impossible. Mock only what crosses a process or network boundary.
 - A bug fix comes with a test that failed before the fix.
+- A timing assertion sits far from both sides: well above the fixed code's time, so a slow CI runner passes, and well below the broken code's time, so it still fails without the fix.
 
 ## Modules
 
