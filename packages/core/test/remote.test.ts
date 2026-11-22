@@ -32,9 +32,11 @@ describe('normalizeRemote trailing slashes', () => {
   it('stays linear on a long run of slashes', () => {
     const url = 'https://github.com/a' + '/'.repeat(100_000) + 'x';
     const start = performance.now();
-    normalizeRemote(url);
+    const key = normalizeRemote(url);
     const ms = performance.now() - start;
-    expect(ms).toBeLessThan(50);
+    expect(key).toBe(`github.com/a${'/'.repeat(100_000)}x`);
+    // The quadratic regex took over 3 s here; 500 ms leaves room for a slow CI runner.
+    expect(ms).toBeLessThan(500);
   });
 });
 
