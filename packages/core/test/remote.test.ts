@@ -24,6 +24,22 @@ describe('normalizeRemote', () => {
   );
 });
 
+describe('normalizeRemote trailing slashes', () => {
+  it('strips repeated trailing slashes', () => {
+    expect(normalizeRemote('https://github.com/me/app///')).toBe('github.com/me/app');
+  });
+
+  it('stays linear on a long run of slashes', () => {
+    const url = 'https://github.com/a' + '/'.repeat(100_000) + 'x';
+    const start = performance.now();
+    const key = normalizeRemote(url);
+    const ms = performance.now() - start;
+    expect(key).toBe(`github.com/a${'/'.repeat(100_000)}x`);
+    // The quadratic regex took over 3 s here; 500 ms leaves room for a slow CI runner.
+    expect(ms).toBeLessThan(500);
+  });
+});
+
 describe('canonicalKey', () => {
   it.each([
     ['github.com-work/acme/app', 'github.com/acme/app'],

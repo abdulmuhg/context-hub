@@ -1,3 +1,5 @@
+import { escapeRegex } from './regex.js';
+
 /** Hosts that people often reach through an SSH alias such as "github.com-work". */
 const ALIASED_HOSTS = ['github.com', 'gitlab.com', 'bitbucket.org'];
 
@@ -7,7 +9,7 @@ const ALIASED_HOSTS = ['github.com', 'gitlab.com', 'bitbucket.org'];
  */
 export function canonicalKey(key: string): string {
   for (const host of ALIASED_HOSTS) {
-    const alias = new RegExp(`^${host.replace(/\./g, '\\.')}[-_][\\w.-]+(?=/)`, 'i').exec(key);
+    const alias = new RegExp(`^${escapeRegex(host)}[-_][\\w.-]+(?=/)`, 'i').exec(key);
     if (alias) return host + key.slice(alias[0].length);
   }
   return key;
@@ -29,7 +31,8 @@ export function normalizeRemote(url: string): string | null {
   else if (full) [, host, path] = full as unknown as [string, string, string];
   else return null;
 
-  path = path.replace(/\/+$/, '').replace(/\.git$/i, '');
+  while (path.endsWith('/')) path = path.slice(0, -1);
+  path = path.replace(/\.git$/i, '');
   if (path === '') return null;
   return canonicalKey(`${host}/${path}`.toLowerCase());
 }
