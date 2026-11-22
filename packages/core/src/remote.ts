@@ -29,7 +29,8 @@ export function normalizeRemote(url: string): string | null {
   else if (full) [, host, path] = full as unknown as [string, string, string];
   else return null;
 
-  path = path.replace(/\/+$/, '').replace(/\.git$/i, '');
+  while (path.endsWith('/')) path = path.slice(0, -1);
+  path = path.replace(/\.git$/i, '');
   if (path === '') return null;
   return canonicalKey(`${host}/${path}`.toLowerCase());
 }
