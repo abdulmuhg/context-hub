@@ -344,15 +344,23 @@ describe('hub sync: shares the lock with the auto sync', () => {
   });
 
   it('times out with a clear message', async () => {
-    let t = Date.now();
+    const start = Date.now();
+    let t = start;
     const clock = (): Date => new Date(t);
     io.now = clock;
     writeFileSync(lockPath(), foreignBody(clock()));
+    // Each fake sleep jumps a whole minute rather than the 2 s poll: the 15-minute wait is then 15 passes instead of
+    // 450, each doing real file I/O, which timed out under a loaded full run. The holder refreshes the lock each
+    // time, so it never turns stale.
+    let sleeps = 0;
     io.sleep = async () => {
-      t += 2000;
+      sleeps++;
+      t += 60_000;
       writeFileSync(lockPath(), foreignBody(clock()));
     };
     expect(await run(['sync'], io)).toBe(1);
+    expect(sleeps).toBe(15);
+    expect(t - start).toBe(15 * 60_000);
     expect(err.join('\n')).toContain('still running');
     expect(err.join('\n')).toContain('hub sync again');
     expect(requests).toEqual([]);
