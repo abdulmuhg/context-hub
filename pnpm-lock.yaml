@@ -51,8 +51,8 @@ importers:
         specifier: ^13.2.0
         version: 13.2.0
       posthog-node:
-        specifier: ^5.73.1
-        version: 5.73.1(@opentelemetry/api@1.10.0)
+        specifier: ^6.0.5
+        version: 6.0.5(@opentelemetry/api@1.10.0)
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -353,11 +353,11 @@ packages:
   '@oxc-project/types@0.153.0':
     resolution: {integrity: sha512-jSNrRIyvPVLL5E1z/tS5zLAprosGz/FuI1PWwEOz59j3E4TTTzSpqKb/RDGqJhhW0QHYISGXxq582wGx6T11Tw==}
 
-  '@posthog/core@1.67.3':
-    resolution: {integrity: sha512-BAVJB+ADAjFNBVZKCRbMi5+WMJaSFHHIEId0/ebvAwhOVIMmK4mVrktGGjx9zJBHLe82JdQVVRhpaOwLgoBMgA==}
+  '@posthog/core@1.69.2':
+    resolution: {integrity: sha512-toMfPKklwLW+a4ZY3/EzM3GNMVXmk2ylGb8NPJXRH4igXMoI8wgNL2jqXOiglWAXqFBLZGYFN1oQx6LVmUTxTg==}
 
-  '@posthog/types@1.425.1':
-    resolution: {integrity: sha512-mh7jyQ5lN+XCeOnMdYkBEFtO/G0TxeLOKTWNH6E6OZjxS4nVM0Tb2xQt+FG5DCFM9qzL2HmuX6A793TwlJVDvw==}
+  '@posthog/types@1.427.0':
+    resolution: {integrity: sha512-2RPVfuGIx0iys78mTOcfdzN7/w7AM1Ak3yu9++4/FonPf08mwGqDkJjThz2dA/34666ToNw5Q4fZoFdgvfNUHw==}
 
   '@rolldown/binding-android-arm-eabi@1.2.13':
     resolution: {integrity: sha512-Vu/NICrgdRvUOeaJZIyB2FP63s6fO/4ud5l8dXmxDx9yDyn+mN0y+gsvsVviSli+T361Aqo0h46EuMoobrwawA==}
@@ -1248,8 +1248,8 @@ packages:
     resolution: {integrity: sha512-49cGhUbXj8Qenv0iTMxA1cFBzxXoctpC9Ujd77t1WcbJIr6nF/eI7g/8MgxrYldFRuAXvja7xQRwavoW7kgrxQ==}
     engines: {node: ^10 || ^12 || >=14}
 
-  posthog-node@5.73.1:
-    resolution: {integrity: sha512-Fznjod4zWWxjJnR5rgbWqyxKcsD8K/duv8rXBS1wzBwFRn6Tiu+UATbGP2OouSebci7RKpU59aqjM3g2DQ0Lbw==}
+  posthog-node@6.0.5:
+    resolution: {integrity: sha512-trvLy4y6I2SDU9DOJ6vVv3n2Gw8Jp1mbbaxSGGsrgO9ihF2l4Mz/AgVVdTSV9DPv7Y+VeQnfpE6I8ipJlAMtzg==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       '@opentelemetry/api': ^1.2.0
@@ -1734,11 +1734,11 @@ snapshots:
 
   '@oxc-project/types@0.153.0': {}
 
-  '@posthog/core@1.67.3':
+  '@posthog/core@1.69.2':
     dependencies:
-      '@posthog/types': 1.425.1
+      '@posthog/types': 1.427.0
 
-  '@posthog/types@1.425.1': {}
+  '@posthog/types@1.427.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.13':
     optional: true
@@ -2408,9 +2408,9 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
-  posthog-node@5.73.1(@opentelemetry/api@1.10.0):
+  posthog-node@6.0.5(@opentelemetry/api@1.10.0):
     dependencies:
-      '@posthog/core': 1.67.3
+      '@posthog/core': 1.69.2
     optionalDependencies:
       '@opentelemetry/api': 1.10.0
 
