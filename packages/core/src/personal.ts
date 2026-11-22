@@ -1,4 +1,6 @@
-export type Level = 'off' | 'warn' | 'partial' | 'full';
+import { escapeRegex } from './regex.js';
+
+export type Level ='off' | 'warn' | 'partial' | 'full';
 
 export interface PersonalEntry {
   label: string;
@@ -31,10 +33,6 @@ export function luhn(digits: string): boolean {
 /** A run of digit groups joined by single spaces or dashes. */
 const DIGIT_RUN_RE = /\d+(?:[ -]\d+)*/g;
 const DIGITS_AND_SEPARATORS = /^[\d\s().+-]+$/;
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function entryRegex(value: string): RegExp {
   const trimmed = value.trim();

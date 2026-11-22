@@ -45,7 +45,6 @@ describe('page shell', () => {
     // Asset links carry a letters-only fingerprint so a deploy never serves a cached old copy.
     expect(html).toMatch(/href="\/assets\/app\.css\?v=[a-p]+"/);
     expect(html).toMatch(/<script src="\/assets\/app\.js\?v=[a-p]+"><\/script>/);
-    // Exactly one script tag, and it is the external one matched above, so no inline script.
     expect(html.match(/<script/gi)).toHaveLength(1);
     expect(html).not.toMatch(/\sstyle=/);
     expect(html).not.toMatch(/\son[a-z]+=/);
