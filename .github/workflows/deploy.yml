@@ -63,6 +63,8 @@ jobs:
 
   deploy:
     needs: build
+    # Needs no GITHUB_TOKEN: it only uses repository secrets over SSH.
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
       # Plain ssh (preinstalled on the runner), as in vps-stack's deploy-app.yml:
