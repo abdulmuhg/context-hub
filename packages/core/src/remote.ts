@@ -7,7 +7,7 @@ const ALIASED_HOSTS = ['github.com', 'gitlab.com', 'bitbucket.org'];
  */
 export function canonicalKey(key: string): string {
   for (const host of ALIASED_HOSTS) {
-    const alias = new RegExp(`^${host.replace(/\./g, '\\.')}[-_][\\w.-]+(?=/)`, 'i').exec(key);
+    const alias = new RegExp(`^${host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[-_][\\w.-]+(?=/)`, 'i').exec(key);
     if (alias) return host + key.slice(alias[0].length);
   }
   return key;
