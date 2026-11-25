@@ -1,8 +1,7 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { applyOverrides, checkoutFor, projectMatches, realGit, resolveProjectKey, type ResolveDeps } from '../src/project.js';
+import { applyOverrides, checkoutFor, projectMatches, resolveProjectKey, type ResolveDeps } from '../src/project.js';
 import { tempDir } from './helpers.js';
 
 /** A fake git: `repos` maps a directory to its remote (or null) and top-level folder. */
@@ -138,12 +137,19 @@ describe('resolveProjectKey', () => {
 
   it('resolves an existing file path hint to its git repo', () => {
     const repo = tempDir();
-    execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
-    execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:me/from-file.git'], { cwd: repo, stdio: 'ignore' });
     mkdirSync(join(repo, 'src'), { recursive: true });
     const file = join(repo, 'src', 'index.ts');
     writeFileSync(file, 'export {};\n');
-    expect(resolveProjectKey({ ...none, pathHints: [file] }, { git: realGit, exists: existsSync })).toBe('github.com/me/from-file');
+    const realFsDeps: ResolveDeps = {
+      exists: existsSync,
+      git: (cwd, args) => {
+        // Real `git -C <path>` fails whenever <path> is a file rather than a directory.
+        if (!statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) return null;
+        if (!cwd.startsWith(repo)) return null;
+        return args[0] === 'remote' ? 'git@github.com:me/from-file.git' : repo;
+      },
+    };
+    expect(resolveProjectKey({ ...none, pathHints: [file] }, realFsDeps)).toBe('github.com/me/from-file');
   });
 });
 
