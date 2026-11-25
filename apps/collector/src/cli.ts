@@ -3,9 +3,18 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { hostname } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
-import { autoOff, autoOn, autoStatus, hookCommand, runAutoChild } from './auto.js';
-import { runClaudeCommand, summariesRow, type Mark } from './checks.js';
-import { SLASH_COMMANDS } from './commands.js';
+import {
+  antigravityAutoOff,
+  antigravityAutoOn,
+  antigravityAutoStatus,
+  autoOff,
+  autoOn,
+  autoStatus,
+  hookCommand,
+  runAutoChild,
+} from './auto.js';
+import { antigravityInstalled, antigravityMcpRow, runClaudeCommand, summariesRow, type Mark } from './checks.js';
+import { ANTIGRAVITY_SKILLS, SLASH_COMMANDS } from './commands.js';
 import { isTrigger, TRIGGERS, type Effort, type Level, type Llm, type Trigger } from '@context-hub/core';
 import {
   DEFAULT_SUMMARY_EFFORT,
@@ -18,6 +27,7 @@ import {
   savePersonal,
   saveToken,
   type Config,
+  type SummaryProvider,
 } from './config.js';
 import { HUB_VERSION } from './version.js';
 import { LOCK_FILE, RERUN_FILE, releaseLock, startLockHeartbeat, waitForLock, type Held } from './lock.js';
@@ -56,6 +66,8 @@ export interface Io {
   spawn?: typeof spawn;
   /** For `hub doctor`: runs `claude` with these arguments (`mcp list`, `auth status --json`). found is false when Claude Code is not installed. */
   runClaude?: (args: string[]) => { found: boolean; output: string };
+  /** For `hub doctor` and `hub setup`: runs `agy` with these arguments. */
+  runAntigravity?: (args: string[]) => { found: boolean; output: string };
   /** Runs the handler if the person presses Ctrl+C, and returns a function that stops listening. Only set for a terminal. */
   onInterrupt?: (handler: () => void) => () => void;
   /** Waits this many ms. Left out, a real timer. Tests pass a fake. */
@@ -79,7 +91,7 @@ const USAGE = `Usage: hub <command>
 
   login [--url URL] [--name NAME]      connect this computer with a code from the dashboard
   sync                                 upload your tracked projects (asks about new ones)
-  auto on | off | status               sync automatically when a Claude Code session ends
+  auto on | off | status               sync automatically when a Claude Code or Antigravity session ends
   doctor                               check that this computer is set up and connected
   setup --url URL [--code CODE]        set up this computer (run by the installer)
 
@@ -93,11 +105,12 @@ Advanced:
   sync [--project P] [--session S] [--dry-run] [--all] [--trigger T]   (--project narrows tracked projects; --all lifts the cap on summaries;
                                        --trigger names what started it on the dashboard: terminal, slash, auto or other)
   summaries [model <id> | effort <level>]   show or change how this computer writes summaries
+  summaries provider <claude-code|auto|antigravity>  which local CLI writes summaries (default claude-code)
   resummarize [<project>] [--all] [--model-not ID]   rewrite older summaries with this computer's model
   forget <project> | forget --session <source>:<id>
   status                               ask the server for its status
   connect                              get a one-time code to sign claude.ai in to the hub
-  install-commands [--dir PATH]        write the Claude Code slash commands (default ~/.claude/commands)
+  install-commands [--dir PATH]        write Claude Code commands and Antigravity skills
   personal add <label> | list | remove <label> | level <card|list|label> <level>
   docs [list]                          list the folders of notes uploaded as documents
   docs add <folder> [--project P] [--as LABEL] [--exclude a,b]
@@ -106,6 +119,7 @@ Advanced:
 
 const LEVELS: Level[] = ['off', 'warn', 'partial', 'full'];
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+const PROVIDERS: SummaryProvider[] = ['auto', 'claude-code', 'antigravity'];
 const SESSION_KEY = /^(claude-code|codex|antigravity):.+$/;
 
 function need(value: string | undefined, what: string): string {
@@ -368,22 +382,35 @@ function bundleOf(io: Io): string {
 
 function autoCase(io: Io, sub: string | undefined): number {
   const settings = join(io.home, '.claude', 'settings.json');
+  const agyHooks = join(io.home, '.gemini', 'config', 'hooks.json');
+  const hasAgy = antigravityInstalled(io);
   const log = join(io.hubDir, 'auto.log');
   if (sub === 'on') {
     const command = hookCommand(io.execPath ?? process.execPath, bundleOf(io));
     const { changed } = autoOn(settings, command);
-    io.out(changed ? 'Automatic sync is on. When a Claude Code session ends, hub syncs your tracked projects in the background.' : 'Automatic sync was already on.');
+    const agyChanged = hasAgy ? antigravityAutoOn(agyHooks, hookCommand(io.execPath ?? process.execPath, bundleOf(io), 'antigravity')).changed : false;
+    const anyChanged = changed || agyChanged;
+    const tools = hasAgy ? 'Claude Code or Antigravity' : 'Claude Code';
+    io.out(anyChanged ? `Automatic sync is on. When a ${tools} session ends, hub syncs your tracked projects in the background.` : 'Automatic sync was already on.');
     io.out(`Log: ${log}`);
     return 0;
   }
   if (sub === 'off') {
     const { removed } = autoOff(settings);
-    io.out(removed > 0 ? 'Automatic sync is off.' : 'Automatic sync was not on.');
+    const agyRemoved = existsSync(agyHooks) ? antigravityAutoOff(agyHooks).removed : 0;
+    io.out(removed + agyRemoved > 0 ? 'Automatic sync is off.' : 'Automatic sync was not on.');
     return 0;
   }
   if (sub === 'status') {
-    const { on, lastLine } = autoStatus(settings, log);
+    const claude = autoStatus(settings, log);
+    const agy = hasAgy || existsSync(agyHooks) ? antigravityAutoStatus(agyHooks, log) : { on: false, lastLine: claude.lastLine };
+    const on = claude.on || agy.on;
     io.out(on ? 'Automatic sync is on.' : 'Automatic sync is off.');
+    if (on && (hasAgy || agy.on)) {
+      const enabled = [claude.on && 'Claude Code', agy.on && 'Antigravity'].filter(Boolean).join(', ');
+      io.out(`Hooks: ${enabled}`);
+    }
+    const lastLine = claude.lastLine ?? agy.lastLine;
     io.out(lastLine ? `Last run: ${lastLine}` : 'No automatic run yet.');
     return 0;
   }
@@ -507,12 +534,14 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
           all: { type: 'boolean' },
           auto: { type: 'boolean' },
           'auto-child': { type: 'boolean' },
+          hook: { type: 'string' },
           trigger: { type: 'string' },
         },
       });
       if (values.auto) {
-        // Return at once so closing Claude Code is never delayed; a detached child does the work.
+        // Return at once so closing Claude Code or Antigravity is never delayed; a detached child does the work.
         spawnAutoChild(io);
+        if (values.hook === 'antigravity') io.out('{}');
         return 0;
       }
       if (values['auto-child']) {
@@ -621,6 +650,7 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       });
       const report = await runResummarize({
         hubDir: io.hubDir,
+        home: io.home,
         project: positionals[0],
         all: values.all === true,
         modelNot: values['model-not'],
@@ -637,8 +667,18 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       const [what, value] = rest;
       const current = loadConfig(io.hubDir).summaries ?? {};
       if (what === undefined) {
+        io.out(`provider: ${current.provider ?? 'claude-code'}`);
         io.out(`model: ${current.model ?? DEFAULT_SUMMARY_MODEL}`);
         io.out(`effort: ${current.effort ?? DEFAULT_SUMMARY_EFFORT}`);
+        return 0;
+      }
+      if (what === 'provider') {
+        const provider = need(value, 'provider') as SummaryProvider;
+        if (!PROVIDERS.includes(provider)) throw new Fail(`Provider must be one of: ${PROVIDERS.join(', ')}.`);
+        update(io, (cfg) => {
+          cfg.summaries = { ...cfg.summaries, provider };
+        });
+        io.out(`Summaries on this computer now use provider ${provider}.`);
         return 0;
       }
       if (what === 'model') {
@@ -688,11 +728,20 @@ async function dispatch(argv: string[], io: Io): Promise<number> {
       return 0;
     }
     case 'install-commands': {
-      const { values } = parseArgs({ args: rest, options: { dir: { type: 'string' } } });
+      const { values } = parseArgs({ args: rest, options: { dir: { type: 'string' }, 'antigravity-dir': { type: 'string' } } });
       const dir = values.dir ?? join(io.home, '.claude', 'commands');
       mkdirSync(dir, { recursive: true });
       for (const [name, text] of Object.entries(SLASH_COMMANDS)) writeFileSync(join(dir, name), text);
       io.out(`Installed ${Object.keys(SLASH_COMMANDS).length} slash commands in ${dir}.`);
+      const agyDir = values['antigravity-dir'] ?? (!values.dir && antigravityInstalled(io) ? join(io.home, '.gemini', 'config', 'skills') : null);
+      if (agyDir) {
+        for (const [name, text] of Object.entries(ANTIGRAVITY_SKILLS)) {
+          const skillDir = join(agyDir, name);
+          mkdirSync(skillDir, { recursive: true });
+          writeFileSync(join(skillDir, 'SKILL.md'), text);
+        }
+        io.out(`Installed ${Object.keys(ANTIGRAVITY_SKILLS).length} Antigravity skills in ${agyDir}.`);
+      }
       return 0;
     }
     case '--version':
@@ -782,19 +831,38 @@ async function doctorCase(io: Io): Promise<number> {
   }
 
   // Automatic sync is optional, so "off" is not a problem.
-  const auto = autoStatus(join(io.home, '.claude', 'settings.json'), join(io.hubDir, 'auto.log'));
-  if (!auto.on) add('–', 'Automatic sync', 'off (optional). Turn on with: hub auto on');
-  else if (auto.lastLine && / error /.test(auto.lastLine)) add('!', 'Automatic sync', `on, but the last run failed: ${auto.lastLine}`);
-  else add('✓', 'Automatic sync', auto.lastLine ? `on, last run: ${auto.lastLine}` : 'on, no run yet');
+  const logPath = join(io.hubDir, 'auto.log');
+  const auto = autoStatus(join(io.home, '.claude', 'settings.json'), logPath);
+  const agyHooksPath = join(io.home, '.gemini', 'config', 'hooks.json');
+  const hasAgy = antigravityInstalled(io);
+  const agyAuto = hasAgy || existsSync(agyHooksPath) ? antigravityAutoStatus(agyHooksPath, logPath) : { on: false, lastLine: auto.lastLine };
+  const autoOnAny = auto.on || agyAuto.on;
+  const lastAutoLine = auto.lastLine ?? agyAuto.lastLine;
+  if (!autoOnAny) add('–', 'Automatic sync', 'off (optional). Turn on with: hub auto on');
+  else if (lastAutoLine && / error /.test(lastAutoLine)) add('!', 'Automatic sync', `on, but the last run failed: ${lastAutoLine}`);
+  else {
+    const which = hasAgy ? ` (${[auto.on && 'Claude Code', agyAuto.on && 'Antigravity'].filter(Boolean).join(', ')})` : '';
+    add('✓', 'Automatic sync', lastAutoLine ? `on${which}, last run: ${lastAutoLine}` : `on${which}, no run yet`);
+  }
 
-  // The slash commands, compared with the copies this hub command carries.
+  // The slash commands and Antigravity skills, compared with the copies this hub command carries.
   const dir = join(io.home, '.claude', 'commands');
   const names = Object.keys(SLASH_COMMANDS);
   const stale = names.filter((n) => !existsSync(join(dir, n)) || readFileSync(join(dir, n), 'utf8') !== SLASH_COMMANDS[n]);
   if (stale.length === 0) add('✓', 'Slash commands', `${names.length} installed, up to date`);
   else add('!', 'Slash commands', `${stale.length} missing or out of date. Run: hub install-commands`);
 
-  // Reading: whether Claude Code on this computer can reach the hub.
+  if (hasAgy) {
+    const skillsDir = join(io.home, '.gemini', 'config', 'skills');
+    const skillNames = Object.keys(ANTIGRAVITY_SKILLS);
+    const staleSkills = skillNames.filter(
+      (n) => !existsSync(join(skillsDir, n, 'SKILL.md')) || readFileSync(join(skillsDir, n, 'SKILL.md'), 'utf8') !== ANTIGRAVITY_SKILLS[n],
+    );
+    if (staleSkills.length === 0) add('✓', 'Antigravity skills', `${skillNames.length} installed, up to date`);
+    else add('!', 'Antigravity skills', `${staleSkills.length} missing or out of date. Run: hub install-commands`);
+  }
+
+  // Reading: whether Claude Code and Antigravity on this computer can reach the hub.
   const runClaude = io.runClaude ?? runClaudeCommand;
   const claude = runClaude(['mcp', 'list']);
   const hubLines = claude.output.split(/\r?\n/).filter((l) => /context-hub/i.test(l));
@@ -802,6 +870,9 @@ async function doctorCase(io: Io): Promise<number> {
   else if (hubLines.some((l) => /✓|✔|connected/i.test(l) && !/failed|✗|needs/i.test(l))) add('✓', 'Claude Code', 'context-hub connected');
   else if (hubLines.length > 0) add('!', 'Claude Code', `context-hub listed but not connected: ${hubLines[0]!.trim()}`);
   else add('!', 'Claude Code', 'no context-hub connection. Add the connector to this Claude account (docs/using.md: "Read from the hub in the Claude apps").');
+
+  const [agyMcpMark, agyMcpText] = antigravityMcpRow(io, cfg);
+  add(agyMcpMark, 'Antigravity', agyMcpText);
 
   // Summaries: written here by Claude Code, on its sign-in.
   const [summariesMark, summariesText] = summariesRow(io, cfg, hubWritesSummaries);

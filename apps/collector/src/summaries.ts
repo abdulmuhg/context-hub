@@ -1,4 +1,5 @@
 import { buildStatePage, CHARS_PER_TOKEN, DEFAULT_MAX_INPUT_TOKENS, LlmRefusal, writeDigest, type HashedSession, type Llm, type UploadDigest } from '@context-hub/core';
+import { AntigravityLimitError, AntigravitySignInError, AntigravityTimeoutError } from './antigravity-llm.js';
 import { ClaudeSignInError, ClaudeTimeoutError, UsageLimitError } from './claude-llm.js';
 import { SUMMARY_CAP } from './config.js';
 import type { GitCheck } from './git-check.js';
@@ -36,6 +37,9 @@ export function stopReason(e: unknown): string | null {
   }
   if (e instanceof ClaudeSignInError) return 'Claude Code is not signed in, or its login expired. Run: claude auth login';
   if (e instanceof ClaudeTimeoutError) return `${e.message}, so summaries stopped for this run`;
+  if (e instanceof AntigravityLimitError) return 'Antigravity usage limit reached';
+  if (e instanceof AntigravitySignInError) return 'Antigravity is not signed in. Run: agy';
+  if (e instanceof AntigravityTimeoutError) return `${e.message}, so summaries stopped for this run`;
   return null;
 }
 

@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newProjects, run, type Io } from '../src/cli.js';
-import { SLASH_COMMANDS } from '../src/commands.js';
+import { ANTIGRAVITY_SKILLS, SLASH_COMMANDS } from '../src/commands.js';
 import { HUB_VERSION } from '../src/version.js';
 import { LOCK_FILE, RERUN_FILE } from '../src/lock.js';
 import { UsageLimitError } from '../src/claude-llm.js';
@@ -207,6 +207,15 @@ describe('hub install-commands', () => {
   it('defaults to ~/.claude/commands', async () => {
     expect(await run(['install-commands'], io)).toBe(0);
     expect(readdirSync(join(io.home, '.claude', 'commands'))).toHaveLength(6);
+  });
+
+  it('also installs Antigravity skills when Antigravity is present', async () => {
+    io.runAntigravity = () => ({ found: true, output: 'agy 1.0' });
+    expect(await run(['install-commands'], io)).toBe(0);
+    for (const [name, text] of Object.entries(ANTIGRAVITY_SKILLS)) {
+      expect(readFileSync(join(io.home, '.gemini', 'config', 'skills', name, 'SKILL.md'), 'utf8')).toBe(text);
+    }
+    expect(out.join('\n')).toContain('Installed 6 Antigravity skills');
   });
 });
 
@@ -844,6 +853,36 @@ describe('hub doctor', () => {
     await run(['doctor'], io);
     expect(out.join('\n')).toMatch(/! Claude Code\s+no context-hub connection\. Add the connector to this Claude account/);
   });
+
+  it('checks Antigravity skills, MCP config, and fallback summarizer when Antigravity is present', async () => {
+    await login();
+    await run(['track', KEY], io);
+    answersWith(200);
+    await run(['sync'], io);
+    io.runClaude = () => ({ found: false, output: '' });
+    io.runAntigravity = (args) => (args[0] === 'mcp' ? { found: true, output: '' } : { found: true, output: 'agy' });
+    await run(['install-commands'], io);
+    writeFileSync(
+      join(io.home, '.gemini', 'config', 'mcp_config.json'),
+      JSON.stringify({ mcpServers: { 'context-hub': { url: 'https://hub.example.com/mcp' } } }),
+    );
+    out = [];
+    // Antigravity is never a summarizer unless chosen.
+    expect(await run(['doctor'], io)).toBe(1);
+    expect(out.join('\n')).toMatch(/✗ Summaries\s+Claude Code is not installed/);
+    await run(['summaries', 'provider', 'auto'], io);
+    out = [];
+    expect(await run(['doctor'], io)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/✓ Antigravity skills\s+6 installed, up to date/);
+    expect(text).toMatch(/✓ Antigravity\s+context-hub MCP configured/);
+    expect(text).toMatch(/✓ Summaries\s+Antigravity ready \(Claude fallback\), model gemini-3\.8-flash-low, effort low/);
+
+    writeFileSync(join(io.home, '.gemini', 'config', 'mcp_config.json'), '');
+    out = [];
+    expect(await run(['doctor'], io)).toBe(0);
+    expect(out.join('\n')).toMatch(/! Antigravity\s+no context-hub MCP server\. Run: agy mcp add/);
+  });
 });
 
 describe('hub sync: summaries', () => {
@@ -990,6 +1029,16 @@ describe('hub summaries', () => {
     expect(await run(['summaries', 'effort', 'extreme'], io)).toBe(1);
     expect(err.join('\n')).toMatch(/low, medium, high, xhigh, max/);
     expect(loadConfig(io.hubDir).summaries?.effort).toBe('high');
+  });
+
+  it('hub summaries provider saves a valid provider and refuses another', async () => {
+    expect(await run(['summaries', 'provider', 'antigravity'], io)).toBe(0);
+    expect(loadConfig(io.hubDir).summaries?.provider).toBe('antigravity');
+    expect(await run(['summaries', 'provider', 'other'], io)).toBe(1);
+    expect(err.join('\n')).toMatch(/auto, claude-code, antigravity/);
+    out = [];
+    await run(['summaries'], io);
+    expect(out.join('\n')).toMatch(/provider: antigravity/);
   });
 
   it('is in the help text', async () => {

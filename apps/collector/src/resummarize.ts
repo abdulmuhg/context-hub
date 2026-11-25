@@ -7,6 +7,7 @@ import { getSession, listProjectDigests, putDigest, type ProjectDigestEntry, typ
 
 export interface ResummarizeOptions {
   hubDir: string;
+  home?: string;
   /** Narrows to one tracked project, by key or short name. */
   project?: string;
   /** Lifts the cap on summaries written in this run. */
@@ -51,8 +52,14 @@ export async function runResummarize(opts: ResummarizeOptions): Promise<Resummar
   const projects = cfg.tracked.filter((key) => !opts.project || projectMatches(opts.project, key));
   if (opts.project && projects.length === 0) throw new Error(`"${opts.project}" is not tracked. Run \`hub track ${opts.project}\` first.`);
 
-  const llm = opts.llm !== undefined ? opts.llm : buildLlm(cfg);
-  if (llm === null) throw new Error('Claude Code is not installed, so sessions wait here. Install it, then run: claude');
+  const llm = opts.llm !== undefined ? opts.llm : buildLlm(cfg, opts.home);
+  if (llm === null) {
+    throw new Error(
+      cfg.summaries?.provider === 'antigravity'
+        ? 'Antigravity (agy) is not installed, so sessions wait here. Install Antigravity or run: hub summaries provider auto'
+        : 'Claude Code is not installed, so sessions wait here. Install it, then run: claude',
+    );
+  }
 
   const todo: { project: string; entry: ProjectDigestEntry }[] = [];
   for (const project of projects) {

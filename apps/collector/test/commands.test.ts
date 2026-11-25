@@ -2,9 +2,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { SLASH_COMMANDS } from '../src/commands.js';
+import { ANTIGRAVITY_SKILLS, SLASH_COMMANDS } from '../src/commands.js';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'integrations', 'claude-code');
+const AGY_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'integrations', 'antigravity', 'skills');
 
 describe('SLASH_COMMANDS', () => {
   it('has exactly the six files in integrations/claude-code, byte for byte', () => {
@@ -27,5 +28,14 @@ describe('SLASH_COMMANDS', () => {
     expect(text).toContain('Run `hub sync --trigger slash`.');
     expect(text).not.toContain('--project');
     expect(text).not.toContain('$ARGUMENTS');
+  });
+});
+
+describe('ANTIGRAVITY_SKILLS', () => {
+  it('has exactly the six skills in integrations/antigravity/skills, byte for byte', () => {
+    const dirs = readdirSync(AGY_DIR).sort();
+    expect(dirs).toEqual(['hub-auto', 'hub-catchup', 'hub-note', 'hub-status', 'hub-sync', 'hub-track']);
+    expect(Object.keys(ANTIGRAVITY_SKILLS).sort()).toEqual(dirs);
+    for (const d of dirs) expect(ANTIGRAVITY_SKILLS[d]).toBe(readFileSync(join(AGY_DIR, d, 'SKILL.md'), 'utf8'));
   });
 });
