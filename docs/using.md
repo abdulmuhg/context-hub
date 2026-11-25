@@ -170,21 +170,28 @@ find them with `search` (source `doc`), and read them whole with
 ### Summaries come from Claude Code on your computer
 
 `hub sync` writes each session's summary, and each project's briefing page,
-with Claude Code (`claude -p`) on your own computer, using the Claude plan that
-Claude Code is signed in to there. The hub only stores, searches and serves
-them, so it needs no model key. A session is uploaded together with its
-summary; if the summary cannot be written (usage limit reached, Claude Code
-signed out), the session waits on the computer, is not on the hub yet, and the
-next sync tries again.
+with Claude Code (`claude -p`) on your own computer. The hub only stores,
+searches and serves them, so it needs no model key. A session is uploaded
+together with its summary; if the summary cannot be written, the session waits
+on the computer, is not on the hub yet, and the next sync tries again.
 
 What this computer needs: Claude Code installed and signed in
-(`claude auth login`). `hub doctor` checks it. Without Claude Code, a hub that
-has a model key summarises this computer's sessions itself; a hub without one
-leaves them waiting here.
+(`claude auth login`). `hub doctor` checks it. Without it, a hub that has a
+model key summarises this computer's sessions itself; a hub without one leaves
+them waiting here.
 
-- The model is `claude-haiku-5-5` at low effort, the same model the hub has
-  always used. `hub summaries` shows the settings; `hub summaries model <id>`
-  and `hub summaries effort <level>` change them for this computer.
+Antigravity (`agy`, model `gemini-3.8-flash-low`) can write summaries too, but
+only if you choose it, because it sends your transcripts to your Google account
+and `agy` cannot yet be started with its tools turned off:
+
+- `hub summaries provider auto` uses Claude Code, then Antigravity for the rest
+  of a run when Claude Code is signed out or hits its usage limit.
+- `hub summaries provider antigravity` uses only Antigravity.
+- `hub summaries provider claude-code` goes back to the default.
+
+- The default model is `claude-haiku-5-5` at low effort. `hub summaries` shows
+  the settings; `hub summaries model <id>` and `hub summaries effort <level>`
+  change them for this computer.
 - **Summaries use your Claude plan's usage limits**, the same ones your own
   Claude Code work uses. One sync writes at most 20 new summaries, newest
   first, so a sync cannot use up your plan. `hub sync --all` lifts the cap,
@@ -208,36 +215,46 @@ leaves them waiting here.
   does not apply, and an API account is never billed. These runs leave no
   transcripts behind.
 
-### Sync automatically (Claude Code)
+### Sync automatically (Claude Code & Antigravity)
 
 ```bash
-hub auto on        # add a Claude Code SessionEnd hook
+hub auto on        # add Claude Code SessionEnd + Antigravity Stop hooks
 hub auto status    # is it on, and what did the last run do
-hub auto off       # remove the hook
+hub auto off       # remove the hooks
 ```
 
-With `hub auto on`, ending a Claude Code session starts a background `hub sync`
-of your tracked projects. It returns at once, so closing Claude Code is never
-delayed. It never asks and never tracks a new project (new projects wait for
-you to run `hub sync` in a terminal), and it adds one line per run to
-`~/.context-hub/auto.log`. It is turned on for you by the first install; after that it stays as you set it.
-The hook is written
-to `~/.claude/settings.json`; other settings and hooks there are left alone,
-and a backup is saved as `settings.json.hub-backup`.
+With `hub auto on`, ending a Claude Code session or stopping an Antigravity turn
+starts a background `hub sync` of your tracked projects. It returns at once, so
+closing Claude Code or Antigravity is never delayed. It never asks and never
+tracks a new project (new projects wait for you to run `hub sync` in a terminal),
+and it adds one line per run to `~/.context-hub/auto.log`. It is turned on for
+you by the first install; after that it stays as you set it. The hooks are
+written to `~/.claude/settings.json` and `~/.gemini/config/hooks.json`; other
+settings and hooks there are left alone, and backups are saved as
+`*.hub-backup`.
 
-Codex and Antigravity have no such hook; keep running `hub sync` for them.
+Codex has no such hook; keep running `hub sync` for it.
 
-**Start each Claude Code session inside the project's folder.** The hub files
-a session by where its work happened, so a session started elsewhere can
-land in the wrong project.
+**Start each Claude Code or Antigravity session inside the project's folder.**
+The hub files a session by where its work happened, so a session started
+elsewhere can land in the wrong project.
 
-## 4. Slash commands for Claude Code
+## 4. Slash commands & Antigravity skills
 
-`integrations/claude-code/` holds six commands. The installer puts them in
-`~/.claude/commands/` for every repo; to install or refresh them yourself:
+`integrations/claude-code/` holds six Claude Code commands, and
+`integrations/antigravity/skills/` holds six matching Antigravity skills. The
+installer puts them in `~/.claude/commands/` and `~/.gemini/config/skills/`;
+to install or refresh them yourself:
 
 ```bash
 hub install-commands
+```
+
+To read from the hub inside Antigravity, add the hub's MCP endpoint with a
+read-scope token (`hub-admin token create --label antigravity --scope read`):
+
+```bash
+agy mcp add --header "Authorization: Bearer <read-token>" context-hub https://hub.abdulmughnialfikri.com/mcp
 ```
 
 | Command | What it does |

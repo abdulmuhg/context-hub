@@ -56,7 +56,11 @@ function repoKeyForHint(hint: string, deps: ResolveDeps): string | null {
   let dir: string | null = hint;
   while (dir && !deps.exists(dir)) dir = parentDir(dir);
   if (!dir) return null;
-  if (deps.git(dir, ['rev-parse', '--show-toplevel']) === null) return null;
+  if (deps.git(dir, ['rev-parse', '--show-toplevel']) === null) {
+    // An existing file path fails `git -C <file>`; try its containing folder once.
+    dir = parentDir(dir);
+    if (!dir || !deps.exists(dir) || deps.git(dir, ['rev-parse', '--show-toplevel']) === null) return null;
+  }
   return keyForExistingDir(dir, deps.git);
 }
 

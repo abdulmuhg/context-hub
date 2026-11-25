@@ -9,8 +9,9 @@ const LOG_KEEP = 200;
 
 type Json = Record<string, unknown>;
 
-export function hookCommand(nodePath: string, bundlePath: string): string {
-  return `"${nodePath}" "${bundlePath}"${HOOK_SUFFIX}`;
+export function hookCommand(nodePath: string, bundlePath: string, hook?: 'antigravity'): string {
+  const extra = hook === 'antigravity' ? ' --hook antigravity' : '';
+  return `"${nodePath}" "${bundlePath}"${HOOK_SUFFIX}${extra}`;
 }
 
 /**
@@ -18,27 +19,27 @@ export function hookCommand(nodePath: string, bundlePath: string): string {
  * `…/bin.js` for a hook written from a clone's build. Another tool's `sync --auto` hook is never ours.
  */
 export function isOurHook(command: unknown): boolean {
-  return typeof command === 'string' && /^"[^"\r\n]+" "[^"\r\n]*[\\/](?:hub\.mjs|bin\.js)" sync --auto$/.test(command);
+  return typeof command === 'string' && /^"[^"\r\n]+" "[^"\r\n]*[\\/](?:hub\.mjs|bin\.js)" sync --auto(?: --hook antigravity)?$/.test(command);
 }
 
-function notJson(hint: string): Error {
-  return new Fail(`~/.claude/settings.json is not valid JSON, so it was not changed.${hint}`);
+function notJson(label: string, hint: string): Error {
+  return new Fail(`${label} is not valid JSON, so it was not changed.${hint}`);
 }
 
 /** Returns null when the file does not exist. Throws when it is not a JSON object. */
-function readSettings(path: string, hint: string): Json | null {
+function readJsonObject(path: string, label: string, hint: string): Json | null {
   if (!existsSync(path)) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
   } catch {
-    throw notJson(hint);
+    throw notJson(label, hint);
   }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw notJson(hint);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw notJson(label, hint);
   return parsed as Json;
 }
 
-function writeSettings(path: string, settings: Json, hadFile: boolean): void {
+function writeJsonObject(path: string, settings: Json, hadFile: boolean): void {
   mkdirSync(dirname(path), { recursive: true });
   if (hadFile) copyFileSync(path, `${path}.hub-backup`);
   const tmp = `${path}.hub-tmp`;
@@ -46,13 +47,17 @@ function writeSettings(path: string, settings: Json, hadFile: boolean): void {
   renameSync(tmp, path);
 }
 
+const CLAUDE_LABEL = '~/.claude/settings.json';
+const AGY_LABEL = '~/.gemini/config/hooks.json';
+const AGY_HOOK_NAME = 'context-hub';
+
 function sessionEnd(settings: Json, hint: string): unknown[] {
   const hooks = settings.hooks;
   if (hooks === undefined) return [];
-  if (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks)) throw notJson(hint);
+  if (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks)) throw notJson(CLAUDE_LABEL, hint);
   const list = (hooks as Json).SessionEnd;
   if (list === undefined) return [];
-  if (!Array.isArray(list)) throw notJson(hint);
+  if (!Array.isArray(list)) throw notJson(CLAUDE_LABEL, hint);
   return list;
 }
 
@@ -99,13 +104,13 @@ function store(settings: Json, settingsPath: string, list: unknown[]): void {
   else delete hooks.SessionEnd;
   if (Object.keys(hooks).length > 0) settings.hooks = hooks;
   else delete settings.hooks;
-  writeSettings(settingsPath, settings, true);
+  writeJsonObject(settingsPath, settings, true);
 }
 
 /** Rewrites every hook of ours to run `command`, keeping only one. Writes nothing when nothing changes. */
 export function repointHook(settingsPath: string, command: string): { repointed: number } {
   const hint = ` Fix it or add the hook by hand: ${command}`;
-  const settings = readSettings(settingsPath, hint);
+  const settings = readJsonObject(settingsPath, CLAUDE_LABEL, hint);
   if (!settings) return { repointed: 0 };
   const list = sessionEnd(settings, hint);
   const { list: next, found } = rewriteOurs(list, command);
@@ -117,20 +122,20 @@ export function repointHook(settingsPath: string, command: string): { repointed:
 /** Turns auto sync on. A hook of ours already there (even one for another path) is repointed, never doubled. */
 export function autoOn(settingsPath: string, command: string): { changed: boolean } {
   const hint = ` Fix it or add the hook by hand: ${command}`;
-  const settings = readSettings(settingsPath, hint);
+  const settings = readJsonObject(settingsPath, CLAUDE_LABEL, hint);
   const list = sessionEnd(settings ?? {}, hint);
   if (list.some((e) => commandsOf(e).some(isOurHook))) return { changed: repointHook(settingsPath, command).repointed > 0 };
   const next: Json = settings ?? {};
   const hooks = { ...((next.hooks as Json | undefined) ?? {}) };
   hooks.SessionEnd = [...list, { hooks: [{ type: 'command', command, timeout: 10 }] }];
   next.hooks = hooks;
-  writeSettings(settingsPath, next, settings !== null);
+  writeJsonObject(settingsPath, next, settings !== null);
   return { changed: true };
 }
 
 /** Turns auto sync off by removing every hook of ours: two would start two syncs. */
 export function autoOff(settingsPath: string): { removed: number } {
-  const settings = readSettings(settingsPath, '');
+  const settings = readJsonObject(settingsPath, CLAUDE_LABEL, '');
   if (!settings) return { removed: 0 };
   const { list, found } = rewriteOurs(sessionEnd(settings, ''), null);
   if (found === 0) return { removed: 0 };
@@ -146,10 +151,96 @@ function readLines(path: string): string[] {
 export function autoStatus(settingsPath: string, logPath: string): { on: boolean; lastLine: string | null } {
   let on = false;
   try {
-    const settings = readSettings(settingsPath, '');
+    const settings = readJsonObject(settingsPath, CLAUDE_LABEL, '');
     if (settings) on = sessionEnd(settings, '').some((e) => commandsOf(e).some(isOurHook));
   } catch {
     // an unreadable settings file means the hook is not (reliably) on
+  }
+  return { on, lastLine: readLines(logPath).at(-1) ?? null };
+}
+
+function antigravityStop(hooksFile: Json, hint: string): unknown[] {
+  const group = hooksFile[AGY_HOOK_NAME];
+  if (group === undefined) return [];
+  if (group === null || typeof group !== 'object' || Array.isArray(group)) throw notJson(AGY_LABEL, hint);
+  const list = (group as Json).Stop;
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) throw notJson(AGY_LABEL, hint);
+  return list;
+}
+
+function rewriteFlatOurs(list: unknown[], command: string | null): { list: unknown[]; found: number } {
+  let found = 0;
+  let placed = false;
+  const next: unknown[] = [];
+  for (const h of list) {
+    if (!isOurHook((h as Json | null)?.command)) {
+      next.push(h);
+      continue;
+    }
+    found++;
+    if (command !== null && !placed) {
+      placed = true;
+      next.push({ ...(h as Json), command });
+    }
+  }
+  return { list: next, found };
+}
+
+function storeAntigravity(hooksFile: Json, hooksPath: string, list: unknown[]): void {
+  const group = { ...((hooksFile[AGY_HOOK_NAME] as Json | undefined) ?? {}) };
+  if (list.length > 0) group.Stop = list;
+  else delete group.Stop;
+  if (Object.keys(group).length > 0) hooksFile[AGY_HOOK_NAME] = group;
+  else delete hooksFile[AGY_HOOK_NAME];
+  writeJsonObject(hooksPath, hooksFile, true);
+}
+
+/** Rewrites our Antigravity Stop hook to `command`, keeping only one. */
+export function antigravityRepointHook(hooksPath: string, command: string): { repointed: number } {
+  const hint = ` Fix it or add the hook by hand: ${command}`;
+  const hooksFile = readJsonObject(hooksPath, AGY_LABEL, hint);
+  if (!hooksFile) return { repointed: 0 };
+  const list = antigravityStop(hooksFile, hint);
+  const { list: next, found } = rewriteFlatOurs(list, command);
+  if (found === 0 || JSON.stringify(next) === JSON.stringify(list)) return { repointed: 0 };
+  storeAntigravity(hooksFile, hooksPath, next);
+  return { repointed: found };
+}
+
+/** Turns Antigravity Stop hook auto sync on in ~/.gemini/config/hooks.json. */
+export function antigravityAutoOn(hooksPath: string, command: string): { changed: boolean } {
+  const hint = ` Fix it or add the hook by hand: ${command}`;
+  const hooksFile = readJsonObject(hooksPath, AGY_LABEL, hint);
+  const list = antigravityStop(hooksFile ?? {}, hint);
+  if (list.some((h) => isOurHook((h as Json | null)?.command))) {
+    return { changed: antigravityRepointHook(hooksPath, command).repointed > 0 };
+  }
+  const next: Json = hooksFile ?? {};
+  const group = { ...((next[AGY_HOOK_NAME] as Json | undefined) ?? {}) };
+  group.Stop = [...list, { type: 'command', command, timeout: 10 }];
+  next[AGY_HOOK_NAME] = group;
+  writeJsonObject(hooksPath, next, hooksFile !== null);
+  return { changed: true };
+}
+
+/** Turns Antigravity Stop hook auto sync off by removing our handler from ~/.gemini/config/hooks.json. */
+export function antigravityAutoOff(hooksPath: string): { removed: number } {
+  const hooksFile = readJsonObject(hooksPath, AGY_LABEL, '');
+  if (!hooksFile) return { removed: 0 };
+  const { list, found } = rewriteFlatOurs(antigravityStop(hooksFile, ''), null);
+  if (found === 0) return { removed: 0 };
+  storeAntigravity(hooksFile, hooksPath, list);
+  return { removed: found };
+}
+
+export function antigravityAutoStatus(hooksPath: string, logPath: string): { on: boolean; lastLine: string | null } {
+  let on = false;
+  try {
+    const hooksFile = readJsonObject(hooksPath, AGY_LABEL, '');
+    if (hooksFile) on = antigravityStop(hooksFile, '').some((h) => isOurHook((h as Json | null)?.command));
+  } catch {
+    // an unreadable hooks file means the hook is not (reliably) on
   }
   return { on, lastLine: readLines(logPath).at(-1) ?? null };
 }

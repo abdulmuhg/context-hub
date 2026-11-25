@@ -3,8 +3,10 @@ import { hostname } from 'node:os';
 import { sep } from 'node:path';
 import { sanitizeSession, type HashedSession, type Llm, type PersonalConfig, type Trigger, type UploadDigest } from '@context-hub/core';
 import { ALL_ADAPTERS, type Adapter, type RawSession, type SessionFile } from './adapters/index.js';
+import { AntigravityLlm, FallbackLlm, findAntigravity } from './antigravity-llm.js';
 import { ClaudeCodeLlm, findClaude } from './claude-llm.js';
 import {
+  DEFAULT_ANTIGRAVITY_SUMMARY_MODEL,
   DEFAULT_SUMMARY_EFFORT,
   DEFAULT_SUMMARY_MODEL,
   SUMMARY_CAP,
@@ -222,11 +224,35 @@ interface Work {
   personal: Record<string, number>;
 }
 
-/** Builds the Claude Code writer from this computer's settings, or null when `claude` is not installed. */
-export function buildLlm(cfg: Config): Llm | null {
-  const cmd = findClaude();
-  if (cmd === null) return null;
-  return new ClaudeCodeLlm({ model: cfg.summaries?.model ?? DEFAULT_SUMMARY_MODEL, effort: cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT, cmd });
+const ANTIGRAVITY_MODEL = /^(?:gemini-|gpt-)/i;
+
+/**
+ * Builds the local summary writer from this computer's settings. Claude Code is the default; Antigravity
+ * is used only when chosen with `hub summaries provider antigravity` (only it) or `auto` (as a fallback).
+ */
+export function buildLlm(cfg: Config, home?: string): Llm | null {
+  const effort = cfg.summaries?.effort ?? DEFAULT_SUMMARY_EFFORT;
+  const configuredModel = cfg.summaries?.model;
+  const provider = cfg.summaries?.provider ?? 'claude-code';
+  const isAgyModel = configuredModel !== undefined && ANTIGRAVITY_MODEL.test(configuredModel);
+
+  const makeAgy = (): Llm | null => {
+    const cmd = findAntigravity(home);
+    const model = configuredModel && (provider === 'antigravity' || isAgyModel) ? configuredModel : DEFAULT_ANTIGRAVITY_SUMMARY_MODEL;
+    return cmd === null ? null : new AntigravityLlm({ model, effort, cmd, home });
+  };
+  const makeClaude = (): Llm | null => {
+    const cmd = findClaude();
+    const model = configuredModel && !isAgyModel ? configuredModel : DEFAULT_SUMMARY_MODEL;
+    return cmd === null ? null : new ClaudeCodeLlm({ model, effort, cmd });
+  };
+
+  if (provider === 'antigravity') return makeAgy();
+  if (provider === 'claude-code') return makeClaude();
+  const primary = makeClaude();
+  const fallback = makeAgy();
+  if (primary && fallback) return new FallbackLlm(primary, fallback);
+  return primary ?? fallback;
 }
 
 /** One step of a sync, for a progress line: reading sessions, summarizing them, uploading without a summary, building pages. */
@@ -269,7 +295,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncReport> {
     }
     remote = { url: s.cfg.server_url, token, fetchImpl: opts.fetchImpl, ...(opts.trigger ? { trigger: opts.trigger } : {}) };
   }
-  const llm: Llm | null = dryRun ? null : opts.llm !== undefined ? opts.llm : buildLlm(s.cfg);
+  const llm: Llm | null = dryRun ? null : opts.llm !== undefined ? opts.llm : buildLlm(s.cfg, opts.home);
   const budget = newBudget(opts.all);
 
   // Remember where each project is checked out, for the git check. Only a repo that resolves to the

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild } from '../src/auto.js';
+import { antigravityAutoOff, antigravityAutoOn, antigravityAutoStatus, antigravityRepointHook, autoOff, autoOn, autoStatus, hookCommand, isOurHook, repointHook, runAutoChild } from '../src/auto.js';
 import { markRerun } from '../src/lock.js';
 import { run, type Io } from '../src/cli.js';
 import { loadConfig, saveConfig, saveToken } from '../src/config.js';
@@ -130,6 +130,37 @@ describe('autoOn / autoOff', () => {
     writeRaw(path, 'nope');
     expect(() => autoOff(path)).toThrow(/not valid JSON/);
     expect(readFileSync(path, 'utf8')).toBe('nope');
+  });
+  it('defaults to off when missing and turns on/off cleanly for Antigravity hooks.json', () => {
+    const hooksPath = join(tempDir(), '.gemini', 'config', 'hooks.json');
+    const log = join(tempDir(), 'auto.log');
+    const cmd = hookCommand('/usr/bin/node', '/home/me/.local/hub/bin.js', 'antigravity');
+    expect(isOurHook(cmd)).toBe(true);
+    expect(antigravityAutoStatus(hooksPath, log).on).toBe(false);
+    expect(antigravityAutoOn(hooksPath, cmd)).toEqual({ changed: true });
+    expect(antigravityAutoOn(hooksPath, cmd)).toEqual({ changed: false });
+    expect(read(hooksPath)).toEqual({
+      'context-hub': { Stop: [{ type: 'command', command: cmd, timeout: 10 }] },
+    });
+    expect(antigravityAutoStatus(hooksPath, log).on).toBe(true);
+    const newer = hookCommand('/usr/bin/node', '/opt/hub/hub.mjs', 'antigravity');
+    expect(antigravityRepointHook(hooksPath, newer)).toEqual({ repointed: 1 });
+    expect(read(hooksPath)['context-hub'].Stop[0].command).toBe(newer);
+    expect(antigravityAutoOff(hooksPath)).toEqual({ removed: 1 });
+    expect(read(hooksPath)).toEqual({});
+  });
+
+  it('preserves other Antigravity hooks in hooks.json and refuses invalid JSON', () => {
+    const hooksPath = join(tempDir(), '.gemini', 'config', 'hooks.json');
+    const cmd = hookCommand('/usr/bin/node', '/hub/hub.mjs', 'antigravity');
+    writeRaw(hooksPath, JSON.stringify({ 'lint-checker': { Stop: [{ type: 'command', command: 'echo lint' }] } }));
+    expect(antigravityAutoOn(hooksPath, cmd)).toEqual({ changed: true });
+    expect(read(hooksPath)['lint-checker']).toEqual({ Stop: [{ type: 'command', command: 'echo lint' }] });
+    expect(antigravityAutoOff(hooksPath)).toEqual({ removed: 1 });
+    expect(read(hooksPath)).toEqual({ 'lint-checker': { Stop: [{ type: 'command', command: 'echo lint' }] } });
+
+    writeRaw(hooksPath, '{ bad');
+    expect(() => antigravityAutoOn(hooksPath, cmd)).toThrow(/~\/\.gemini\/config\/hooks\.json is not valid JSON/);
   });
 });
 
@@ -377,6 +408,14 @@ describe('hub sync --auto', () => {
     await run(['auto', 'off'], io);
     expect(read(settings)).toEqual({});
     expect(await run(['auto', 'wat'], io)).toBe(1);
+  });
+
+  it('prints {} when sync --auto --hook antigravity runs', async () => {
+    const out: string[] = [];
+    io.out = (l) => out.push(l);
+    expect(await run(['sync', '--auto', '--hook', 'antigravity'], io)).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(out).toEqual(['{}']);
   });
 });
 

@@ -16,6 +16,9 @@ export interface DocFolder {
   exclude: string[];
 }
 
+/** claude-code (default): only Claude Code. antigravity: only `agy`. auto: Claude Code, then `agy` on sign-out or usage limit. */
+export type SummaryProvider = 'auto' | 'claude-code' | 'antigravity';
+
 export interface Config {
   server_url: string;
   /** Project keys that `hub sync` uploads. Empty by default. */
@@ -31,8 +34,8 @@ export interface Config {
   personal: { card: Level; list: Level };
   /** Folders of Markdown notes uploaded with their project. */
   docs: DocFolder[];
-  /** How this computer writes summaries with Claude Code. Not part of the settings fingerprint: changing it re-uploads nothing. */
-  summaries?: { model?: string; effort?: Effort };
+  /** How this computer writes summaries. Not part of the settings fingerprint: changing it re-uploads nothing. */
+  summaries?: { provider?: SummaryProvider; model?: string; effort?: Effort };
   /** The hub's name for this computer, from the token it issued. */
   label?: string;
   /** The version of hub that last ran `hub setup`, so the next run can say "updated from X". */
@@ -40,6 +43,7 @@ export interface Config {
 }
 
 export const DEFAULT_SUMMARY_MODEL = 'claude-haiku-5-5';
+export const DEFAULT_ANTIGRAVITY_SUMMARY_MODEL = 'gemini-3.8-flash-low';
 export const DEFAULT_SUMMARY_EFFORT: Effort = 'low';
 /** The most summaries one sync writes, unless it is run with --all. */
 export const SUMMARY_CAP = 20;
@@ -167,8 +171,9 @@ export function saveToken(dir: string, token: string): void {
  * 2: account id read from bridge-session records; hub tokens stripped
  * 3: project decided by vote over every folder a session ran in, not the first
  * 4: SSH host aliases folded into their host; a deleted Claude Code worktree filed under its repo
+ * 5: antigravity-cli root, title from annotations, running tool alignment, file path hints resolved via parent dir
  */
-export const COLLECTOR_REVISION = 4;
+export const COLLECTOR_REVISION = 5;
 
 /** Covers everything that changes what a session looks like when uploaded. */
 export function settingsFingerprint(cfg: Config, entries: PersonalEntry[], revision: number = COLLECTOR_REVISION): string {

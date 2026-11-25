@@ -157,6 +157,15 @@ describe('hub setup', () => {
     expect(out).toContain("– Auto sync skipped: Claude Code isn't installed");
   });
 
+  it('installs Antigravity skills and enables Antigravity Stop hook when Antigravity is present', async () => {
+    io.runAntigravity = () => ({ found: true, output: 'agy' });
+    expect(await setup('--code', 'ABCD-EFGH')).toBe(0);
+    expect(out).toContain('✓ Antigravity skills installed (6)');
+    expect(out).toContain('✓ Antigravity auto sync on (runs when an Antigravity turn stops)');
+    const hooks = JSON.parse(readFileSync(join(io.home, '.gemini', 'config', 'hooks.json'), 'utf8'));
+    expect(hooks['context-hub'].Stop[0].command).toBe(hookCommand('/usr/bin/node', io.bundlePath!, 'antigravity'));
+  });
+
   it('a broken settings.json warns on the auto row and setup still succeeds', async () => {
     writeRaw(settingsPath(), '{ "theme": ');
     expect(await setup('--code', 'ABCD-EFGH')).toBe(0);

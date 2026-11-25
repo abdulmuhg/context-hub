@@ -2,10 +2,18 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { autoOn, autoStatus, hookCommand, repointHook } from './auto.js';
-import { printRows, runClaudeCommand, summariesRow, type Row } from './checks.js';
+import {
+  antigravityAutoOn,
+  antigravityAutoStatus,
+  antigravityRepointHook,
+  autoOn,
+  autoStatus,
+  hookCommand,
+  repointHook,
+} from './auto.js';
+import { antigravityInstalled, printRows, runClaudeCommand, summariesRow, type Row } from './checks.js';
 import { connectWithCode, mainSessions, newProjects, plural, scanOpts, type Io } from './cli.js';
-import { SLASH_COMMANDS } from './commands.js';
+import { ANTIGRAVITY_SKILLS, SLASH_COMMANDS } from './commands.js';
 import { loadConfig, loadToken, saveConfig } from './config.js';
 import { Fail, friendlyMessage } from './errors.js';
 import { listProjects, type ProjectRow } from './sync.js';
@@ -49,7 +57,7 @@ export async function setupCase(io: Io, args: string[], sync: Sync): Promise<num
   else rows.push(['✓', `hub ${HUB_VERSION}, updated from ${before.setup_version}`]);
   for (const note of values.note ?? []) rows.push(['✓', note]);
 
-  // The slash commands.
+  // The slash commands and Antigravity skills.
   try {
     const dir = join(io.home, '.claude', 'commands');
     mkdirSync(dir, { recursive: true });
@@ -57,6 +65,21 @@ export async function setupCase(io: Io, args: string[], sync: Sync): Promise<num
     rows.push(['✓', `Slash commands installed (${Object.keys(SLASH_COMMANDS).length})`]);
   } catch (e) {
     rows.push(['!', `Couldn't install the slash commands (${(e as Error).message}). Run: hub install-commands`]);
+  }
+
+  const hasAntigravity = antigravityInstalled(io);
+  if (hasAntigravity) {
+    try {
+      const skillsDir = join(io.home, '.gemini', 'config', 'skills');
+      for (const [name, text] of Object.entries(ANTIGRAVITY_SKILLS)) {
+        const dir = join(skillsDir, name);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'SKILL.md'), text);
+      }
+      rows.push(['✓', `Antigravity skills installed (${Object.keys(ANTIGRAVITY_SKILLS).length})`]);
+    } catch (e) {
+      rows.push(['!', `Couldn't install Antigravity skills (${(e as Error).message}). Run: hub install-commands`]);
+    }
   }
 
   // Connect.
@@ -119,6 +142,24 @@ export async function setupCase(io: Io, args: string[], sync: Sync): Promise<num
       }
     } catch (e) {
       rows.push(['!', `Auto sync not changed: ${(e as Error).message}`]);
+    }
+
+    if (hasAntigravity) {
+      const agyHooks = join(io.home, '.gemini', 'config', 'hooks.json');
+      const agyCommand = hookCommand(io.execPath ?? process.execPath, bundle, 'antigravity');
+      try {
+        antigravityRepointHook(agyHooks, agyCommand);
+        if (firstInstall) {
+          antigravityAutoOn(agyHooks, agyCommand);
+          rows.push(['✓', 'Antigravity auto sync on (runs when an Antigravity turn stops)']);
+        } else if (antigravityAutoStatus(agyHooks, join(io.hubDir, 'auto.log')).on) {
+          rows.push(['✓', 'Antigravity auto sync on (runs when an Antigravity turn stops)']);
+        } else {
+          rows.push(['–', 'Antigravity auto sync off (turn on with: hub auto on)']);
+        }
+      } catch (e) {
+        rows.push(['!', `Antigravity auto sync not changed: ${(e as Error).message}`]);
+      }
     }
   }
 
@@ -214,6 +255,12 @@ async function pickAndSync(io: Io, sync: Sync): Promise<number> {
   } finally {
     stopListening?.();
   }
-  if (code === 0) io.out('Done. This computer syncs when a Claude Code session ends; run hub sync any time.');
+  if (code === 0) {
+    io.out(
+      antigravityInstalled(io)
+        ? 'Done. This computer syncs when a Claude Code or Antigravity session ends; run hub sync any time.'
+        : 'Done. This computer syncs when a Claude Code session ends; run hub sync any time.',
+    );
+  }
   return code;
 }

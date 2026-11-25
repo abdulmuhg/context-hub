@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { antigravity } from '../src/adapters/antigravity.js';
 import { ALL_ADAPTERS } from '../src/adapters/index.js';
-import { tempDir, writeJsonl } from './helpers.js';
+import { tempDir, writeJsonl, writeRaw } from './helpers.js';
 
 const CID = '33333333-3333-4333-8333-333333333333';
 const T = '2026-10-03T08:00:00Z';
@@ -34,6 +34,14 @@ describe('antigravity.discover', () => {
     const files = antigravity.discover(h);
     expect(files.map((f) => f.id)).toEqual([CID]);
     expect(files[0].path).toContain('antigravity-ide');
+  });
+
+  it('discovers conversations from antigravity-cli', () => {
+    const h = tempDir();
+    put(h, 'antigravity-cli', CID, [step('USER_INPUT', { content: 'hi' })]);
+    const files = antigravity.discover(h);
+    expect(files.map((f) => f.id)).toEqual([CID]);
+    expect(files[0].path).toContain('antigravity-cli');
   });
 
   it('returns nothing when the tool is not installed', () => {
@@ -115,6 +123,34 @@ describe('antigravity.read', () => {
     ]);
     expect(raw.messages.map((m) => m.kind === 'text' && m.text)).toEqual(['real']);
     expect(raw.warnings).toEqual({ bad_lines: 0, unknown_records: 0, dropped_blocks: 0 });
+  });
+
+  it('reads the session title from annotations/<id>.pbtxt and unwraps <USER_REQUEST>', () => {
+    const h = tempDir();
+    put(h, 'antigravity', CID, [
+      step('USER_INPUT', { content: '<USER_REQUEST>\nFix bug\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>' }),
+    ]);
+    writeRaw(join(h, '.gemini', 'antigravity', 'annotations', `${CID}.pbtxt`), 'title:"Fix \\"dark\\" mode"  last_user_view_time:{seconds:1}');
+    const raw = antigravity.read(antigravity.discover(h)[0]);
+    expect(raw.title).toBe('Fix "dark" mode');
+    expect(raw.messages[0]).toMatchObject({ role: 'user', kind: 'text', text: 'Fix bug' });
+  });
+
+  it('keeps tool call alignment when an earlier parallel tool step is still RUNNING', () => {
+    const raw = read([
+      step('PLANNER_RESPONSE', {
+        tool_calls: [
+          { name: 'run_command', args: { CommandLine: 'npm test' } },
+          { name: 'read_file', args: { Path: '/work/a.ts' } },
+        ],
+      }),
+      step('GENERIC', { content: 'still running', status: 'RUNNING' }),
+      step('GENERIC', { content: 'file contents', status: 'DONE' }),
+    ]);
+    expect(raw.messages).toMatchObject([
+      { tool_name: 'run_command', tool_result: '' },
+      { tool_name: 'read_file', tool_result: 'file contents' },
+    ]);
   });
 });
 
